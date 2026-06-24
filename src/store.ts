@@ -2,6 +2,9 @@ import { create } from 'zustand';
 
 export interface Donor {
   id: string;
+  displayId: string;
+  firstName: string;
+  lastName: string;
   name: string;
   email: string;
   phone: string;
@@ -126,7 +129,7 @@ interface AppState {
   setExchangeRate: (rate: number) => void;
 
   // Donor actions
-  addDonor: (donor: Omit<Donor, 'id' | 'totalGiven' | 'balanceOwed'>) => void;
+  addDonor: (donor: Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
   updateDonorNotes: (donorId: string, notes: string) => void;
   addSponsorshipDay: (donorId: string, day: Omit<SponsorshipDay, 'id'>) => void;
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
@@ -159,41 +162,16 @@ interface AppState {
 }
 
 const mockDonors: Donor[] = [
-  {
-    id: '1', name: 'Avraham Schwartz', email: 'avraham@example.com', phone: '416-555-0198',
-    address: '123 Main St, Toronto, ON', totalGiven: 13500, balanceOwed: 0, fundraiserId: 'f1',
-    notes: 'Long-time supporter. Prefers to be called on Sunday mornings.',
-    cards: [
-      { id: 'c1', last4: '4242', brand: 'Visa', expiry: '12/26', isDefault: true },
-      { id: 'c2', last4: '5555', brand: 'Mastercard', expiry: '08/25', isDefault: false },
-    ],
-    sponsorshipDays: [
-      { id: 's1', date: '09-15', note: 'Yahrzeit - Father', year: 2025 },
-    ]
+  { id: '1', displayId: 'D-1001', firstName: 'Yitzchok', lastName: 'Cohen', name: 'Yitzchok Cohen', phone: '514-555-0101', email: 'yitzchok@example.com', address: '123 Outremont Ave, Montreal, QC', totalGiven: 12500, balanceOwed: 0, 
+    notes: 'Prefers to be contacted on Sundays.',
+    cards: [{ id: 'c1', last4: '4242', brand: 'Visa', expiry: '12/26', isDefault: true }]
   },
-  {
-    id: '2', name: 'Yitzchok Cohen', email: 'yitz@example.com', phone: '416-555-0122',
-    address: '456 Oak Rd, Montreal, QC', totalGiven: 3200, balanceOwed: 500, fundraiserId: 'f2',
-    notes: '',
-    cards: [{ id: 'c3', last4: '1111', brand: 'Visa', expiry: '03/27', isDefault: true }],
-    sponsorshipDays: []
+  { id: '2', displayId: 'D-1002', firstName: 'Avraham', lastName: 'Schwartz', name: 'Avraham Schwartz', phone: '514-555-0202', email: 'avraham.s@example.com', address: '456 Parc Ave, Montreal, QC', totalGiven: 3200, balanceOwed: 500, notes: '', fundraiserId: 'f1',
+    cards: [{ id: 'c2', last4: '1111', brand: 'Mastercard', expiry: '09/25', isDefault: true }]
   },
-  {
-    id: '3', name: 'Chaim Levy', email: 'chaim@example.com', phone: '416-555-0144',
-    address: '789 Pine Ln, Toronto, ON', totalGiven: 8400, balanceOwed: 1200, fundraiserId: 'f1',
-    notes: 'Check bounced once in 2024. Verify before processing large amounts.',
-    cards: [],
-    sponsorshipDays: [
-      { id: 's2', date: '11-03', note: 'Anniversary sponsorship', year: 2025 },
-    ]
-  },
-  {
-    id: '4', name: 'Shlomo Greenberg', email: 'shlomo@example.com', phone: '514-555-0199',
-    address: '22 Cedar Ave, Ottawa, ON', totalGiven: 5800, balanceOwed: 0,
-    notes: '',
-    cards: [{ id: 'c4', last4: '9900', brand: 'Amex', expiry: '06/28', isDefault: true }],
-    sponsorshipDays: []
-  },
+  { id: '3', displayId: 'D-1003', firstName: 'Chaim', lastName: 'Levy', name: 'Chaim Levy', phone: '514-555-0303', email: 'clevy@example.com', address: '789 Bernard St, Montreal, QC', totalGiven: 850, balanceOwed: 0, notes: 'Met at the 2025 Gala.' },
+  { id: '4', displayId: 'D-1004', firstName: 'David', lastName: 'Rosen', name: 'David Rosen', phone: '514-555-0404', email: 'drosen@example.com', address: '321 Van Horne Ave, Montreal, QC', totalGiven: 15000, balanceOwed: 2500, notes: '', fundraiserId: 'f2' },
+  { id: '5', displayId: 'D-1005', firstName: 'Eli', lastName: 'Friedman', name: 'Eli Friedman', phone: '514-555-0505', email: 'eli@example.com', address: '654 Vimy Ave, Montreal, QC', totalGiven: 450, balanceOwed: 0, notes: '' },
 ];
 
 const mockTransactions: Transaction[] = [
@@ -261,9 +239,15 @@ export const useStore = create<AppState>((set) => ({
   setCurrency: (currency) => set({ currency }),
   setExchangeRate: (rate) => set({ exchangeRate: rate }),
 
-  addDonor: (donor) => set((state) => ({
-    donors: [...state.donors, { ...donor, id: uid(), totalGiven: 0, balanceOwed: 0, cards: [], sponsorshipDays: [] }]
-  })),
+  addDonor: (donor) => set(state => {
+    // Generate a new sequential Display ID like D-1006
+    const nextNum = 1001 + state.donors.length;
+    const displayId = `D-${nextNum}`;
+    const name = `${donor.firstName} ${donor.lastName}`.trim();
+    return {
+      donors: [...state.donors, { ...donor, id: Math.random().toString(), displayId, name, totalGiven: 0, balanceOwed: 0, cards: [], sponsorshipDays: [] }]
+    };
+  }),
 
   updateDonorNotes: (donorId, notes) => set((state) => ({
     donors: state.donors.map(d => d.id === donorId ? { ...d, notes } : d)

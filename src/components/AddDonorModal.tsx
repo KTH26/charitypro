@@ -6,17 +6,21 @@ interface Props {
   onClose: () => void;
 }
 
+import { useT } from '../i18n';
+
 export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
-  const { addDonor, fundraisers } = useStore();
+  const { addDonor, fundraisers, isRtl } = useStore();
+  const T = useT(isRtl);
   const [form, setForm] = useState({
-    name: '', email: '', phone: '', address: '', fundraiserId: '', notes: ''
+    firstName: '', lastName: '', email: '', phone: '', address: '', fundraiserId: '', notes: ''
   });
   const [success, setSuccess] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const validate = () => {
     const e: Record<string, string> = {};
-    if (!form.name.trim()) e.name = 'Full name is required';
+    if (!form.firstName.trim()) e.firstName = 'First name is required';
+    if (!form.lastName.trim()) e.lastName = 'Last name is required';
     if (!form.phone.trim()) e.phone = 'Phone number is required';
     return e;
   };
@@ -30,7 +34,8 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
     const e = validate();
     if (Object.keys(e).length > 0) { setErrors(e); return; }
     addDonor({
-      name: form.name.trim(),
+      firstName: form.firstName.trim(),
+      lastName: form.lastName.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
       address: form.address.trim(),
@@ -58,17 +63,24 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
           <div className="modal-body" style={{ textAlign: 'center', padding: '60px 40px' }}>
             <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'var(--green-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: '2.5rem' }}>✅</div>
             <h3 style={{ color: 'var(--green)', margin: '0 0 8px' }}>Donor Added!</h3>
-            <p style={{ color: 'var(--text-muted)', margin: 0 }}>{form.name} has been added to the system.</p>
+            <p style={{ color: 'var(--text-muted)', margin: 0 }}>{form.firstName} {form.lastName} has been added to the system.</p>
           </div>
         ) : (
           <>
             <div className="modal-body">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                {/* Name */}
+                {/* First Name */}
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label>Full Name *</label>
-                  <input type="text" placeholder="e.g. Avraham Schwartz" value={form.name} onChange={e => handle('name', e.target.value)} />
-                  {errors.name && <span style={{ color: 'var(--red)', fontSize: '0.8rem' }}>{errors.name}</span>}
+                  <label>{T('first_name') || 'First Name'} *</label>
+                  <input type="text" placeholder="e.g. Avraham" value={form.firstName} onChange={e => handle('firstName', e.target.value)} />
+                  {errors.firstName && <span style={{ color: 'var(--red)', fontSize: '0.8rem' }}>{errors.firstName}</span>}
+                </div>
+
+                {/* Last Name */}
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>{T('last_name') || 'Last Name'} *</label>
+                  <input type="text" placeholder="e.g. Schwartz" value={form.lastName} onChange={e => handle('lastName', e.target.value)} />
+                  {errors.lastName && <span style={{ color: 'var(--red)', fontSize: '0.8rem' }}>{errors.lastName}</span>}
                 </div>
 
                 {/* Phone */}
@@ -92,9 +104,9 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
 
                 {/* Fundraiser */}
                 <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>
-                  <label>Referred by Fundraiser (optional)</label>
+                  <label>{T('referred_optional') || 'Referred by Fundraiser'}</label>
                   <select value={form.fundraiserId} onChange={e => handle('fundraiserId', e.target.value)}>
-                    <option value="">— No referral —</option>
+                    <option value="">{T('no_referral') || '— No referral —'}</option>
                     {fundraisers.map(f => (
                       <option key={f.id} value={f.id}>{f.name} ({f.percentage}% commission)</option>
                     ))}
@@ -115,9 +127,9 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+              <button className="btn btn-secondary" onClick={onClose}>{T('cancel')}</button>
               <button className="btn btn-primary" onClick={handleSubmit}>
-                + Add Donor
+                + {T('add_donor')}
               </button>
             </div>
           </>

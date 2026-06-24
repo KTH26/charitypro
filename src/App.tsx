@@ -10,6 +10,7 @@ import { Reports } from './pages/Reports';
 import { CalendarPage } from './pages/CalendarPage';
 import { Tasks } from './pages/Tasks';
 import { Settings } from './pages/Settings';
+import { ComingSoon } from './pages/ComingSoon';
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
         <Route path="/calendar" element={<Layout><CalendarPage /></Layout>} />
         <Route path="/tasks" element={<Layout><Tasks /></Layout>} />
         <Route path="/settings" element={<Layout><Settings /></Layout>} />
+        <Route path="/coming-soon" element={<Layout><ComingSoon /></Layout>} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>

@@ -20,9 +20,9 @@ export const Donors: React.FC = () => {
 
   const filteredDonors = donors.filter(d => {
     const matchSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.phone.includes(searchTerm) || d.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchFundraiser = !filterFundraiser || d.fundraiserId === filterFundraiser;
+    const matchFundraiser = filterFundraiser ? d.fundraiserId === filterFundraiser : true;
     return matchSearch && matchFundraiser;
-  });
+  }).sort((a, b) => a.lastName.localeCompare(b.lastName));
 
   const selectedDonor = donors.find(d => d.id === selectedDonorId);
 
@@ -88,13 +88,11 @@ export const Donors: React.FC = () => {
                   onClick={() => selectDonor(donor.id)}
                 >
                   <td>
-                    <div className="member-info">
-                      <div className="member-avatar" style={{ width: '36px', height: '36px', fontSize: '0.85rem' }}>
-                        {donor.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                      </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div className="member-avatar" style={{ width: '36px', height: '36px', fontSize: '0.85rem' }}>{donor.firstName[0]}{donor.lastName[0]}</div>
                       <div>
                         <div className="member-name" style={{ fontSize: '0.95rem' }}>{donor.name}</div>
-                        <div className="member-email">{donor.email}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ID: {donor.displayId} · {donor.email}</div>
                       </div>
                     </div>
                   </td>
@@ -122,14 +120,17 @@ export const Donors: React.FC = () => {
         <div className="card" style={{ padding: '24px' }}>
           {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <div className="member-avatar" style={{ width: '56px', height: '56px', fontSize: '1.2rem' }}>
-                {selectedDonor.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-              </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+              <div className="member-avatar" style={{ width: '64px', height: '64px', fontSize: '1.5rem' }}>{selectedDonor.firstName[0]}{selectedDonor.lastName[0]}</div>
               <div>
-                <h3 style={{ margin: '0 0 4px', fontSize: '1.4rem' }}>{selectedDonor.name}</h3>
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{selectedDonor.phone} · {selectedDonor.email}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{selectedDonor.address}</div>
+                <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{selectedDonor.name}</h2>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--navy-light)', background: 'var(--blue-bg)', padding: '2px 8px', borderRadius: '4px' }}>
+                    ID: {selectedDonor.displayId}
+                  </span>
+                  <span>{selectedDonor.phone}</span>
+                  <span>· {selectedDonor.email}</span>
+                </div>
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>

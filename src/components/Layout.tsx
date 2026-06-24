@@ -38,50 +38,50 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       label: T('nav_contacts_cat'),
       items: [
         { path: '/donors', label: T('nav_donors'), icon: Users },
-        { path: '#', label: T('nav_accounts'), icon: Building },
-        { path: '#', label: T('nav_lists'), icon: List },
+        { path: '/coming-soon', label: T('nav_accounts'), icon: Building },
+        { path: '/coming-soon', label: T('nav_lists'), icon: List },
       ]
     },
     {
       label: T('nav_donations_cat'),
       items: [
-        { path: '#', label: T('nav_pledges'), icon: HeartHandshake },
+        { path: '/coming-soon', label: T('nav_pledges'), icon: HeartHandshake },
         { path: '/accounting', label: T('nav_payments'), icon: Wallet },
-        { path: '#', label: T('nav_schedules'), icon: CalendarClock },
+        { path: '/coming-soon', label: T('nav_schedules'), icon: CalendarClock },
       ]
     },
     {
       label: T('nav_fundraising_cat'),
       items: [
-        { path: '#', label: T('nav_campaigns'), icon: Megaphone },
+        { path: '/coming-soon', label: T('nav_campaigns'), icon: Megaphone },
         { path: '/fundraisers', label: T('nav_fundraisers'), icon: UserPlus },
-        { path: '#', label: T('nav_sponsorships'), icon: Medal },
-        { path: '#', label: T('nav_events'), icon: Ticket },
+        { path: '/coming-soon', label: T('nav_sponsorships'), icon: Medal },
+        { path: '/coming-soon', label: T('nav_events'), icon: Ticket },
       ]
     },
     {
       label: T('nav_expenses_cat'),
       items: [
-        { path: '#', label: T('nav_vendors'), icon: Store },
+        { path: '/coming-soon', label: T('nav_vendors'), icon: Store },
         { path: '/expenses', label: T('nav_bills'), icon: FileText },
-        { path: '#', label: T('nav_print_checks'), icon: Printer },
+        { path: '/coming-soon', label: T('nav_print_checks'), icon: Printer },
       ]
     },
     {
       label: T('nav_accounting_cat'),
       items: [
         { path: '/accounting', label: T('nav_transactions'), icon: Wallet },
-        { path: '#', label: T('nav_chart_accounts'), icon: List },
-        { path: '#', label: T('nav_funds'), icon: PieChart },
-        { path: '#', label: T('nav_bank_feed'), icon: Building },
-        { path: '#', label: T('nav_reconciliation'), icon: CheckSquare },
+        { path: '/coming-soon', label: T('nav_chart_accounts'), icon: List },
+        { path: '/coming-soon', label: T('nav_funds'), icon: PieChart },
+        { path: '/coming-soon', label: T('nav_bank_feed'), icon: Building },
+        { path: '/coming-soon', label: T('nav_reconciliation'), icon: CheckSquare },
       ]
     },
     {
       label: T('nav_reports_cat'),
       items: [
         { path: '/reports', label: T('nav_fundraising_rep'), icon: BarChart3 },
-        { path: '#', label: T('nav_profit_loss'), icon: BarChart3 },
+        { path: '/coming-soon', label: T('nav_profit_loss'), icon: BarChart3 },
       ]
     },
     {
@@ -89,14 +89,14 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       items: [
         { path: '/tasks', label: T('nav_tasks'), icon: CheckSquare, badge: pendingTasks > 0 ? pendingTasks : undefined, badgeUrgent: highTasks > 0 },
         { path: '/settings', label: T('nav_settings'), icon: Settings },
-        { path: '#', label: T('nav_logout'), icon: LogOut },
+        { path: '/coming-soon', label: T('nav_logout'), icon: LogOut },
       ]
     }
   ];
 
   // Flatten items to find current page label
   const flatNavItems = navCategories.flatMap(cat => cat.items);
-  const pageLabel = flatNavItems.find(i => i.path === location.pathname && i.path !== '#')?.label || T('nav_dashboard');
+  const pageLabel = flatNavItems.find(i => i.path === location.pathname && i.path !== '/coming-soon')?.label || T('nav_dashboard');
 
   return (
     <div className="app-container" dir={isRtl ? 'rtl' : 'ltr'}>
@@ -119,18 +119,12 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                 <Link
                   key={i}
                   to={item.path}
-                  className={`nav-item ${location.pathname === item.path && item.path !== '#' ? 'active' : ''}`}
+                  className={`nav-item ${location.pathname === item.path && item.path !== '/coming-soon' ? 'active' : ''}`}
                   style={{
                     padding: '8px 12px',
                     marginBottom: '4px',
                     borderRadius: '8px',
-                    opacity: item.path === '#' ? 0.6 : 1
-                  }}
-                  onClick={(e) => {
-                    if (item.path === '#') {
-                      e.preventDefault();
-                      alert('This feature is not implemented yet in this demo.');
-                    }
+                    opacity: item.path === '/coming-soon' ? 0.6 : 1
                   }}
                 >
                   <span className="nav-icon" style={{ opacity: 0.8 }}><item.icon size={18} /></span>
