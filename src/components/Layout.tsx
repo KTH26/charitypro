@@ -28,7 +28,26 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const highTasks = tasks.filter(t => !t.completed && t.priority === 'high').length;
   const totalBalance = bankAccounts.filter(a => !a.isInternal && a.currency === 'CAD').reduce((s, a) => s + a.balance, 0);
 
-  const navCategories = [
+  interface NavSubItem {
+    path: string;
+    label: string;
+  }
+
+  interface NavItem {
+    path: string;
+    label: string;
+    icon: React.ElementType;
+    badge?: number;
+    badgeUrgent?: boolean;
+    subItems?: NavSubItem[];
+  }
+
+  interface NavCategory {
+    label: string;
+    items: NavItem[];
+  }
+
+  const navCategories: NavCategory[] = [
     {
       label: T('nav_home_cat'),
       items: [
