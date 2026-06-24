@@ -5,16 +5,50 @@ import type { StateStorage } from 'zustand/middleware';
 export interface Donor {
   id: string;
   displayId: string;
+  
+  // Basic Info
   firstName: string;
   lastName: string;
   name: string;
   email: string;
   phone: string;
   address: string;
+  notes: string;
+
+  // Hebrew / Yiddish Names
+  hebFirstName?: string;
+  hebLastName?: string;
+  title?: string;
+  postTitle?: string;
+  doubleNames?: string;
+  
+  // Family Info
+  hisFather?: string;
+  herFather?: string;
+  householdFullName?: string;
+  allMaiden?: string;
+  
+  // Additional Contact Info
+  homePhone?: string;
+  mobilePhone?: string;
+  mobilePhone2?: string;
+  phone3?: string;
+  confidentialMobile?: string;
+  confidentialMobile2?: string;
+  
+  // Address Breakdown
+  addrBuildingNum?: string;
+  addrStreet?: string;
+  addrApt?: string;
+  addrType?: string;
+  addrNo?: string;
+  addrPostalCode?: string;
+  addrLandlord?: string;
+  
+  // Metrics
   totalGiven: number;
   balanceOwed: number;
   fundraiserId?: string;
-  notes?: string;
   cards?: PaymentCard[];
   sponsorshipDays?: SponsorshipDay[];
 }
@@ -275,165 +309,159 @@ export const useStore = create<AppState>()(
         };
       }),
 
-  editDonor: (id, updates) => set(state => {
-    return {
-      donors: state.donors.map(d => {
-        if (d.id !== id) return d;
-        const newD = { ...d, ...updates };
-        newD.name = `${newD.firstName} ${newD.lastName}`.trim();
-        return newD;
-      })
-    };
-  }),
+      editDonor: (id, updates) => set(state => {
+        return {
+          donors: state.donors.map(d => {
+            if (d.id !== id) return d;
+            const newD = { ...d, ...updates };
+            newD.name = `${newD.firstName} ${newD.lastName}`.trim();
+            return newD;
+          })
+        };
+      }),
 
-  updateDonorNotes: (donorId, notes) => set((state) => ({
-    donors: state.donors.map(d => d.id === donorId ? { ...d, notes } : d)
-  })),
+      updateDonorNotes: (donorId, notes) => set((state) => ({
+        donors: state.donors.map(d => d.id === donorId ? { ...d, notes } : d)
+      })),
 
-  addSponsorshipDay: (donorId, day) => set((state) => ({
-    donors: state.donors.map(d => d.id === donorId
-      ? { ...d, sponsorshipDays: [...(d.sponsorshipDays || []), { ...day, id: uid() }] }
-      : d)
-  })),
+      addSponsorshipDay: (donorId, day) => set((state) => ({
+        donors: state.donors.map(d => d.id === donorId
+          ? { ...d, sponsorshipDays: [...(d.sponsorshipDays || []), { ...day, id: uid() }] }
+          : d)
+      })),
 
-  removeSponsorshipDay: (donorId, dayId) => set((state) => ({
-    donors: state.donors.map(d => d.id === donorId
-      ? { ...d, sponsorshipDays: (d.sponsorshipDays || []).filter(s => s.id !== dayId) }
-      : d)
-  })),
+      removeSponsorshipDay: (donorId, dayId) => set((state) => ({
+        donors: state.donors.map(d => d.id === donorId
+          ? { ...d, sponsorshipDays: (d.sponsorshipDays || []).filter(s => s.id !== dayId) }
+          : d)
+      })),
 
-  addTransaction: (tx) => set((state) => {
-    const newTx = { ...tx, id: uid() };
-    const effectiveAmount = tx.amountCAD ?? tx.amount;
-    const updatedDonors = state.donors.map(d => {
-      if (d.id !== tx.donorId) return d;
-      if (tx.type === 'approved') return { ...d, totalGiven: d.totalGiven + effectiveAmount };
-      if (tx.type === 'recording') return { ...d, balanceOwed: Math.max(0, d.balanceOwed - effectiveAmount) };
-      return d;
-    });
+      addTransaction: (tx) => set((state) => {
+        const newTx = { ...tx, id: uid() };
+        const effectiveAmount = tx.amountCAD ?? tx.amount;
+        const updatedDonors = state.donors.map(d => {
+          if (d.id !== tx.donorId) return d;
+          if (tx.type === 'approved') return { ...d, totalGiven: d.totalGiven + effectiveAmount };
+          if (tx.type === 'recording') return { ...d, balanceOwed: Math.max(0, d.balanceOwed - effectiveAmount) };
+          return d;
+        });
 
-    let updatedAccounts = state.accounts;
-    if (tx.type === 'approved') {
-      updatedAccounts = updatedAccounts.map(a => {
-        let newBalance = a.balance;
-        const amountToAdd = (a.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
-
-        if (a.id === tx.sourceAccountId) {
-           newBalance += amountToAdd; // Source Bank gets cash
+        let updatedAccounts = state.accounts;
+        if (tx.type === 'approved') {
+          updatedAccounts = updatedAccounts.map(a => {
+            let newBalance = a.balance;
+            const amountToAdd = (a.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
+            if (a.id === tx.sourceAccountId) newBalance += amountToAdd;
+            if (a.id === tx.offsetAccountId) newBalance += amountToAdd;
+            return { ...a, balance: newBalance };
+          });
         }
-        if (a.id === tx.offsetAccountId) {
-           newBalance += amountToAdd; // Revenue account gets credited
-        }
-        return { ...a, balance: newBalance };
-      });
-    }
 
-    const updatedFundraisers = tx.fundraiserId && tx.type === 'approved'
-      ? state.fundraisers.map(f => f.id === tx.fundraiserId
-          ? { ...f, balanceOwed: f.balanceOwed + (tx.amount * f.percentage / 100) }
+        const updatedFundraisers = tx.fundraiserId && tx.type === 'approved'
+          ? state.fundraisers.map(f => f.id === tx.fundraiserId
+              ? { ...f, balanceOwed: f.balanceOwed + (tx.amount * f.percentage / 100) }
+              : f)
+          : state.fundraisers;
+          
+        return { transactions: [newTx, ...state.transactions], donors: updatedDonors, accounts: updatedAccounts, fundraisers: updatedFundraisers };
+      }),
+
+      updateTransaction: (id, updates) => set((state) => ({
+        transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
+      })),
+
+      editTransaction: (id, updates) => set((state) => ({
+        transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
+      })),
+
+      addRecurring: (rec) => set((state) => ({
+        recurringPayments: [...state.recurringPayments, { ...rec, id: uid() }]
+      })),
+
+      toggleRecurring: (id) => set((state) => ({
+        recurringPayments: state.recurringPayments.map(r => r.id === id ? { ...r, active: !r.active } : r)
+      })),
+
+      addFundraiser: (f) => set((state) => ({
+        fundraisers: [...state.fundraisers, { ...f, id: uid(), balanceOwed: 0, internalAccountBalance: 0 }]
+      })),
+
+      payOutFundraiser: (id) => set((state) => ({
+        fundraisers: state.fundraisers.map(f => f.id === id ? { ...f, balanceOwed: 0 } : f)
+      })),
+
+      chargeToFundraiser: (id, amount) => set((state) => ({
+        fundraisers: state.fundraisers.map(f => f.id === id
+          ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - amount), internalAccountBalance: (f.internalAccountBalance || 0) + amount }
           : f)
-      : state.fundraisers;
-      
-    return { transactions: [newTx, ...state.transactions], donors: updatedDonors, accounts: updatedAccounts, fundraisers: updatedFundraisers };
-  }),
+      })),
 
-  updateTransaction: (id, updates) => set((state) => ({
-    transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
-  })),
+      addAccount: (acc) => set((state) => ({
+        accounts: [...state.accounts, { ...acc, id: uid() }]
+      })),
 
-  editTransaction: (id, updates) => set((state) => ({
-    transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
-  })),
+      transferBetweenAccounts: (transfer) => set((state) => {
+      const newTransfer = { ...transfer, id: uid() };
+        const updatedAccounts = state.accounts.map(a => {
+          if (a.id === transfer.fromAccountId) return { ...a, balance: a.balance - transfer.amount };
+          if (a.id === transfer.toAccountId) return { ...a, balance: a.balance + transfer.amount };
+          return a;
+        });
+        return { accounts: updatedAccounts, accountTransfers: [newTransfer, ...state.accountTransfers] };
+      }),
 
-  addRecurring: (rec) => set((state) => ({
-    recurringPayments: [...state.recurringPayments, { ...rec, id: uid() }]
-  })),
+      addBill: (bill) => set((state) => ({
+        bills: [...state.bills, { ...bill, id: uid() }]
+      })),
 
-  toggleRecurring: (id) => set((state) => ({
-    recurringPayments: state.recurringPayments.map(r => r.id === id ? { ...r, active: !r.active } : r)
-  })),
+      editBill: (id, updates) => set((state) => ({
+        bills: state.bills.map(b => b.id === id ? { ...b, ...updates } : b)
+      })),
 
-  addFundraiser: (f) => set((state) => ({
-    fundraisers: [...state.fundraisers, { ...f, id: uid(), balanceOwed: 0, internalAccountBalance: 0 }]
-  })),
+      markBillPaid: (id, sourceAccountId, offsetAccountId) => set((state) => {
+        const bill = state.bills.find(b => b.id === id);
+        if (!bill) return state;
 
-  payOutFundraiser: (id) => set((state) => ({
-    fundraisers: state.fundraisers.map(f => f.id === id ? { ...f, balanceOwed: 0 } : f)
-  })),
+        const finalSource = sourceAccountId || bill.sourceAccountId;
+        const finalOffset = offsetAccountId || bill.offsetAccountId;
 
-  chargeToFundraiser: (id, amount) => set((state) => ({
-    fundraisers: state.fundraisers.map(f => f.id === id
-      ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - amount), internalAccountBalance: (f.internalAccountBalance || 0) + amount }
-      : f)
-  })),
+        let updatedAccounts = state.accounts.map(a => {
+          let newBalance = a.balance;
+          if (a.id === finalSource) newBalance -= bill.amount;
+          if (a.id === finalOffset) newBalance += bill.amount;
+          return { ...a, balance: newBalance };
+        });
 
-  addAccount: (acc) => set((state) => ({
-    accounts: [...state.accounts, { ...acc, id: uid() }]
-  })),
+        let updatedFundraisers = state.fundraisers;
+        const offsetAcc = state.accounts.find(a => a.id === finalOffset);
+        if (offsetAcc && offsetAcc.linkedFundraiserId) {
+          updatedFundraisers = state.fundraisers.map(f => f.id === offsetAcc.linkedFundraiserId
+            ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount), internalAccountBalance: (f.internalAccountBalance || 0) + bill.amount }
+            : f);
+        }
 
-  transferBetweenAccounts: (transfer) => set((state) => {
-    const newTransfer = { ...transfer, id: uid() };
-    const updatedAccounts = state.accounts.map(a => {
-      if (a.id === transfer.fromAccountId) return { ...a, balance: a.balance - transfer.amount };
-      if (a.id === transfer.toAccountId) return { ...a, balance: a.balance + transfer.amount };
-      return a;
-    });
-    return { accounts: updatedAccounts, accountTransfers: [newTransfer, ...state.accountTransfers] };
-  }),
+        return {
+          bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId: finalSource, offsetAccountId: finalOffset } : b),
+          accounts: updatedAccounts,
+          fundraisers: updatedFundraisers
+        };
+      }),
 
-  addBill: (bill) => set((state) => ({
-    bills: [...state.bills, { ...bill, id: uid() }]
-  })),
+      addTask: (task) => set((state) => ({
+        tasks: [{ ...task, id: uid(), createdAt: new Date().toISOString().split('T')[0] }, ...state.tasks]
+      })),
 
-  editBill: (id, updates) => set((state) => ({
-    bills: state.bills.map(b => b.id === id ? { ...b, ...updates } : b)
-  })),
+      completeTask: (id) => set((state) => ({
+        tasks: state.tasks.map(t => t.id === id ? { ...t, completed: true } : t)
+      })),
 
-  markBillPaid: (id, sourceAccountId, offsetAccountId) => set((state) => {
-    const bill = state.bills.find(b => b.id === id);
-    if (!bill) return state;
-
-    const finalSource = sourceAccountId || bill.sourceAccountId;
-    const finalOffset = offsetAccountId || bill.offsetAccountId;
-
-    let updatedAccounts = state.accounts.map(a => {
-      let newBalance = a.balance;
-      if (a.id === finalSource) newBalance -= bill.amount; // Bank loses money
-      if (a.id === finalOffset) newBalance += bill.amount; // Expense account increases
-      return { ...a, balance: newBalance };
-    });
-
-    let updatedFundraisers = state.fundraisers;
-    // Sync with fundraiser if offset is a payroll account
-    const offsetAcc = state.accounts.find(a => a.id === finalOffset);
-    if (offsetAcc && offsetAcc.linkedFundraiserId) {
-      updatedFundraisers = state.fundraisers.map(f => f.id === offsetAcc.linkedFundraiserId
-        ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount), internalAccountBalance: (f.internalAccountBalance || 0) + bill.amount }
-        : f);
+      deleteTask: (id) => set(state => ({
+        tasks: state.tasks.filter(t => t.id !== id)
+      })),
+    }),
+    {
+      name: 'charity-store',
+      storage: createJSONStorage(() => cloudStorage),
     }
-
-    return {
-      bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId: finalSource, offsetAccountId: finalOffset } : b),
-      accounts: updatedAccounts,
-      fundraisers: updatedFundraisers
-    };
-  }),
-
-  addTask: (task) => set((state) => ({
-    tasks: [{ ...task, id: uid(), createdAt: new Date().toISOString().split('T')[0] }, ...state.tasks]
-  })),
-
-  completeTask: (id) => set((state) => ({
-    tasks: state.tasks.map(t => t.id === id ? { ...t, completed: true } : t)
-  })),
-
-  deleteTask: (id) => set(state => ({
-    tasks: state.tasks.filter(t => t.id !== id)
-  })),
-}),
-{
-  name: 'charity-store',
-  storage: createJSONStorage(() => cloudStorage),
-}
-)
+  )
 );

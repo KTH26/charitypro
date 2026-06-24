@@ -20,9 +20,32 @@ export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
     address: editDonorData?.address || '', 
     displayId: editDonorData?.displayId || '',
     fundraiserId: editDonorData?.fundraiserId || '', 
-    notes: editDonorData?.notes || ''
+    notes: editDonorData?.notes || '',
+    hebFirstName: editDonorData?.hebFirstName || '',
+    hebLastName: editDonorData?.hebLastName || '',
+    title: editDonorData?.title || '',
+    postTitle: editDonorData?.postTitle || '',
+    doubleNames: editDonorData?.doubleNames || '',
+    hisFather: editDonorData?.hisFather || '',
+    herFather: editDonorData?.herFather || '',
+    householdFullName: editDonorData?.householdFullName || '',
+    allMaiden: editDonorData?.allMaiden || '',
+    homePhone: editDonorData?.homePhone || '',
+    mobilePhone: editDonorData?.mobilePhone || '',
+    mobilePhone2: editDonorData?.mobilePhone2 || '',
+    phone3: editDonorData?.phone3 || '',
+    confidentialMobile: editDonorData?.confidentialMobile || '',
+    confidentialMobile2: editDonorData?.confidentialMobile2 || '',
+    addrBuildingNum: editDonorData?.addrBuildingNum || '',
+    addrStreet: editDonorData?.addrStreet || '',
+    addrApt: editDonorData?.addrApt || '',
+    addrType: editDonorData?.addrType || '',
+    addrNo: editDonorData?.addrNo || '',
+    addrPostalCode: editDonorData?.addrPostalCode || '',
+    addrLandlord: editDonorData?.addrLandlord || '',
   });
   const [success, setSuccess] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const validate = () => {
@@ -43,6 +66,7 @@ export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
     if (Object.keys(e).length > 0) { setErrors(e); return; }
     
     const donorData = {
+      ...form,
       firstName: form.firstName.trim(),
       lastName: form.lastName.trim(),
       email: form.email.trim(),
@@ -146,6 +170,43 @@ export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
                     rows={3}
                   />
                 </div>
+                
+                {/* Advanced Toggle */}
+                <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '8px' }}>
+                  <button type="button" className="btn btn-ghost" onClick={() => setShowAdvanced(!showAdvanced)} style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+                    {showAdvanced ? 'Hide Advanced Hebrew & Address Fields ▲' : 'Show Advanced Hebrew & Address Fields ▼'}
+                  </button>
+                </div>
+
+                {showAdvanced && (
+                  <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', background: 'var(--bg-input)', padding: '20px', borderRadius: '12px' }}>
+                    {/* Hebrew Info */}
+                    <div className="form-group" style={{ margin: 0 }}><label>Title (פאר טיטל)</label><input type="text" value={form.title} onChange={e => handle('title', e.target.value)} dir="rtl" /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Hebrew First Name (ערשטע נאמען)</label><input type="text" value={form.hebFirstName} onChange={e => handle('hebFirstName', e.target.value)} dir="rtl" /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Hebrew Last Name (משפחה נאמען)</label><input type="text" value={form.hebLastName} onChange={e => handle('hebLastName', e.target.value)} dir="rtl" /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Post Title (נאך טיטל)</label><input type="text" value={form.postTitle} onChange={e => handle('postTitle', e.target.value)} dir="rtl" /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>His Father (זיין טאטע)</label><input type="text" value={form.hisFather} onChange={e => handle('hisFather', e.target.value)} dir="rtl" /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Her Father (איר טאטע)</label><input type="text" value={form.herFather} onChange={e => handle('herFather', e.target.value)} dir="rtl" /></div>
+                    
+                    <div style={{ gridColumn: '1 / -1', borderBottom: '1px solid var(--border)', margin: '10px 0' }}></div>
+
+                    {/* Extended Contact */}
+                    <div className="form-group" style={{ margin: 0 }}><label>Home Phone</label><input type="text" value={form.homePhone} onChange={e => handle('homePhone', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Mobile 1</label><input type="text" value={form.mobilePhone} onChange={e => handle('mobilePhone', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Mobile 2</label><input type="text" value={form.mobilePhone2} onChange={e => handle('mobilePhone2', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Private Mobile 1</label><input type="text" value={form.confidentialMobile} onChange={e => handle('confidentialMobile', e.target.value)} /></div>
+
+                    <div style={{ gridColumn: '1 / -1', borderBottom: '1px solid var(--border)', margin: '10px 0' }}></div>
+
+                    {/* Extended Address */}
+                    <div className="form-group" style={{ margin: 0 }}><label>No.</label><input type="text" value={form.addrNo} onChange={e => handle('addrNo', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Street</label><input type="text" value={form.addrStreet} onChange={e => handle('addrStreet', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Type (St/Ave/Blvd)</label><input type="text" value={form.addrType} onChange={e => handle('addrType', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Building #</label><input type="text" value={form.addrBuildingNum} onChange={e => handle('addrBuildingNum', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Apt.</label><input type="text" value={form.addrApt} onChange={e => handle('addrApt', e.target.value)} /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Postal Code</label><input type="text" value={form.addrPostalCode} onChange={e => handle('addrPostalCode', e.target.value)} /></div>
+                  </div>
+                )}
               </div>
             </div>
 

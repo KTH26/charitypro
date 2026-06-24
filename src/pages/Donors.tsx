@@ -84,13 +84,35 @@ export const Donors: React.FC = () => {
             const existing = donors.find(d => d.displayId === displayId);
             
             const donorUpdates = {
-              firstName: row['HID First name']?.toString().trim() || row['HH Given Names']?.toString().trim() || '',
-              lastName: row['Last name']?.toString().trim() || row['HH Surname']?.toString().trim() || '',
+              firstName: row['HID First name']?.toString().trim() || row[' title ערשטע נאמען']?.toString().trim() || row['HH Given Names']?.toString().trim() || '',
+              lastName: row['Last name']?.toString().trim() || row['משפחה נאמען']?.toString().trim() || row['HH Surname']?.toString().trim() || '',
               email: row['Email']?.toString().trim() || '',
               phone: row['MobilePhone']?.toString().trim() || row['HomePhone']?.toString().trim() || '',
-              address: row['HID Adress']?.toString().trim() || row['HH Address (columns J, I, and H combined)']?.toString().trim() || '',
+              address: row['Street'] ? `${row['No.'] || ''} ${row['Street']} ${row['Type'] || ''} ${row['Building #'] ? `Bldg ${row['Building #']}` : ''} ${row['Apt.'] ? `Apt ${row['Apt.']}` : ''} ${row['Postel Code'] || ''}`.trim() : (row['HID Adress']?.toString().trim() || row['HH Address (columns J, I, and H combined)']?.toString().trim() || ''),
               notes: row['HID Note']?.toString().trim() || '',
               displayId,
+              hebFirstName: row[' title ערשטע נאמען']?.toString().trim() || '',
+              hebLastName: row['משפחה נאמען']?.toString().trim() || '',
+              title: row['טיטל']?.toString().trim() || '',
+              postTitle: row['נאך טיטל']?.toString().trim() || '',
+              doubleNames: row['דאפעלטע נעמען']?.toString().trim() || '',
+              hisFather: row['זיין טאטע']?.toString().trim() || '',
+              herFather: row['איר טאטע']?.toString().trim() || '',
+              householdFullName: row['Household Full Name']?.toString().trim() || '',
+              allMaiden: row['All Maiden']?.toString().trim() || '',
+              homePhone: row['HomePhone']?.toString().trim() || '',
+              mobilePhone: row['MobilePhone']?.toString().trim() || '',
+              mobilePhone2: row['MobilePhone2']?.toString().trim() || '',
+              phone3: row['Phone 3']?.toString().trim() || '',
+              confidentialMobile: row['Confidentiel Mobile Phone not to display']?.toString().trim() || '',
+              confidentialMobile2: row['2 Confidentiel Mobile Phone not to display']?.toString().trim() || '',
+              addrBuildingNum: row['Building #']?.toString().trim() || '',
+              addrStreet: row['Street']?.toString().trim() || '',
+              addrApt: row['Apt.']?.toString().trim() || '',
+              addrType: row['Type']?.toString().trim() || '',
+              addrNo: row['No.']?.toString().trim() || '',
+              addrPostalCode: row['Postel Code']?.toString().trim() || '',
+              addrLandlord: row['Landlord']?.toString().trim() || '',
             };
 
             if (existing) {
@@ -261,6 +283,50 @@ export const Donors: React.FC = () => {
                   </div>
                 ))}
               </div>
+
+              {/* Detailed Donor Info Sections */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+                {/* Hebrew/Family Info */}
+                <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Yiddish / Family Info</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '8px', fontSize: '0.85rem' }}>
+                    {selectedDonor.title && <><span style={{ color: 'var(--text-muted)' }}>Title:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.title}</span></>}
+                    {selectedDonor.hebFirstName && <><span style={{ color: 'var(--text-muted)' }}>First:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.hebFirstName}</span></>}
+                    {selectedDonor.hebLastName && <><span style={{ color: 'var(--text-muted)' }}>Last:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.hebLastName}</span></>}
+                    {selectedDonor.postTitle && <><span style={{ color: 'var(--text-muted)' }}>Post-Title:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.postTitle}</span></>}
+                    {selectedDonor.hisFather && <><span style={{ color: 'var(--text-muted)' }}>His Father:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.hisFather}</span></>}
+                    {selectedDonor.herFather && <><span style={{ color: 'var(--text-muted)' }}>Her Father:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.herFather}</span></>}
+                  </div>
+                </div>
+
+                {/* Additional Contact Info */}
+                <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Contact Details</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '8px', fontSize: '0.85rem' }}>
+                    {selectedDonor.homePhone && <><span style={{ color: 'var(--text-muted)' }}>Home:</span> <span>{selectedDonor.homePhone}</span></>}
+                    {selectedDonor.mobilePhone && <><span style={{ color: 'var(--text-muted)' }}>Mobile 1:</span> <span>{selectedDonor.mobilePhone}</span></>}
+                    {selectedDonor.mobilePhone2 && <><span style={{ color: 'var(--text-muted)' }}>Mobile 2:</span> <span>{selectedDonor.mobilePhone2}</span></>}
+                    {selectedDonor.phone3 && <><span style={{ color: 'var(--text-muted)' }}>Phone 3:</span> <span>{selectedDonor.phone3}</span></>}
+                    {selectedDonor.confidentialMobile && <><span style={{ color: 'var(--text-muted)' }}>Private 1:</span> <span>{selectedDonor.confidentialMobile}</span></>}
+                    {selectedDonor.confidentialMobile2 && <><span style={{ color: 'var(--text-muted)' }}>Private 2:</span> <span>{selectedDonor.confidentialMobile2}</span></>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Address Breakdown */}
+              <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
+                <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Full Address Breakdown</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', fontSize: '0.85rem' }}>
+                  {selectedDonor.addrNo && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>No.</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrNo}</div></div>}
+                  {selectedDonor.addrStreet && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Street</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrStreet}</div></div>}
+                  {selectedDonor.addrType && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Type</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrType}</div></div>}
+                  {selectedDonor.addrBuildingNum && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Building #</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrBuildingNum}</div></div>}
+                  {selectedDonor.addrApt && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Apt</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrApt}</div></div>}
+                  {selectedDonor.addrPostalCode && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Postal Code</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrPostalCode}</div></div>}
+                  {selectedDonor.addrLandlord && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Landlord</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrLandlord}</div></div>}
+                </div>
+              </div>
+
               {selectedDonor.cards && selectedDonor.cards.length > 0 && (
                 <div>
                   <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>{T('cards_on_file')}</div>
