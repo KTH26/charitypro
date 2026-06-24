@@ -18,7 +18,7 @@ const FREQUENCIES = [
 type TabType = 'one_time' | 'recurring' | 'pledge';
 
 export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
-  const { donors, fundraisers, addTransaction, addRecurring, currency } = useStore();
+  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate } = useStore();
   const donor = donors.find(d => d.id === donorId);
   const [tab, setTab] = useState<TabType>('one_time');
   const [success, setSuccess] = useState(false);
@@ -31,6 +31,10 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [fundraiserId, setFundraiserId] = useState('');
   const [notes, setNotes] = useState('');
   const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Exchange rate state
+  const [useGlobalRate, setUseGlobalRate] = useState(true);
+  const [customRate, setCustomRate] = useState('');
 
   // Recurring form state
   const [recAmount, setRecAmount] = useState('');
@@ -41,11 +45,20 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
 
   if (!donor) return null;
 
+  const getAmountCAD = (amt: string) => {
+    if (!amt || isNaN(+amt)) return 0;
+    const num = parseFloat(amt);
+    if (txCurrency === 'CAD') return num;
+    const rate = useGlobalRate ? exchangeRate : (parseFloat(customRate) || exchangeRate);
+    return num / rate; // If rate is 0.74 (CAD -> USD), then USD -> CAD is / 0.74
+  };
+
   const handleOneTime = () => {
     if (!amount || isNaN(+amount)) return;
     addTransaction({
       donorId,
       amount: parseFloat(amount),
+      amountCAD: getAmountCAD(amount),
       date: txDate,
       type: method === 'check' ? 'pending' : 'approved',
       method,
@@ -63,6 +76,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
     addTransaction({
       donorId,
       amount: parseFloat(amount),
+      amountCAD: getAmountCAD(amount),
       date: txDate,
       type: 'recording',
       method,
@@ -152,6 +166,29 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                       ))}
                     </div>
                   </div>
+
+                  {txCurrency === 'USD' && (
+                    <div style={{ background: 'var(--yellow-bg)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '16px', borderRadius: '12px' }}>
+                      <div style={{ fontWeight: 700, color: 'var(--yellow)', marginBottom: '12px' }}>USD Exchange Rate</div>
+                      <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                          <input type="radio" checked={useGlobalRate} onChange={() => setUseGlobalRate(true)} />
+                          Use Global Rate ({exchangeRate})
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                          <input type="radio" checked={!useGlobalRate} onChange={() => setUseGlobalRate(false)} />
+                          Custom Rate:
+                        </label>
+                        {!useGlobalRate && (
+                          <input type="number" placeholder="0.74" value={customRate} onChange={e => setCustomRate(e.target.value)} 
+                                 style={{ width: '80px', padding: '6px 10px', fontSize: '0.9rem' }} />
+                        )}
+                      </div>
+                      <div style={{ marginTop: '12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        Equivalent: <strong style={{ color: 'var(--navy)' }}>${getAmountCAD(amount).toFixed(2)} CAD</strong> added to donor balance.
+                      </div>
+                    </div>
+                  )}
 
                   {/* Method */}
                   <div className="form-group" style={{ margin: 0 }}>

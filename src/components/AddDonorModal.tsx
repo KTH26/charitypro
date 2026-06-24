@@ -1,18 +1,25 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
-import { useStore } from '../store';
+import { useStore, type Donor } from '../store';
 
 interface Props {
   onClose: () => void;
+  editDonorData?: Donor;
 }
 
 import { useT } from '../i18n';
 
-export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
-  const { addDonor, fundraisers, isRtl } = useStore();
+export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
+  const { addDonor, editDonor, fundraisers, isRtl } = useStore();
   const T = useT(isRtl);
   const [form, setForm] = useState({
-    firstName: '', lastName: '', email: '', phone: '', address: '', fundraiserId: '', notes: ''
+    firstName: editDonorData?.firstName || '', 
+    lastName: editDonorData?.lastName || '', 
+    email: editDonorData?.email || '', 
+    phone: editDonorData?.phone || '', 
+    address: editDonorData?.address || '', 
+    fundraiserId: editDonorData?.fundraiserId || '', 
+    notes: editDonorData?.notes || ''
   });
   const [success, setSuccess] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -33,7 +40,8 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
   const handleSubmit = () => {
     const e = validate();
     if (Object.keys(e).length > 0) { setErrors(e); return; }
-    addDonor({
+    
+    const donorData = {
       firstName: form.firstName.trim(),
       lastName: form.lastName.trim(),
       email: form.email.trim(),
@@ -41,7 +49,14 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
       address: form.address.trim(),
       fundraiserId: form.fundraiserId || undefined,
       notes: form.notes.trim(),
-    });
+    };
+
+    if (editDonorData) {
+      editDonor(editDonorData.id, donorData);
+    } else {
+      addDonor(donorData);
+    }
+    
     setSuccess(true);
     setTimeout(onClose, 1800);
   };
@@ -51,9 +66,9 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
       <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div>
-            <h2 style={{ margin: 0 }}>Add New Donor</h2>
+            <h2 style={{ margin: 0 }}>{editDonorData ? 'Edit Donor' : 'Add New Donor'}</h2>
             <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>
-              Fill in the donor details below
+              {editDonorData ? 'Update donor details below' : 'Fill in the donor details below'}
             </div>
           </div>
           <button className="modal-close" onClick={onClose}><X size={20} /></button>
@@ -62,8 +77,8 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
         {success ? (
           <div className="modal-body" style={{ textAlign: 'center', padding: '60px 40px' }}>
             <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'var(--green-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: '2.5rem' }}>✅</div>
-            <h3 style={{ color: 'var(--green)', margin: '0 0 8px' }}>Donor Added!</h3>
-            <p style={{ color: 'var(--text-muted)', margin: 0 }}>{form.firstName} {form.lastName} has been added to the system.</p>
+            <h3 style={{ color: 'var(--green)', margin: '0 0 8px' }}>{editDonorData ? 'Donor Updated!' : 'Donor Added!'}</h3>
+            <p style={{ color: 'var(--text-muted)', margin: 0 }}>{form.firstName} {form.lastName} has been {editDonorData ? 'updated' : 'added to the system'}.</p>
           </div>
         ) : (
           <>
@@ -129,7 +144,7 @@ export const AddDonorModal: React.FC<Props> = ({ onClose }) => {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={onClose}>{T('cancel')}</button>
               <button className="btn btn-primary" onClick={handleSubmit}>
-                + {T('add_donor')}
+                {editDonorData ? 'Save Changes' : `+ ${T('add_donor')}`}
               </button>
             </div>
           </>

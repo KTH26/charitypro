@@ -1,14 +1,30 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Calendar, Plus, X, AlertTriangle } from 'lucide-react';
+import { Calendar, Plus, X, AlertTriangle, Edit2, ArrowRight } from 'lucide-react';
+import type { Bill } from '../store';
+import { useLocation } from 'react-router-dom';
+import { useT } from '../i18n';
 
 const CATEGORIES = ['Ambulance Operations', 'Administration', 'Fundraising', 'Events', 'Equipment', 'Other'];
 
 export const Expenses: React.FC = () => {
-  const { bills, addBill, markBillPaid } = useStore();
+  const { isRtl, bills, addBill, markBillPaid, bankAccounts, editBill } = useStore();
+  const T = useT(isRtl);
   const [showAdd, setShowAdd] = useState(false);
   const [confirmPay, setConfirmPay] = useState<string | null>(null);
+  const [payBankId, setPayBankId] = useState<string>('');
+  const [editBillData, setEditBillData] = useState<Bill | null>(null);
   const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: 'Ambulance Operations', status: 'pending' as 'pending' | 'urgent' });
+  const location = useLocation();
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const billIdParam = params.get('billId');
+    if (billIdParam) {
+      const b = bills.find(x => x.id === billIdParam);
+      if (b) setEditBillData(b);
+    }
+  }, [location.search, bills]);
 
   const handleAdd = () => {
     if (!form.vendor || !form.amount || !form.dueDate) return;
@@ -53,14 +69,14 @@ export const Expenses: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
             <div>
               <h2 style={{ margin: '0 0 4px', fontSize: '1.15rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
-                Upcoming Bills
+                {T('upcoming_bills')}
               </h2>
               <div style={{ color: 'var(--red)', fontWeight: 700, fontSize: '0.95rem' }}>
-                Total Due: ${totalDue.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+                {T('total_due')}: ${totalDue.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
               </div>
             </div>
             <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>
-              <Plus size={14} /> Add Bill
+              <Plus size={14} /> {T('add_bill')}
             </button>
           </div>
 
@@ -85,7 +101,8 @@ export const Expenses: React.FC = () => {
                   <div style={{ fontWeight: 800, fontFamily: 'Outfit, sans-serif', color: bill.status === 'urgent' ? 'var(--red)' : 'var(--navy)' }}>
                     ${bill.amount.toFixed(2)}
                   </div>
-                  <button className="btn btn-secondary btn-sm" onClick={() => setConfirmPay(bill.id)}>Pay</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditBillData(bill)}><Edit2 size={14} /></button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => { setConfirmPay(bill.id); setPayBankId(''); }}>Pay</button>
                 </div>
               </div>
             ))}
@@ -96,7 +113,7 @@ export const Expenses: React.FC = () => {
 
           {paidBills.length > 0 && (
             <div style={{ marginTop: '20px' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>Recently Paid</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>{T('recently_paid')}</div>
               {paidBills.map(bill => (
                 <div key={bill.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-light)', opacity: 0.6 }}>
                   <div style={{ fontWeight: 600 }}>{bill.vendor}</div>
@@ -113,7 +130,7 @@ export const Expenses: React.FC = () => {
         {/* Expense Categories */}
         <div className="card">
           <h2 style={{ margin: '0 0 20px', fontSize: '1.15rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
-            Expense Categories (YTD)
+            {T('expense_categories')}
           </h2>
           <div className="table-container" style={{ marginBottom: '20px' }}>
             <table>
@@ -205,7 +222,7 @@ export const Expenses: React.FC = () => {
         <div className="modal-overlay" onClick={() => setConfirmPay(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 style={{ margin: 0 }}>Mark as Paid</h2>
+              <h2 style={{ margin: 0 }}>{T('mark_paid')}</h2>
               <button className="modal-close" onClick={() => setConfirmPay(null)}><X size={20} /></button>
             </div>
             <div className="modal-body" style={{ textAlign: 'center', padding: '40px' }}>
@@ -213,10 +230,74 @@ export const Expenses: React.FC = () => {
               <p style={{ color: 'var(--text-secondary)' }}>
                 Mark <strong>{bills.find(b => b.id === confirmPay)?.vendor}</strong> (${bills.find(b => b.id === confirmPay)?.amount.toFixed(2)}) as paid?
               </p>
+              <div className="form-group" style={{ marginTop: '20px', textAlign: 'left' }}>
+                <label>Payment Account</label>
+                <div style={{ fontSize: '0.8rem', color: 'var(--navy-light)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <a href="/accounting" style={{ color: 'inherit', textDecoration: 'none' }}>Manage accounts in Accounting <ArrowRight size={12} /></a>
+                </div>
+                <select value={payBankId} onChange={e => setPayBankId(e.target.value)}>
+                  <option value="">— Select Account (Required) —</option>
+                  <optgroup label="Standard Bank Accounts">
+                    {bankAccounts.filter(a => !a.isInternal).map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance.toLocaleString()})</option>)}
+                  </optgroup>
+                  <optgroup label="Fundraiser Payroll Accounts">
+                    {bankAccounts.filter(a => a.isInternal).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </optgroup>
+                </select>
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setConfirmPay(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => { markBillPaid(confirmPay); setConfirmPay(null); }}>✅ Confirm Paid</button>
+              <button className="btn btn-primary" disabled={!payBankId} onClick={() => { markBillPaid(confirmPay, payBankId); setConfirmPay(null); }}>✅ Confirm Paid</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Bill Modal */}
+      {editBillData && (
+        <div className="modal-overlay" onClick={() => setEditBillData(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ margin: 0 }}>Edit Bill</h2>
+              <button className="modal-close" onClick={() => setEditBillData(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'grid', gap: '16px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Vendor / Payee</label>
+                  <input type="text" value={editBillData.vendor} onChange={e => setEditBillData({ ...editBillData, vendor: e.target.value })} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Amount</label>
+                    <input type="number" value={editBillData.amount} onChange={e => setEditBillData({ ...editBillData, amount: parseFloat(e.target.value) || 0 })} />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Due Date</label>
+                    <input type="date" value={editBillData.dueDate} onChange={e => setEditBillData({ ...editBillData, dueDate: e.target.value })} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Category</label>
+                    <select value={editBillData.category} onChange={e => setEditBillData({ ...editBillData, category: e.target.value })}>
+                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Priority</label>
+                    <select value={editBillData.status} onChange={e => setEditBillData({ ...editBillData, status: e.target.value as any })}>
+                      <option value="pending">Normal</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setEditBillData(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => { editBill(editBillData.id, editBillData); setEditBillData(null); }}>Save Changes</button>
             </div>
           </div>
         </div>

@@ -130,6 +130,7 @@ interface AppState {
 
   // Donor actions
   addDonor: (donor: Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
+  editDonor: (id: string, updates: Partial<Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>>) => void;
   updateDonorNotes: (donorId: string, notes: string) => void;
   addSponsorshipDay: (donorId: string, day: Omit<SponsorshipDay, 'id'>) => void;
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
@@ -137,6 +138,7 @@ interface AppState {
   // Transaction actions
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
+  editTransaction: (id: string, updates: Partial<Omit<Transaction, 'id'>>) => void;
 
   // Recurring actions
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
@@ -153,6 +155,7 @@ interface AppState {
 
   // Bill actions
   addBill: (bill: Omit<Bill, 'id'>) => void;
+  editBill: (id: string, updates: Partial<Omit<Bill, 'id'>>) => void;
   markBillPaid: (id: string, bankAccountId?: string) => void;
 
   // Task actions
@@ -249,6 +252,17 @@ export const useStore = create<AppState>((set) => ({
     };
   }),
 
+  editDonor: (id, updates) => set(state => {
+    return {
+      donors: state.donors.map(d => {
+        if (d.id !== id) return d;
+        const newD = { ...d, ...updates };
+        newD.name = `${newD.firstName} ${newD.lastName}`.trim();
+        return newD;
+      })
+    };
+  }),
+
   updateDonorNotes: (donorId, notes) => set((state) => ({
     donors: state.donors.map(d => d.id === donorId ? { ...d, notes } : d)
   })),
@@ -267,15 +281,22 @@ export const useStore = create<AppState>((set) => ({
 
   addTransaction: (tx) => set((state) => {
     const newTx = { ...tx, id: uid() };
+    const effectiveAmount = tx.amountCAD ?? tx.amount;
     const updatedDonors = state.donors.map(d => {
       if (d.id !== tx.donorId) return d;
-      if (tx.type === 'approved') return { ...d, totalGiven: d.totalGiven + tx.amount };
-      if (tx.type === 'recording') return { ...d, balanceOwed: Math.max(0, d.balanceOwed - tx.amount) };
+      if (tx.type === 'approved') return { ...d, totalGiven: d.totalGiven + effectiveAmount };
+      if (tx.type === 'recording') return { ...d, balanceOwed: Math.max(0, d.balanceOwed - effectiveAmount) };
       return d;
     });
     // Update bank account balance
     const updatedAccounts = tx.bankAccountId && tx.type === 'approved'
-      ? state.bankAccounts.map(a => a.id === tx.bankAccountId ? { ...a, balance: a.balance + tx.amount } : a)
+      ? state.bankAccounts.map(a => {
+          if (a.id !== tx.bankAccountId) return a;
+          // If transaction is USD but bank account is CAD, add effectiveAmount (which is amountCAD)
+          // Else add the raw amount.
+          const amountToAdd = (a.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
+          return { ...a, balance: a.balance + amountToAdd };
+        })
       : state.bankAccounts;
     // Update fundraiser balance if applicable
     const updatedFundraisers = tx.fundraiserId && tx.type === 'approved'
@@ -287,6 +308,10 @@ export const useStore = create<AppState>((set) => ({
   }),
 
   updateTransaction: (id, updates) => set((state) => ({
+    transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
+  })),
+
+  editTransaction: (id, updates) => set((state) => ({
     transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
   })),
 
@@ -330,14 +355,33 @@ export const useStore = create<AppState>((set) => ({
     bills: [...state.bills, { ...bill, id: uid() }]
   })),
 
+  editBill: (id, updates) => set((state) => ({
+    bills: state.bills.map(b => b.id === id ? { ...b, ...updates } : b)
+  })),
+
   markBillPaid: (id, bankAccountId) => set((state) => {
     const bill = state.bills.find(b => b.id === id);
-    const updatedAccounts = bankAccountId && bill
-      ? state.bankAccounts.map(a => a.id === bankAccountId ? { ...a, balance: a.balance - bill.amount } : a)
-      : state.bankAccounts;
+    if (!bill) return state;
+
+    let updatedAccounts = state.bankAccounts;
+    let updatedFundraisers = state.fundraisers;
+
+    if (bankAccountId) {
+      const bank = state.bankAccounts.find(a => a.id === bankAccountId);
+      if (bank) {
+        updatedAccounts = state.bankAccounts.map(a => a.id === bankAccountId ? { ...a, balance: a.balance - bill.amount } : a);
+        if (bank.isInternal && bank.linkedFundraiserId) {
+          updatedFundraisers = state.fundraisers.map(f => f.id === bank.linkedFundraiserId
+            ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount), internalAccountBalance: (f.internalAccountBalance || 0) + bill.amount }
+            : f);
+        }
+      }
+    }
+
     return {
-      bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0] } : b),
-      bankAccounts: updatedAccounts
+      bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], bankAccountId } : b),
+      bankAccounts: updatedAccounts,
+      fundraisers: updatedFundraisers
     };
   }),
 

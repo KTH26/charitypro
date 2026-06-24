@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
 import { RefreshCw, Plus, X, ArrowRight } from 'lucide-react';
+import { useT } from '../i18n';
 
 export const Accounting: React.FC = () => {
-  const { bankAccounts, accountTransfers, transactions, addBankAccount, transferBetweenAccounts, fundraisers } = useStore();
+  const { isRtl, bankAccounts, accountTransfers, transactions, addBankAccount, transferBetweenAccounts, fundraisers } = useStore();
+  const T = useT(isRtl);
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [accForm, setAccForm] = useState({ name: '', currency: 'CAD' as 'CAD' | 'USD', type: 'checking' as 'checking' | 'savings' });
@@ -51,10 +53,10 @@ export const Accounting: React.FC = () => {
       {/* Account Actions */}
       <div style={{ display: 'flex', gap: '12px' }}>
         <button className="btn btn-primary" onClick={() => setShowTransfer(true)}>
-          <ArrowRight size={16} /> Transfer Between Accounts
+          <ArrowRight size={16} /> {T('transfer_accounts')}
         </button>
         <button className="btn btn-secondary" onClick={() => setShowAddAccount(true)}>
-          <Plus size={16} /> Add Bank Account
+          <Plus size={16} /> {T('add_bank_account')}
         </button>
       </div>
 
@@ -65,7 +67,7 @@ export const Accounting: React.FC = () => {
         <div className="card" style={{ padding: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <div>
-              <h3 style={{ margin: '0 0 4px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Bank Feed Match</h3>
+              <h3 style={{ margin: '0 0 4px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{T('bank_feed')}</h3>
               <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>Automatically match bank deposits to donor records</p>
             </div>
             <button className="btn btn-secondary btn-sm"><RefreshCw size={14} /> Sync</button>
@@ -107,7 +109,7 @@ export const Accounting: React.FC = () => {
           {/* Transfer History */}
           {accountTransfers.length > 0 && (
             <div style={{ marginTop: '20px' }}>
-              <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>Recent Transfers</div>
+              <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>{T('recent_transfers')}</div>
               {accountTransfers.slice(0, 3).map(t => {
                 const from = bankAccounts.find(a => a.id === t.fromAccountId);
                 const to = bankAccounts.find(a => a.id === t.toAccountId);
@@ -127,7 +129,7 @@ export const Accounting: React.FC = () => {
           {/* Chart of Accounts */}
           <div className="card" style={{ padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Chart of Accounts</h3>
+              <h3 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{T('chart_accounts')}</h3>
               <button className="btn btn-primary btn-sm"><Plus size={12} /> New</button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -152,7 +154,7 @@ export const Accounting: React.FC = () => {
           {/* Internal Fundraiser Accounts */}
           <div className="card" style={{ padding: '24px' }}>
             <div style={{ marginBottom: '12px' }}>
-              <h3 style={{ margin: '0 0 4px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Internal Fundraiser Accounts</h3>
+              <h3 style={{ margin: '0 0 4px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{T('internal_accounts')}</h3>
               <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>Hidden accounts tracking expenses charged to each fundraiser</p>
             </div>
             {fundraisers.map(f => (
@@ -176,7 +178,7 @@ export const Accounting: React.FC = () => {
         <div className="modal-overlay" onClick={() => setShowAddAccount(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 style={{ margin: 0 }}>Add Bank Account</h2>
+              <h2 style={{ margin: 0 }}>{T('add_bank_account')}</h2>
               <button className="modal-close" onClick={() => setShowAddAccount(false)}><X size={20} /></button>
             </div>
             <div className="modal-body">
@@ -216,7 +218,7 @@ export const Accounting: React.FC = () => {
         <div className="modal-overlay" onClick={() => setShowTransfer(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 style={{ margin: 0 }}>Transfer Between Accounts</h2>
+              <h2 style={{ margin: 0 }}>{T('transfer_accounts')}</h2>
               <button className="modal-close" onClick={() => setShowTransfer(false)}><X size={20} /></button>
             </div>
             {transferSuccess ? (

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { AddDonorModal } from './AddDonorModal';
 import { PaymentModal } from './PaymentModal';
+import { BulkUploadModal } from './BulkUploadModal';
 import { useT } from '../i18n';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -20,6 +21,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const [showQuickMenu, setShowQuickMenu] = useState(false);
   const [showAddDonor, setShowAddDonor] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [payDonorId] = useState(donors[0]?.id || '');
 
   const pendingTasks = tasks.filter(t => !t.completed).length;
@@ -37,7 +39,13 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     {
       label: T('nav_contacts_cat'),
       items: [
-        { path: '/donors', label: T('nav_donors'), icon: Users },
+        { 
+          path: '/donors', label: T('nav_donors'), icon: Users,
+          subItems: [
+            { path: '/donors?tab=latch', label: 'Donor Latch Cards' },
+            { path: '/donors?tab=reviews', label: 'Donor Reviews' }
+          ]
+        },
         { path: '/coming-soon', label: T('nav_accounts'), icon: Building },
         { path: '/coming-soon', label: T('nav_lists'), icon: List },
       ]
@@ -116,27 +124,46 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                 {category.label}
               </div>
               {category.items.map((item, i) => (
-                <Link
-                  key={i}
-                  to={item.path}
-                  className={`nav-item ${location.pathname === item.path && item.path !== '/coming-soon' ? 'active' : ''}`}
-                  style={{
-                    padding: '8px 12px',
-                    marginBottom: '4px',
-                    borderRadius: '8px',
-                    opacity: item.path === '/coming-soon' ? 0.6 : 1
-                  }}
-                >
-                  <span className="nav-icon" style={{ opacity: 0.8 }}><item.icon size={18} /></span>
-                  <span style={{ flex: 1, fontSize: '0.9rem' }}>{item.label}</span>
-                  {item.badge !== undefined && (
-                    <span style={{
-                      background: item.badgeUrgent ? 'var(--red)' : 'rgba(255,255,255,0.2)',
-                      color: '#fff', borderRadius: '999px', padding: '2px 8px',
-                      fontSize: '0.7rem', fontWeight: 800, minWidth: '20px', textAlign: 'center'
-                    }}>{item.badge}</span>
+                <div key={i} style={{ marginBottom: '4px' }}>
+                  <Link
+                    to={item.path}
+                    className={`nav-item ${location.pathname === item.path && item.path !== '/coming-soon' ? 'active' : ''}`}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      opacity: item.path === '/coming-soon' ? 0.6 : 1
+                    }}
+                  >
+                    <span className="nav-icon" style={{ opacity: 0.8 }}><item.icon size={18} /></span>
+                    <span style={{ flex: 1, fontSize: '0.9rem' }}>{item.label}</span>
+                    {item.badge !== undefined && (
+                      <span style={{
+                        background: item.badgeUrgent ? 'var(--red)' : 'rgba(255,255,255,0.2)',
+                        color: '#fff', borderRadius: '999px', padding: '2px 8px',
+                        fontSize: '0.7rem', fontWeight: 800, minWidth: '20px', textAlign: 'center'
+                      }}>{item.badge}</span>
+                    )}
+                  </Link>
+                  {item.subItems && (
+                    <div style={{ paddingLeft: '32px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {item.subItems.map((sub, j) => (
+                        <Link
+                          key={j}
+                          to={sub.path}
+                          className="nav-item"
+                          style={{
+                            padding: '6px 12px',
+                            fontSize: '0.85rem',
+                            opacity: 0.7,
+                            borderRadius: '8px'
+                          }}
+                        >
+                          {sub.label}
+                        </Link>
+                      ))}
+                    </div>
                   )}
-                </Link>
+                </div>
               ))}
             </div>
           ))}
@@ -154,7 +181,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           </h1>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button className="btn btn-secondary" onClick={() => alert('Bulk upload modal coming soon!')} style={{ gap: '8px' }}>
+            <button className="btn btn-secondary" onClick={() => setShowBulkUpload(true)} style={{ gap: '8px' }}>
               <Upload size={16} /> {T('bulk_upload')}
             </button>
             <div style={{ padding: '8px 16px', fontSize: '0.875rem', fontWeight: 700, color: 'var(--green)', background: 'var(--green-bg)', borderRadius: '999px', border: '1px solid rgba(5,150,105,0.2)' }}>
@@ -200,6 +227,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
       {showAddDonor && <AddDonorModal onClose={() => setShowAddDonor(false)} />}
       {showPayment && payDonorId && <PaymentModal donorId={payDonorId} onClose={() => setShowPayment(false)} />}
+      {showBulkUpload && <BulkUploadModal onClose={() => setShowBulkUpload(false)} />}
     </div>
   );
 };

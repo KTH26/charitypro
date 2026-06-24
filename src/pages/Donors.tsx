@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { useStore } from '../store';
-import { Search, ChevronRight } from 'lucide-react';
+import { useStore, type Transaction } from '../store';
+import { Search, ChevronRight, Edit2, X } from 'lucide-react';
 import { PaymentModal } from '../components/PaymentModal';
 import { AddDonorModal } from '../components/AddDonorModal';
+import { useLocation } from 'react-router-dom';
 import { useT } from '../i18n';
 
 type DonorTab = 'overview' | 'transactions' | 'recurring' | 'declined' | 'notes';
@@ -12,17 +13,29 @@ export const Donors: React.FC = () => {
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterFundraiser, setFilterFundraiser] = useState('');
+  const [sortBy, setSortBy] = useState<'lastName' | 'firstName'>('lastName');
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
   const [showPayment, setShowPayment] = useState(false);
   const [showAddDonor, setShowAddDonor] = useState(false);
   const [donorTab, setDonorTab] = useState<DonorTab>('overview');
   const [notesDraft, setNotesDraft] = useState('');
+  const [editDonorActive, setEditDonorActive] = useState(false);
+  const [editTx, setEditTx] = useState<Transaction | null>(null);
+  const location = useLocation();
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const donorIdParam = params.get('donorId');
+    if (donorIdParam && donors.some(d => d.id === donorIdParam)) {
+      selectDonor(donorIdParam);
+    }
+  }, [location.search, donors]);
 
   const filteredDonors = donors.filter(d => {
     const matchSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.phone.includes(searchTerm) || d.email.toLowerCase().includes(searchTerm.toLowerCase());
     const matchFundraiser = filterFundraiser ? d.fundraiserId === filterFundraiser : true;
     return matchSearch && matchFundraiser;
-  }).sort((a, b) => a.lastName.localeCompare(b.lastName));
+  }).sort((a, b) => a[sortBy].localeCompare(b[sortBy]));
 
   const selectedDonor = donors.find(d => d.id === selectedDonorId);
 
@@ -49,8 +62,8 @@ export const Donors: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: selectedDonor ? '1fr 1.6fr' : '1fr', gap: '24px' }}>
-      {/* Donor List */}
+    <div style={{ display: 'grid', gridTemplateColumns: selectedDonor ? '380px 1fr' : '1fr', gap: '24px', direction: 'ltr' }}>
+      {/* LEFT COLUMN: DONOR LIST */}
       <div className="card" style={{ padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
@@ -67,6 +80,10 @@ export const Donors: React.FC = () => {
           <select className="filter-select" value={filterFundraiser} onChange={e => setFilterFundraiser(e.target.value)} style={{ minWidth: '150px' }}>
             <option value="">{T('all_fundraisers')}</option>
             {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          <select className="filter-select" value={sortBy} onChange={e => setSortBy(e.target.value as any)} style={{ minWidth: '150px' }}>
+            <option value="lastName">Sort by Last Name</option>
+            <option value="firstName">Sort by First Name</option>
           </select>
         </div>
 
@@ -123,7 +140,10 @@ export const Donors: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
               <div className="member-avatar" style={{ width: '64px', height: '64px', fontSize: '1.5rem' }}>{selectedDonor.firstName[0]}{selectedDonor.lastName[0]}</div>
               <div>
-                <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{selectedDonor.name}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{selectedDonor.name}</h2>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditDonorActive(true)}><Edit2 size={16} /></button>
+                </div>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span style={{ fontWeight: 800, color: 'var(--navy-light)', background: 'var(--blue-bg)', padding: '2px 8px', borderRadius: '4px' }}>
                     ID: {selectedDonor.displayId}
@@ -209,7 +229,7 @@ export const Donors: React.FC = () => {
           {donorTab === 'transactions' && (
             <div className="table-container">
               <table>
-                <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+                <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Status</th><th></th></tr></thead>
                 <tbody>
                   {donorTransactions.filter(t => t.type !== 'declined').map(t => (
                     <tr key={t.id}>
@@ -217,10 +237,13 @@ export const Donors: React.FC = () => {
                       <td style={{ fontWeight: 700 }}>${t.amount.toLocaleString()} {t.currency}</td>
                       <td>{methodLabel[t.method]}</td>
                       <td>{statusBadge(t.type)}</td>
+                      <td>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setEditTx(t)}><Edit2 size={14} /></button>
+                      </td>
                     </tr>
                   ))}
                   {donorTransactions.filter(t => t.type !== 'declined').length === 0 && (
-                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>{T('no_donors')}</td></tr>
+                    <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>{T('no_donors')}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -301,6 +324,60 @@ export const Donors: React.FC = () => {
       )}
       {showAddDonor && (
         <AddDonorModal onClose={() => setShowAddDonor(false)} />
+      )}
+      {editDonorActive && selectedDonor && (
+        <AddDonorModal editDonorData={selectedDonor} onClose={() => setEditDonorActive(false)} />
+      )}
+      
+      {/* Reusing Edit Transaction UI inline */}
+      {editTx && (
+        <div className="modal-overlay" onClick={() => setEditTx(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ margin: 0 }}>Edit Transaction</h2>
+              <button className="modal-close" onClick={() => setEditTx(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'grid', gap: '16px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Amount</label>
+                  <input type="number" value={editTx.amount} onChange={e => setEditTx({ ...editTx, amount: parseFloat(e.target.value) || 0 })} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Status</label>
+                    <select value={editTx.type} onChange={e => setEditTx({ ...editTx, type: e.target.value as any })}>
+                      <option value="approved">Approved</option>
+                      <option value="pending">Pending</option>
+                      <option value="recording">Recording / Pledge</option>
+                      <option value="declined">Declined</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Method</label>
+                    <select value={editTx.method} onChange={e => setEditTx({ ...editTx, method: e.target.value as any })}>
+                      <option value="credit_card">Credit Card</option>
+                      <option value="check">Check</option>
+                      <option value="cash">Cash</option>
+                      <option value="e_transfer">E-Transfer</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Date</label>
+                  <input type="date" value={editTx.date} onChange={e => setEditTx({ ...editTx, date: e.target.value })} />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setEditTx(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => { 
+                useStore.getState().editTransaction(editTx.id, editTx);
+                setEditTx(null); 
+              }}>Save Changes</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
