@@ -114,7 +114,8 @@ export const Donors: React.FC = () => {
               displayId,
               hebFirstName: row['ערשטע נאמען']?.toString().trim() || '',
               hebLastName: row['משפחה נאמען']?.toString().trim() || '',
-              title: row['title']?.toString().trim() || '',
+              preTitle: row['title']?.toString().trim() || '',
+              title: row['טיטל']?.toString().trim() || '',
               postTitle: row['נאך טיטל']?.toString().trim() || '',
               doubleNames: row['דאפעלטע נעמען']?.toString().trim() || '',
               hisFather: row['זיין טאטע']?.toString().trim() || '',
@@ -155,10 +156,10 @@ export const Donors: React.FC = () => {
     }
   };
 
-  // Hebrew full name helper: title + first + last
+  // Yiddish full name: preTitle · hebFirstName · hebLastName · title
   const hebFullName = (d: typeof selectedDonor) => {
     if (!d) return '';
-    const parts = [d.title, d.hebFirstName, d.hebLastName].filter(Boolean);
+    const parts = [d.preTitle, d.hebFirstName, d.hebLastName, d.title].filter(Boolean);
     return parts.join(' ');
   };
 
@@ -236,9 +237,9 @@ export const Donors: React.FC = () => {
                       </div>
                       <div>
                         <div className="member-name" style={{ fontSize: '0.95rem' }}>{donor.name}</div>
-                        {(donor.hebFirstName || donor.hebLastName) && (
+                        {(donor.preTitle || donor.hebFirstName || donor.hebLastName || donor.title) && (
                           <div style={{ fontSize: '0.82rem', color: 'var(--navy-light)', fontWeight: 600, direction: 'rtl', textAlign: 'left' }}>
-                            {[donor.title, donor.hebFirstName, donor.hebLastName].filter(Boolean).join(' ')}
+                            {[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ')}
                           </div>
                         )}
                         <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>ID: {donor.displayId} · {donor.email}</div>
@@ -369,10 +370,10 @@ export const Donors: React.FC = () => {
                     יידיש / Family Info
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', fontSize: '0.84rem' }}>
-                    {selectedDonor.title && (
+                    {selectedDonor.preTitle && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Title:</span>
-                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.title}</span>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Pre-Title:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.preTitle}</span>
                       </div>
                     )}
                     {selectedDonor.hebFirstName && (
@@ -385,6 +386,12 @@ export const Donors: React.FC = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
                         <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Last:</span>
                         <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.hebLastName}</span>
+                      </div>
+                    )}
+                    {selectedDonor.title && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Title:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.title}</span>
                       </div>
                     )}
                     {selectedDonor.postTitle && (
@@ -405,7 +412,7 @@ export const Donors: React.FC = () => {
                         <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.herFather}</span>
                       </div>
                     )}
-                    {!selectedDonor.title && !selectedDonor.hebFirstName && !selectedDonor.hebLastName && !selectedDonor.postTitle && !selectedDonor.hisFather && !selectedDonor.herFather && (
+                    {!selectedDonor.preTitle && !selectedDonor.title && !selectedDonor.hebFirstName && !selectedDonor.hebLastName && !selectedDonor.postTitle && !selectedDonor.hisFather && !selectedDonor.herFather && (
                       <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.8rem' }}>No Yiddish info on file</div>
                     )}
                   </div>

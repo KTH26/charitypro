@@ -16,9 +16,10 @@ export interface Donor {
   notes: string;
 
   // Hebrew / Yiddish Names
+  preTitle?: string;   // from "title" column — shown BEFORE first Yiddish name
   hebFirstName?: string;
   hebLastName?: string;
-  title?: string;
+  title?: string;      // from "טיטל" column — shown AFTER last Yiddish name
   postTitle?: string;
   doubleNames?: string;
   
