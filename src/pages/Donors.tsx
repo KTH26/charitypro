@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useStore, type Transaction } from '../store';
+import { useStore, type Transaction, type DonorSortKey } from '../store';
 import { Search, ChevronRight, Edit2, X } from 'lucide-react';
 import { PaymentModal } from '../components/PaymentModal';
 import { AddDonorModal } from '../components/AddDonorModal';
@@ -9,12 +9,23 @@ import Papa from 'papaparse';
 
 type DonorTab = 'overview' | 'transactions' | 'recurring' | 'declined' | 'notes';
 
+const SORT_OPTIONS: { value: DonorSortKey; label: string }[] = [
+  { value: 'lastName',     label: 'Sort by English Last Name' },
+  { value: 'firstName',    label: 'Sort by English First Name' },
+  { value: 'hebLastName',  label: 'Sort by Hebrew Last Name (יידיש)' },
+  { value: 'hebFirstName', label: 'Sort by Hebrew First Name (יידיש)' },
+];
+
 export const Donors: React.FC = () => {
-  const { donors, transactions, recurringPayments, updateDonorNotes, toggleRecurring, fundraisers, isRtl, googleSheetSyncUrl, setGoogleSheetSyncUrl, addDonor, editDonor } = useStore();
+  const {
+    donors, transactions, recurringPayments,
+    updateDonorNotes, toggleRecurring, fundraisers, isRtl,
+    googleSheetSyncUrl, setGoogleSheetSyncUrl, addDonor, editDonor,
+    donorSortBy, setDonorSortBy,
+  } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterFundraiser, setFilterFundraiser] = useState('');
-  const [sortBy, setSortBy] = useState<'lastName' | 'firstName'>('lastName');
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
   const [showPayment, setShowPayment] = useState(false);
   const [showAddDonor, setShowAddDonor] = useState(false);
@@ -35,11 +46,22 @@ export const Donors: React.FC = () => {
     }
   }, [location.search, donors]);
 
+  const getSortValue = (d: typeof donors[0], key: DonorSortKey): string => {
+    if (key === 'hebLastName')  return d.hebLastName  || d.lastName  || '';
+    if (key === 'hebFirstName') return d.hebFirstName || d.firstName || '';
+    return (d[key] as string) || '';
+  };
+
   const filteredDonors = donors.filter(d => {
-    const matchSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.phone.includes(searchTerm) || d.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchSearch =
+      d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      d.phone.includes(searchTerm) ||
+      d.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (d.hebFirstName || '').includes(searchTerm) ||
+      (d.hebLastName  || '').includes(searchTerm);
     const matchFundraiser = filterFundraiser ? d.fundraiserId === filterFundraiser : true;
     return matchSearch && matchFundraiser;
-  }).sort((a, b) => a[sortBy].localeCompare(b[sortBy]));
+  }).sort((a, b) => getSortValue(a, donorSortBy).localeCompare(getSortValue(b, donorSortBy)));
 
   const selectedDonor = donors.find(d => d.id === selectedDonorId);
 
@@ -79,7 +101,7 @@ export const Donors: React.FC = () => {
           const data = results.data as any[];
           data.forEach(row => {
             const displayId = row['CODE']?.toString().trim();
-            if (!displayId) return; // Skip if no ID
+            if (!displayId) return;
 
             const existing = donors.find(d => d.displayId === displayId);
             
@@ -135,8 +157,22 @@ export const Donors: React.FC = () => {
     }
   };
 
+  // Hebrew full name helper: title + first + last
+  const hebFullName = (d: typeof selectedDonor) => {
+    if (!d) return '';
+    const parts = [d.title, d.hebFirstName, d.hebLastName].filter(Boolean);
+    return parts.join(' ');
+  };
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: selectedDonor ? '1fr 450px' : '1fr', gap: '24px', direction: 'ltr', alignItems: 'start' }}>
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: selectedDonor ? '1fr 1fr' : '1fr',
+      gap: '24px',
+      direction: 'ltr',
+      alignItems: 'start',
+      minHeight: 0,
+    }}>
       {/* LEFT COLUMN: DONOR LIST */}
       <div className="card" style={{ padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -159,13 +195,19 @@ export const Donors: React.FC = () => {
             <Search className="search-icon" size={18} />
             <input type="text" placeholder={T('search_donors')} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
-          <select className="filter-select" value={filterFundraiser} onChange={e => setFilterFundraiser(e.target.value)} style={{ minWidth: '150px' }}>
+          <select className="filter-select" value={filterFundraiser} onChange={e => setFilterFundraiser(e.target.value)} style={{ minWidth: '130px' }}>
             <option value="">{T('all_fundraisers')}</option>
             {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
-          <select className="filter-select" value={sortBy} onChange={e => setSortBy(e.target.value as any)} style={{ minWidth: '150px' }}>
-            <option value="lastName">Sort by Last Name</option>
-            <option value="firstName">Sort by First Name</option>
+          <select
+            className="filter-select"
+            value={donorSortBy}
+            onChange={e => setDonorSortBy(e.target.value as DonorSortKey)}
+            style={{ minWidth: '220px' }}
+          >
+            {SORT_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
           </select>
         </div>
 
@@ -188,10 +230,17 @@ export const Donors: React.FC = () => {
                 >
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div className="member-avatar" style={{ width: '36px', height: '36px', fontSize: '0.85rem' }}>{donor.firstName[0]}{donor.lastName[0]}</div>
+                      <div className="member-avatar" style={{ width: '36px', height: '36px', fontSize: '0.85rem' }}>
+                        {donor.firstName[0]}{donor.lastName[0]}
+                      </div>
                       <div>
                         <div className="member-name" style={{ fontSize: '0.95rem' }}>{donor.name}</div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ID: {donor.displayId} · {donor.email}</div>
+                        {(donor.hebFirstName || donor.hebLastName) && (
+                          <div style={{ fontSize: '0.82rem', color: 'var(--navy-light)', fontWeight: 600, direction: 'rtl', textAlign: 'left' }}>
+                            {[donor.title, donor.hebFirstName, donor.hebLastName].filter(Boolean).join(' ')}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>ID: {donor.displayId} · {donor.email}</div>
                       </div>
                     </div>
                   </td>
@@ -216,30 +265,56 @@ export const Donors: React.FC = () => {
 
       {/* RIGHT COLUMN: DONOR DETAILS PANEL */}
       {selectedDonor && (
-        <div className="card slide-in-right" style={{ padding: '24px', position: 'sticky', top: '24px' }}>
+        <div className="card slide-in-right" style={{ padding: '24px', position: 'sticky', top: '24px', maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' }}>
           {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
-              <div className="member-avatar" style={{ width: '64px', height: '64px', fontSize: '1.5rem' }}>{selectedDonor.firstName[0]}{selectedDonor.lastName[0]}</div>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{selectedDonor.name}</h2>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setEditDonorActive(true)}><Edit2 size={16} /></button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flex: 1 }}>
+              <div className="member-avatar" style={{ width: '56px', height: '56px', fontSize: '1.3rem', flexShrink: 0 }}>
+                {selectedDonor.firstName[0]}{selectedDonor.lastName[0]}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* English name row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)', fontSize: '1.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {selectedDonor.name}
+                  </h2>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditDonorActive(true)}><Edit2 size={15} /></button>
                 </div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+
+                {/* Hebrew / Yiddish name — prominent, shown right below English */}
+                {hebFullName(selectedDonor) && (
+                  <div style={{
+                    direction: 'rtl',
+                    fontSize: '1.05rem',
+                    fontWeight: 700,
+                    color: 'var(--navy-light)',
+                    background: 'var(--blue-bg)',
+                    borderRadius: '8px',
+                    padding: '4px 10px',
+                    marginBottom: '6px',
+                    display: 'inline-block',
+                  }}>
+                    {hebFullName(selectedDonor)}
+                  </div>
+                )}
+
+                {/* ID / phone / email */}
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 800, color: 'var(--navy-light)', background: 'var(--blue-bg)', padding: '2px 8px', borderRadius: '4px' }}>
                     ID: {selectedDonor.displayId}
                   </span>
-                  <span>{selectedDonor.phone}</span>
-                  <span>· {selectedDonor.email}</span>
+                  {selectedDonor.phone && <span>{selectedDonor.phone}</span>}
+                  {selectedDonor.email && <span>· {selectedDonor.email}</span>}
                 </div>
               </div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>Total Given</div>
-              <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--navy)', fontFamily: 'Outfit, sans-serif' }}>${selectedDonor.totalGiven.toLocaleString()}</div>
+
+            {/* Total given */}
+            <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '12px' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '2px' }}>Total Given</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--navy)', fontFamily: 'Outfit, sans-serif' }}>${selectedDonor.totalGiven.toLocaleString()}</div>
               {selectedDonor.balanceOwed > 0 && (
-                <div style={{ color: 'var(--red)', fontWeight: 700, fontSize: '0.95rem' }}>Owes ${selectedDonor.balanceOwed.toLocaleString()}</div>
+                <div style={{ color: 'var(--red)', fontWeight: 700, fontSize: '0.85rem' }}>Owes ${selectedDonor.balanceOwed.toLocaleString()}</div>
               )}
             </div>
           </div>
@@ -251,7 +326,7 @@ export const Donors: React.FC = () => {
           </div>
 
           {/* Tabs */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '20px', overflowX: 'auto' }}>
             {([
               ['overview', T('overview')],
               ['transactions', `${T('payments')} (${donorTransactions.filter(t => t.type !== 'declined').length})`],
@@ -260,89 +335,166 @@ export const Donors: React.FC = () => {
               ['notes', T('notes')],
             ] as [DonorTab, string][]).map(([key, label]) => (
               <button key={key} onClick={() => setDonorTab(key)} style={{
-                padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: 700,
-                fontSize: '0.82rem', color: donorTab === key ? 'var(--navy-light)' : 'var(--text-muted)',
+                padding: '10px 12px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: 700,
+                fontSize: '0.78rem', color: donorTab === key ? 'var(--navy-light)' : 'var(--text-muted)',
                 borderBottom: donorTab === key ? '3px solid var(--navy-light)' : '3px solid transparent',
                 transition: 'all 0.2s', fontFamily: 'inherit', whiteSpace: 'nowrap'
               }}>{label}</button>
             ))}
           </div>
 
-          {/* Overview tab */}
+          {/* ── OVERVIEW TAB ── */}
           {donorTab === 'overview' && (
             <div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+              {/* Stats row */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '20px' }}>
                 {[
                   { label: T('total_given'), val: `$${selectedDonor.totalGiven.toLocaleString()}`, color: 'var(--green)' },
                   { label: T('balance_owed'), val: `$${selectedDonor.balanceOwed.toLocaleString()}`, color: selectedDonor.balanceOwed > 0 ? 'var(--red)' : 'var(--text-muted)' },
                   { label: T('active_recurring'), val: String(donorRecurring.filter(r => r.active).length), color: 'var(--navy-light)' },
                 ].map(s => (
-                  <div key={s.label} style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>{s.label}</div>
-                    <div style={{ fontSize: '1.3rem', fontWeight: 800, color: s.color, fontFamily: 'Outfit, sans-serif' }}>{s.val}</div>
+                  <div key={s.label} style={{ background: 'var(--bg-input)', borderRadius: '10px', padding: '12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '4px' }}>{s.label}</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: s.color, fontFamily: 'Outfit, sans-serif' }}>{s.val}</div>
                   </div>
                 ))}
               </div>
 
-              {/* Detailed Donor Info Sections */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-                {/* Hebrew/Family Info */}
-                <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px' }}>
-                  <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Yiddish / Family Info</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '8px', fontSize: '0.85rem' }}>
-                    {selectedDonor.title && <><span style={{ color: 'var(--text-muted)' }}>Title:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.title}</span></>}
-                    {selectedDonor.hebFirstName && <><span style={{ color: 'var(--text-muted)' }}>First:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.hebFirstName}</span></>}
-                    {selectedDonor.hebLastName && <><span style={{ color: 'var(--text-muted)' }}>Last:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.hebLastName}</span></>}
-                    {selectedDonor.postTitle && <><span style={{ color: 'var(--text-muted)' }}>Post-Title:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.postTitle}</span></>}
-                    {selectedDonor.hisFather && <><span style={{ color: 'var(--text-muted)' }}>His Father:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.hisFather}</span></>}
-                    {selectedDonor.herFather && <><span style={{ color: 'var(--text-muted)' }}>Her Father:</span> <span style={{ direction: 'rtl', textAlign: 'right' }}>{selectedDonor.herFather}</span></>}
+              {/* Yiddish / Family Info + Contact side by side */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                {/* Yiddish / Family Info */}
+                <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '10px', borderBottom: '1px solid var(--border)', paddingBottom: '6px', fontSize: '0.88rem' }}>
+                    יידיש / Family Info
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', fontSize: '0.84rem' }}>
+                    {selectedDonor.title && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Title:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.title}</span>
+                      </div>
+                    )}
+                    {selectedDonor.hebFirstName && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>First:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.hebFirstName}</span>
+                      </div>
+                    )}
+                    {selectedDonor.hebLastName && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Last:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.hebLastName}</span>
+                      </div>
+                    )}
+                    {selectedDonor.postTitle && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Post:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.postTitle}</span>
+                      </div>
+                    )}
+                    {selectedDonor.hisFather && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>His Dad:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.hisFather}</span>
+                      </div>
+                    )}
+                    {selectedDonor.herFather && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Her Dad:</span>
+                        <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.herFather}</span>
+                      </div>
+                    )}
+                    {!selectedDonor.title && !selectedDonor.hebFirstName && !selectedDonor.hebLastName && !selectedDonor.postTitle && !selectedDonor.hisFather && !selectedDonor.herFather && (
+                      <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.8rem' }}>No Yiddish info on file</div>
+                    )}
                   </div>
                 </div>
 
-                {/* Additional Contact Info */}
-                <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px' }}>
-                  <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Contact Details</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '8px', fontSize: '0.85rem' }}>
-                    {selectedDonor.homePhone && <><span style={{ color: 'var(--text-muted)' }}>Home:</span> <span>{selectedDonor.homePhone}</span></>}
-                    {selectedDonor.mobilePhone && <><span style={{ color: 'var(--text-muted)' }}>Mobile 1:</span> <span>{selectedDonor.mobilePhone}</span></>}
-                    {selectedDonor.mobilePhone2 && <><span style={{ color: 'var(--text-muted)' }}>Mobile 2:</span> <span>{selectedDonor.mobilePhone2}</span></>}
-                    {selectedDonor.phone3 && <><span style={{ color: 'var(--text-muted)' }}>Phone 3:</span> <span>{selectedDonor.phone3}</span></>}
-                    {selectedDonor.confidentialMobile && <><span style={{ color: 'var(--text-muted)' }}>Private 1:</span> <span>{selectedDonor.confidentialMobile}</span></>}
-                    {selectedDonor.confidentialMobile2 && <><span style={{ color: 'var(--text-muted)' }}>Private 2:</span> <span>{selectedDonor.confidentialMobile2}</span></>}
+                {/* Contact Details */}
+                <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '10px', borderBottom: '1px solid var(--border)', paddingBottom: '6px', fontSize: '0.88rem' }}>
+                    Contact Details
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', fontSize: '0.84rem' }}>
+                    {selectedDonor.homePhone && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Home:</span>
+                        <span>{selectedDonor.homePhone}</span>
+                      </div>
+                    )}
+                    {selectedDonor.mobilePhone && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Mobile 1:</span>
+                        <span>{selectedDonor.mobilePhone}</span>
+                      </div>
+                    )}
+                    {selectedDonor.mobilePhone2 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Mobile 2:</span>
+                        <span>{selectedDonor.mobilePhone2}</span>
+                      </div>
+                    )}
+                    {selectedDonor.phone3 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Phone 3:</span>
+                        <span>{selectedDonor.phone3}</span>
+                      </div>
+                    )}
+                    {selectedDonor.confidentialMobile && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Private 1:</span>
+                        <span>{selectedDonor.confidentialMobile}</span>
+                      </div>
+                    )}
+                    {selectedDonor.confidentialMobile2 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Private 2:</span>
+                        <span>{selectedDonor.confidentialMobile2}</span>
+                      </div>
+                    )}
+                    {!selectedDonor.homePhone && !selectedDonor.mobilePhone && !selectedDonor.mobilePhone2 && !selectedDonor.phone3 && !selectedDonor.confidentialMobile && !selectedDonor.confidentialMobile2 && (
+                      <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.8rem' }}>No extra contacts on file</div>
+                    )}
                   </div>
                 </div>
               </div>
 
               {/* Address Breakdown */}
-              <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
-                <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Full Address Breakdown</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px', fontSize: '0.85rem' }}>
-                  {selectedDonor.addrNo && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>No.</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrNo}</div></div>}
-                  {selectedDonor.addrStreet && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Street</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrStreet}</div></div>}
-                  {selectedDonor.addrType && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Type</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrType}</div></div>}
-                  {selectedDonor.addrBuildingNum && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Building #</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrBuildingNum}</div></div>}
-                  {selectedDonor.addrApt && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Apt</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrApt}</div></div>}
-                  {selectedDonor.addrPostalCode && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Postal Code</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrPostalCode}</div></div>}
-                  {selectedDonor.addrLandlord && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Landlord</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrLandlord}</div></div>}
+              <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '14px', marginBottom: '14px' }}>
+                <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '10px', borderBottom: '1px solid var(--border)', paddingBottom: '6px', fontSize: '0.88rem' }}>Full Address</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '10px', fontSize: '0.84rem' }}>
+                  {selectedDonor.addrNo && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>No.</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrNo}</div></div>}
+                  {selectedDonor.addrStreet && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Street</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrStreet}</div></div>}
+                  {selectedDonor.addrType && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Type</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrType}</div></div>}
+                  {selectedDonor.addrBuildingNum && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Building #</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrBuildingNum}</div></div>}
+                  {selectedDonor.addrApt && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Apt</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrApt}</div></div>}
+                  {selectedDonor.addrPostalCode && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Postal</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrPostalCode}</div></div>}
+                  {selectedDonor.addrLandlord && <div><div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Landlord</div><div style={{ fontWeight: 600 }}>{selectedDonor.addrLandlord}</div></div>}
+                  {!selectedDonor.addrStreet && !selectedDonor.addrNo && !selectedDonor.addrPostalCode && (
+                    <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.8rem', gridColumn: '1 / -1' }}>No address on file</div>
+                  )}
                 </div>
               </div>
 
+              {/* Cards on file */}
               {selectedDonor.cards && selectedDonor.cards.length > 0 && (
-                <div>
-                  <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>{T('cards_on_file')}</div>
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>{T('cards_on_file')}</div>
                   {selectedDonor.cards.map(card => (
-                    <div key={card.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-input)', borderRadius: '10px', marginBottom: '8px', border: card.isDefault ? '1px solid var(--navy-light)' : '1px solid var(--border)' }}>
+                    <div key={card.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-input)', borderRadius: '10px', marginBottom: '6px', border: card.isDefault ? '1px solid var(--navy-light)' : '1px solid var(--border)' }}>
                       <div>
-                        <div style={{ fontWeight: 700 }}>{card.brand} ending in {card.last4}</div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Expires {card.expiry}</div>
+                        <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{card.brand} ending in {card.last4}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Expires {card.expiry}</div>
                       </div>
                       {card.isDefault && <span className="badge badge-info">Default</span>}
                     </div>
                   ))}
                 </div>
               )}
+
+              {/* Fundraiser */}
               {selectedDonor.fundraiserId && (
-                <div style={{ marginTop: '16px', padding: '12px 16px', background: 'var(--yellow-bg)', borderRadius: '10px', border: '1px solid rgba(217,119,6,0.2)' }}>
+                <div style={{ padding: '10px 14px', background: 'var(--yellow-bg)', borderRadius: '10px', border: '1px solid rgba(217,119,6,0.2)' }}>
                   <div style={{ color: 'var(--yellow)', fontWeight: 700, fontSize: '0.85rem' }}>
                     🤝 {T('referred_by')}: {fundraisers.find(f => f.id === selectedDonor.fundraiserId)?.name || '—'}
                   </div>
@@ -351,7 +503,7 @@ export const Donors: React.FC = () => {
             </div>
           )}
 
-          {/* Transactions tab */}
+          {/* ── TRANSACTIONS TAB ── */}
           {donorTab === 'transactions' && (
             <div className="table-container">
               <table>
@@ -376,7 +528,7 @@ export const Donors: React.FC = () => {
             </div>
           )}
 
-          {/* Recurring tab */}
+          {/* ── RECURRING TAB ── */}
           {donorTab === 'recurring' && (
             <div>
               {donorRecurring.length === 0 ? (
@@ -388,10 +540,10 @@ export const Donors: React.FC = () => {
                 </div>
               ) : (
                 donorRecurring.map(r => (
-                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: 'var(--bg-input)', borderRadius: '12px', marginBottom: '10px', border: `1px solid ${r.active ? 'var(--green-bg)' : 'var(--border)'}` }}>
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', background: 'var(--bg-input)', borderRadius: '12px', marginBottom: '10px', border: `1px solid ${r.active ? 'var(--green-bg)' : 'var(--border)'}` }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>${r.amount.toLocaleString()} {r.currency} / {r.frequency}</div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Next: {r.nextDate} · via {methodLabel[r.method]}</div>
+                      <div style={{ fontWeight: 700, fontSize: '1rem' }}>${r.amount.toLocaleString()} {r.currency} / {r.frequency}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>Next: {r.nextDate} · via {methodLabel[r.method]}</div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                       <span className={`badge ${r.active ? 'badge-green' : 'badge-gray'}`}>{r.active ? (isRtl ? 'אַקטיוו' : 'Active') : (isRtl ? 'פּאָזירט' : 'Paused')}</span>
@@ -405,7 +557,7 @@ export const Donors: React.FC = () => {
             </div>
           )}
 
-          {/* Declined tab */}
+          {/* ── DECLINED TAB ── */}
           {donorTab === 'declined' && (
             <div className="table-container">
               <table>
@@ -426,7 +578,7 @@ export const Donors: React.FC = () => {
             </div>
           )}
 
-          {/* Notes tab */}
+          {/* ── NOTES TAB ── */}
           {donorTab === 'notes' && (
             <div>
               <textarea
@@ -444,6 +596,7 @@ export const Donors: React.FC = () => {
         </div>
       )}
 
+      {/* ── MODALS ── */}
       {showAddDonor && <AddDonorModal onClose={() => setShowAddDonor(false)} />}
       {showPayment && selectedDonorId && <PaymentModal donorId={selectedDonorId} onClose={() => setShowPayment(false)} />}
       
@@ -480,16 +633,11 @@ export const Donors: React.FC = () => {
           </div>
         </div>
       )}
-      
-      {/* Modals */}
-      {showAddDonor && (
-        <AddDonorModal onClose={() => setShowAddDonor(false)} />
-      )}
+
       {editDonorActive && selectedDonor && (
         <AddDonorModal editDonorData={selectedDonor} onClose={() => setEditDonorActive(false)} />
       )}
       
-      {/* Reusing Edit Transaction UI inline */}
       {editTx && (
         <div className="modal-overlay" onClick={() => setEditTx(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>

@@ -149,10 +149,13 @@ export interface AccountTransfer {
   notes?: string;
 }
 
+export type DonorSortKey = 'lastName' | 'firstName' | 'hebLastName' | 'hebFirstName';
+
 interface AppState {
   isRtl: boolean;
   currency: 'CAD' | 'USD';
   exchangeRate: number;
+  donorSortBy: DonorSortKey;
   donors: Donor[];
   transactions: Transaction[];
   recurringPayments: RecurringPayment[];
@@ -167,6 +170,7 @@ interface AppState {
   setCurrency: (currency: 'CAD' | 'USD') => void;
   setExchangeRate: (rate: number) => void;
   setGoogleSheetSyncUrl: (url: string) => void;
+  setDonorSortBy: (key: DonorSortKey) => void;
 
   addDonor: (donor: Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'> | Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
   editDonor: (id: string, updates: Partial<Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'>>) => void;
@@ -285,6 +289,7 @@ export const useStore = create<AppState>()(
       isRtl: false,
       currency: 'CAD',
       exchangeRate: 1.35,
+      donorSortBy: 'lastName',
       donors: [],
       transactions: [],
       recurringPayments: [],
@@ -299,6 +304,7 @@ export const useStore = create<AppState>()(
       setCurrency: (currency) => set({ currency }),
       setExchangeRate: (rate) => set({ exchangeRate: rate }),
       setGoogleSheetSyncUrl: (url) => set({ googleSheetSyncUrl: url }),
+      setDonorSortBy: (key) => set({ donorSortBy: key }),
 
       addDonor: (donor) => set(state => {
         const nextNum = 1001 + state.donors.length;

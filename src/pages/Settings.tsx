@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { useStore } from '../store';
-import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check } from 'lucide-react';
+import { useStore, type DonorSortKey } from '../store';
+import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
-  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate } = useStore();
+  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy } = useStore();
   const T = useT(isRtl);
   const [syncing, setSyncing] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
@@ -141,6 +141,36 @@ export const Settings: React.FC = () => {
           </div>
           <div style={{ marginTop: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             {isRtl ? 'דאַטן פֿון Frankfurter API' : 'Live data from Frankfurter API (European Central Bank)'}
+          </div>
+        </div>
+
+        {/* Donor Sort Order */}
+        <div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            <Users size={16} /> {isRtl ? 'מדוניים סדר' : 'Donor Sort Order'}
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            {([
+              { value: 'lastName',     label: '🔤 English Last', sub: 'Sort A→Z by last name' },
+              { value: 'firstName',    label: '🔤 English First', sub: 'Sort A→Z by first name' },
+              { value: 'hebLastName',  label: '🕍 יידיש משפחה', sub: 'Sort by Hebrew last name' },
+              { value: 'hebFirstName', label: '🕍 יידיש ערשטע', sub: 'Sort by Hebrew first name' },
+            ] as { value: DonorSortKey; label: string; sub: string }[]).map(opt => (
+              <button key={opt.value} onClick={() => setDonorSortBy(opt.value)} style={{
+                padding: '12px 14px', borderRadius: '12px',
+                border: `2px solid ${donorSortBy === opt.value ? 'var(--navy-light)' : 'var(--border)'}`,
+                background: donorSortBy === opt.value ? 'var(--navy-bg)' : 'var(--bg-input)',
+                color: donorSortBy === opt.value ? 'var(--navy-light)' : 'var(--text-muted)',
+                cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.88rem',
+                textAlign: 'left', transition: 'all 0.2s',
+              }}>
+                <div>{opt.label} {donorSortBy === opt.value ? '✓' : ''}</div>
+                <div style={{ fontSize: '0.72rem', fontWeight: 400, opacity: 0.8, marginTop: '2px' }}>{opt.sub}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            {isRtl ? 'איר קענט אויך בײַטן דעם סאָרטירן דירעקט אויפן מדוניים זייט' : 'You can also change the sort directly on the Donors page.'}
           </div>
         </div>
       </div>
