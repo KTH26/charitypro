@@ -228,7 +228,7 @@ const uid = () => String(++nextId);
 export const useStore = create<AppState>((set) => ({
   isRtl: false,
   currency: 'CAD',
-  exchangeRate: 0.74,
+  exchangeRate: 1.35,
   donors: mockDonors,
   transactions: mockTransactions,
   recurringPayments: mockRecurring,

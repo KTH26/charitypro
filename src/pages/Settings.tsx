@@ -15,9 +15,9 @@ export const Settings: React.FC = () => {
     setSyncing(true);
     setSyncDone(false);
     try {
-      const res = await fetch('https://api.frankfurter.app/latest?from=CAD&to=USD');
+      const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=CAD');
       const data = await res.json();
-      const rate = data?.rates?.USD;
+      const rate = data?.rates?.CAD;
       if (rate) {
         setExchangeRate(parseFloat(rate.toFixed(4)));
         setManualRate(rate.toFixed(4));
@@ -26,8 +26,8 @@ export const Settings: React.FC = () => {
       }
     } catch {
       // Fallback: use a static recent rate
-      setExchangeRate(0.73);
-      setManualRate('0.73');
+      setExchangeRate(1.35);
+      setManualRate('1.35');
       setSyncDone(true);
       setTimeout(() => setSyncDone(false), 3000);
     } finally {
@@ -114,7 +114,7 @@ export const Settings: React.FC = () => {
           </label>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <div style={{ position: 'relative', flex: 1 }}>
-              <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontWeight: 800, color: 'var(--text-muted)' }}>1 CAD =</span>
+              <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontWeight: 800, color: 'var(--text-muted)' }}>1 USD =</span>
               <input
                 type="number"
                 step="0.001"
@@ -123,7 +123,7 @@ export const Settings: React.FC = () => {
                 onChange={e => handleManualRate(e.target.value)}
                 style={{ paddingLeft: '80px', fontWeight: 800, fontSize: '1.1rem' }}
               />
-              <span style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', fontWeight: 700, color: 'var(--text-muted)' }}>USD</span>
+              <span style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', fontWeight: 700, color: 'var(--text-muted)' }}>CAD</span>
             </div>
             <button
               className="btn btn-secondary"
@@ -181,7 +181,7 @@ export const Settings: React.FC = () => {
             [isRtl ? 'ווערסיע' : 'Version', '1.0.0'],
             [isRtl ? 'שפּראַך' : 'Language', isRtl ? 'ייִדיש' : 'English'],
             [isRtl ? 'וואַלוטע' : 'Currency', currency],
-            [isRtl ? 'וועקסלקורס' : 'Exchange Rate', `1 CAD = ${exchangeRate} USD`],
+            [isRtl ? 'וועקסלקורס' : 'Exchange Rate', `1 USD = ${exchangeRate} CAD`],
             [isRtl ? 'לייאַוט' : 'Layout', isRtl ? 'רעכטס-לינקס' : 'Left-to-Right'],
           ].map(([label, val]) => (
             <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-light)', fontSize: '0.85rem' }}>
