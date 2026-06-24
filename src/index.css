@@ -104,7 +104,7 @@ h1, h2, h3, h4 {
   min-height: 100vh;
 }
 .page-container {
-  padding: 40px; max-width: 1400px; margin: 0 auto; width: 100%;
+  padding: 40px; width: 100%;
   animation: fadeIn 0.5s ease-out forwards;
 }
 .page-header {
@@ -594,7 +594,7 @@ html[dir="ltr"] .filter-select { background-position: right 12px center; }
   font-weight: 700;
 }
 .header-actions { display: flex; align-items: center; gap: 16px; }
-.content-area { flex: 1; padding: 40px; max-width: 1400px; margin: 0 auto; width: 100%; overflow-y: auto; }
+.content-area { flex: 1; padding: 40px; width: 100%; overflow-y: auto; }
 .table-container {
   background: var(--bg-card); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border); border-radius: var(--radius-xl);
