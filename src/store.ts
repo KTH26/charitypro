@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import type { StateStorage } from 'zustand/middleware';
 
 export interface Donor {
   id: string;
@@ -218,36 +220,60 @@ const mockTasks: Task[] = [
 let nextId = 200;
 const uid = () => String(++nextId);
 
-export const useStore = create<AppState>((set) => ({
-  isRtl: false,
-  currency: 'CAD',
-  exchangeRate: 1.35,
-  donors: mockDonors,
-  transactions: mockTransactions,
-  recurringPayments: mockRecurring,
-  fundraisers: mockFundraisers,
-  accounts: mockAccounts,
-  bills: mockBills,
-  tasks: mockTasks,
-  accountTransfers: [],
-  googleSheetSyncUrl: localStorage.getItem('googleSheetSyncUrl') || '',
+const cloudStorage: StateStorage = {
+  getItem: async (name): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/sync');
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.value;
+    } catch (e) {
+      return null;
+    }
+  },
+  setItem: async (name, value): Promise<void> => {
+    try {
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value })
+      });
+    } catch (e) {
+      console.error('Failed to sync to cloud', e);
+    }
+  },
+  removeItem: async (name): Promise<void> => {},
+};
 
-  toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
-  setCurrency: (currency) => set({ currency }),
-  setExchangeRate: (rate) => set({ exchangeRate: rate }),
-  setGoogleSheetSyncUrl: (url) => set(() => {
-    localStorage.setItem('googleSheetSyncUrl', url);
-    return { googleSheetSyncUrl: url };
-  }),
+export const useStore = create<AppState>()(
+  persist(
+    (set) => ({
+      isRtl: false,
+      currency: 'CAD',
+      exchangeRate: 1.35,
+      donors: [],
+      transactions: [],
+      recurringPayments: [],
+      fundraisers: [],
+      accounts: [],
+      bills: [],
+      tasks: [],
+      accountTransfers: [],
+      googleSheetSyncUrl: '',
 
-  addDonor: (donor) => set(state => {
-    const nextNum = 1001 + state.donors.length;
-    const displayId = (donor as any).displayId || `D-${nextNum}`;
-    const name = `${donor.firstName} ${donor.lastName}`.trim();
-    return {
-      donors: [...state.donors, { ...donor, id: Math.random().toString(), displayId, name, totalGiven: 0, balanceOwed: 0, cards: [], sponsorshipDays: [] }]
-    };
-  }),
+      toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
+      setCurrency: (currency) => set({ currency }),
+      setExchangeRate: (rate) => set({ exchangeRate: rate }),
+      setGoogleSheetSyncUrl: (url) => set({ googleSheetSyncUrl: url }),
+
+      addDonor: (donor) => set(state => {
+        const nextNum = 1001 + state.donors.length;
+        const displayId = (donor as any).displayId || `D-${nextNum}`;
+        const name = `${donor.firstName} ${donor.lastName}`.trim();
+        return {
+          donors: [...state.donors, { ...donor, id: Math.random().toString(), displayId, name, totalGiven: 0, balanceOwed: 0, cards: [], sponsorshipDays: [] }]
+        };
+      }),
 
   editDonor: (id, updates) => set(state => {
     return {
@@ -401,7 +427,13 @@ export const useStore = create<AppState>((set) => ({
     tasks: state.tasks.map(t => t.id === id ? { ...t, completed: true } : t)
   })),
 
-  deleteTask: (id) => set((state) => ({
+  deleteTask: (id) => set(state => ({
     tasks: state.tasks.filter(t => t.id !== id)
   })),
-}));
+}),
+{
+  name: 'charity-store',
+  storage: createJSONStorage(() => cloudStorage),
+}
+)
+);
