@@ -114,7 +114,7 @@ export const Donors: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: selectedDonor ? '380px 1fr' : '1fr', gap: '24px', direction: 'ltr' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: selectedDonor ? '1fr 450px' : '1fr', gap: '24px', direction: 'ltr', alignItems: 'start' }}>
       {/* LEFT COLUMN: DONOR LIST */}
       <div className="card" style={{ padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -192,9 +192,9 @@ export const Donors: React.FC = () => {
         </div>
       </div>
 
-      {/* Donor Detail Panel */}
+      {/* RIGHT COLUMN: DONOR DETAILS PANEL */}
       {selectedDonor && (
-        <div className="card" style={{ padding: '24px' }}>
+        <div className="card slide-in-right" style={{ padding: '24px', position: 'sticky', top: '24px' }}>
           {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>

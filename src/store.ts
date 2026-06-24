@@ -230,12 +230,15 @@ export const useStore = create<AppState>((set) => ({
   bills: mockBills,
   tasks: mockTasks,
   accountTransfers: [],
-  googleSheetSyncUrl: '',
+  googleSheetSyncUrl: localStorage.getItem('googleSheetSyncUrl') || '',
 
   toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
   setCurrency: (currency) => set({ currency }),
   setExchangeRate: (rate) => set({ exchangeRate: rate }),
-  setGoogleSheetSyncUrl: (url) => set({ googleSheetSyncUrl: url }),
+  setGoogleSheetSyncUrl: (url) => set(() => {
+    localStorage.setItem('googleSheetSyncUrl', url);
+    return { googleSheetSyncUrl: url };
+  }),
 
   addDonor: (donor) => set(state => {
     const nextNum = 1001 + state.donors.length;
