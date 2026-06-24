@@ -258,29 +258,57 @@ const mockTasks: Task[] = [
 let nextId = 200;
 const uid = () => String(++nextId);
 
-const cloudStorage: StateStorage = {
+const LOCAL_KEY = 'charity-store';
+
+/**
+ * Dual-layer storage strategy:
+ *
+ * READ  → Always return from localStorage instantly (no async delay, no blank flash).
+ *         On first ever load (no localStorage), fall back to cloud.
+ *
+ * WRITE → Save to localStorage immediately AND push to cloud in the background.
+ *         The cloud push is fire-and-forget; a failure never loses local data.
+ *
+ * This prevents the race condition where the async cloud GET returns null/slow
+ * and Zustand initialises with the empty default state, which then immediately
+ * fires setItem and overwrites the real cloud data with an empty donors array.
+ */
+const dualStorage: StateStorage = {
   getItem: async (name): Promise<string | null> => {
+    // 1. Try localStorage first — instant, synchronous-like
+    const local = localStorage.getItem(name);
+    if (local) return local;
+
+    // 2. No local data → first-ever load → pull from cloud
     try {
       const res = await fetch('/api/sync');
       if (!res.ok) return null;
       const data = await res.json();
-      return data.value;
+      if (data.value) {
+        // Seed localStorage so the next reload is instant
+        localStorage.setItem(name, data.value);
+      }
+      return data.value ?? null;
     } catch (e) {
       return null;
     }
   },
+
   setItem: async (name, value): Promise<void> => {
-    try {
-      await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value })
-      });
-    } catch (e) {
-      console.error('Failed to sync to cloud', e);
-    }
+    // Always write to localStorage immediately (synchronous, never fails)
+    localStorage.setItem(name, value);
+
+    // Also push to cloud in the background (don't await — never block the UI)
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    }).catch(e => console.error('Cloud sync failed (local data is safe):', e));
   },
-  removeItem: async (name): Promise<void> => {},
+
+  removeItem: async (name): Promise<void> => {
+    localStorage.removeItem(name);
+  },
 };
 
 export const useStore = create<AppState>()(
@@ -467,7 +495,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'charity-store',
-      storage: createJSONStorage(() => cloudStorage),
+      storage: createJSONStorage(() => dualStorage),
     }
   )
 );
