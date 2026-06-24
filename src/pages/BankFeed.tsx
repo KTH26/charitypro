@@ -1,23 +1,88 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../store';
-import { Building, Send, Check } from 'lucide-react';
+import { Building, Send, Check, Link as LinkIcon, RefreshCw } from 'lucide-react';
 import { useT } from '../i18n';
-
-// Dummy live bank feed data
-const mockLiveFeed = [
-  { id: 'lf1', date: '2025-06-24', description: 'STRIPE TRANSFER', amount: 4500.00, status: 'unmatched', sourceAccountId: 'ba1' },
-  { id: 'lf2', date: '2025-06-23', description: 'CHECK DEPOSIT INTERAC', amount: 250.00, status: 'unmatched', sourceAccountId: 'ba1' },
-  { id: 'lf3', date: '2025-06-23', description: 'UNKNOWN WIRE REF 4829', amount: 15000.00, status: 'unmatched', sourceAccountId: 'ba2' },
-  { id: 'lf4', date: '2025-06-22', description: 'SHELL GAS STATION', amount: -145.20, status: 'unmatched', sourceAccountId: 'ba1' },
-];
+import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
   const { accounts, isRtl } = useStore();
   const T = useT(isRtl);
   const [selectedBank, setSelectedBank] = useState(accounts[0]?.id || '');
-  const [feed, setFeed] = useState(mockLiveFeed);
+  const [feed, setFeed] = useState<any[]>([]);
+  const [linkToken, setLinkToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [hasConnection, setHasConnection] = useState(false);
 
-  const activeFeed = feed.filter(f => f.sourceAccountId === selectedBank);
+  // 1. Fetch link token on mount
+  useEffect(() => {
+    const fetchLinkToken = async () => {
+      try {
+        const res = await fetch('/api/plaid/create_link_token', { method: 'POST' });
+        const data = await res.json();
+        if (data.link_token) {
+          setLinkToken(data.link_token);
+        }
+      } catch (err) {
+        console.error('Failed to get link token', err);
+      }
+    };
+    fetchLinkToken();
+  }, []);
+
+  // 2. Fetch live transactions from DB/Plaid
+  const fetchTransactions = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/plaid/transactions', { method: 'POST' });
+      const data = await res.json();
+      if (data.transactions) {
+        // Map Plaid transactions to our feed format
+        const mappedFeed = data.transactions.map((t: any) => ({
+          id: t.transaction_id,
+          date: t.date,
+          description: t.name,
+          amount: t.amount * -1, // Plaid positive amount is a withdrawal (expense), so flip it for our UI
+          status: 'unmatched',
+          sourceAccountId: selectedBank || 'default'
+        }));
+        setFeed(mappedFeed);
+        setHasConnection(true);
+      } else {
+        // Probably not connected yet or token expired
+        setHasConnection(false);
+      }
+    } catch (err) {
+      console.error('Failed to fetch transactions', err);
+    }
+    setLoading(false);
+  };
+
+  // Try to load transactions on mount (if they have a token already saved)
+  useEffect(() => {
+    fetchTransactions();
+  }, []);
+
+  // 3. Configure Plaid Link
+  const onSuccess = useCallback(async (public_token: string, metadata: any) => {
+    setLoading(true);
+    try {
+      await fetch('/api/plaid/exchange_public_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ public_token }),
+      });
+      // After exchange, fetch the transactions immediately
+      await fetchTransactions();
+    } catch (err) {
+      console.error('Exchange failed', err);
+    }
+    setLoading(false);
+  }, []);
+
+  const { open, ready } = usePlaidLink({
+    token: linkToken!,
+    onSuccess,
+  });
 
   const handleSendReview = (id: string) => {
     setFeed(feed.map(f => f.id === id ? { ...f, status: 'review' } : f));
@@ -36,10 +101,29 @@ export const BankFeed: React.FC = () => {
             <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
               Live Bank Feed
             </h2>
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>
+              Securely sync your bank to automatically track expenses and deposits.
+            </div>
           </div>
-          <select className="filter-select" value={selectedBank} onChange={e => setSelectedBank(e.target.value)} style={{ minWidth: '250px' }}>
-            {accounts.filter(a => a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
+          
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {hasConnection ? (
+              <button className="btn btn-secondary" onClick={fetchTransactions} disabled={loading}>
+                <RefreshCw size={16} className={loading ? 'spin' : ''} />
+                {loading ? ' Syncing...' : ' Sync Latest'}
+              </button>
+            ) : (
+              <button className="btn btn-primary" onClick={() => open()} disabled={!ready || loading}>
+                <LinkIcon size={16} /> 
+                {loading ? 'Connecting...' : 'Connect Bank'}
+              </button>
+            )}
+            
+            <select className="filter-select" value={selectedBank} onChange={e => setSelectedBank(e.target.value)} style={{ minWidth: '200px' }}>
+              <option value="">All Accounts</option>
+              {accounts.filter(a => a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
         </div>
 
         <div className="table-container">
@@ -54,7 +138,7 @@ export const BankFeed: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {activeFeed.map(t => (
+              {feed.map(t => (
                 <tr key={t.id} style={{ opacity: t.status === 'matched' ? 0.6 : 1 }}>
                   <td>{t.date}</td>
                   <td style={{ fontWeight: 600, fontFamily: 'monospace', fontSize: '0.9rem' }}>{t.description}</td>
@@ -82,13 +166,31 @@ export const BankFeed: React.FC = () => {
                   </td>
                 </tr>
               ))}
-              {activeFeed.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No pending bank feed items.</td></tr>
+              {feed.length === 0 && (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 20px' }}>
+                    {!hasConnection ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                        <Building size={48} style={{ color: 'var(--border)' }} />
+                        <div>No bank connected yet.</div>
+                        <button className="btn btn-primary" onClick={() => open()} disabled={!ready}>
+                          Connect Bank to see transactions
+                        </button>
+                      </div>
+                    ) : (
+                      'No pending bank feed items. You are all caught up!'
+                    )}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+      <style>{`
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .spin { animation: spin 1s linear infinite; }
+      `}</style>
     </div>
   );
 };
