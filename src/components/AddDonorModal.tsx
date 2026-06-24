@@ -18,6 +18,7 @@ export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
     email: editDonorData?.email || '', 
     phone: editDonorData?.phone || '', 
     address: editDonorData?.address || '', 
+    displayId: editDonorData?.displayId || '',
     fundraiserId: editDonorData?.fundraiserId || '', 
     notes: editDonorData?.notes || ''
   });
@@ -47,6 +48,7 @@ export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
       email: form.email.trim(),
       phone: form.phone.trim(),
       address: form.address.trim(),
+      displayId: form.displayId.trim() || undefined,
       fundraiserId: form.fundraiserId || undefined,
       notes: form.notes.trim(),
     };
@@ -96,6 +98,12 @@ export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
                   <label>{T('last_name') || 'Last Name'} *</label>
                   <input type="text" placeholder="e.g. Schwartz" value={form.lastName} onChange={e => handle('lastName', e.target.value)} />
                   {errors.lastName && <span style={{ color: 'var(--red)', fontSize: '0.8rem' }}>{errors.lastName}</span>}
+                </div>
+
+                {/* Custom ID */}
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>Custom ID (optional)</label>
+                  <input type="text" placeholder="e.g. Latch-5532" value={form.displayId} onChange={e => handle('displayId', e.target.value)} />
                 </div>
 
                 {/* Phone */}

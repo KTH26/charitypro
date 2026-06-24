@@ -130,8 +130,8 @@ interface AppState {
   setCurrency: (currency: 'CAD' | 'USD') => void;
   setExchangeRate: (rate: number) => void;
 
-  addDonor: (donor: Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
-  editDonor: (id: string, updates: Partial<Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>>) => void;
+  addDonor: (donor: Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'> | Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
+  editDonor: (id: string, updates: Partial<Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'>>) => void;
   updateDonorNotes: (donorId: string, notes: string) => void;
   addSponsorshipDay: (donorId: string, day: Omit<SponsorshipDay, 'id'>) => void;
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
@@ -235,7 +235,7 @@ export const useStore = create<AppState>((set) => ({
 
   addDonor: (donor) => set(state => {
     const nextNum = 1001 + state.donors.length;
-    const displayId = `D-${nextNum}`;
+    const displayId = (donor as any).displayId || `D-${nextNum}`;
     const name = `${donor.firstName} ${donor.lastName}`.trim();
     return {
       donors: [...state.donors, { ...donor, id: Math.random().toString(), displayId, name, totalGiven: 0, balanceOwed: 0, cards: [], sponsorshipDays: [] }]
