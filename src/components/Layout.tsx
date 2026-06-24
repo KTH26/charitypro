@@ -1,16 +1,22 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import {
   LayoutDashboard, Users, Wallet, PieChart, Settings,
-  HeartHandshake, Plus, UserPlus, BarChart3, Calendar, CheckSquare,
+  HeartHandshake, Plus, UserPlus, BarChart3, Calendar, CheckSquare, Upload,
+  Building, List, FileText, CalendarClock, Ticket, Store, Printer, Link as LinkIcon,
+  LogOut, Megaphone, Medal
 } from 'lucide-react';
 import { AddDonorModal } from './AddDonorModal';
 import { PaymentModal } from './PaymentModal';
+import { useT } from '../i18n';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isRtl, donors, tasks, bankAccounts } = useStore();
   const location = useLocation();
+  const navigate = useNavigate();
+  const T = useT(isRtl);
+
   const [showQuickMenu, setShowQuickMenu] = useState(false);
   const [showAddDonor, setShowAddDonor] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
@@ -20,54 +26,130 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const highTasks = tasks.filter(t => !t.completed && t.priority === 'high').length;
   const totalBalance = bankAccounts.filter(a => !a.isInternal && a.currency === 'CAD').reduce((s, a) => s + a.balance, 0);
 
-  const navItems = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/donors', label: 'Donors', icon: Users },
-    { path: '/fundraisers', label: 'Fundraisers', icon: HeartHandshake },
-    { path: '/accounting', label: 'Accounting', icon: Wallet },
-    { path: '/expenses', label: 'Expenses & Bills', icon: PieChart },
-    { path: '/reports', label: 'Reports', icon: BarChart3 },
-    { path: '/calendar', label: 'Calendar', icon: Calendar },
-    { path: '/tasks', label: 'Tasks', icon: CheckSquare, badge: pendingTasks > 0 ? pendingTasks : undefined, badgeUrgent: highTasks > 0 },
-    { path: '/settings', label: 'Settings', icon: Settings },
+  const navCategories = [
+    {
+      label: T('nav_home_cat'),
+      items: [
+        { path: '/', label: T('nav_dashboard'), icon: LayoutDashboard },
+        { path: '/calendar', label: T('nav_calendar'), icon: Calendar },
+      ]
+    },
+    {
+      label: T('nav_contacts_cat'),
+      items: [
+        { path: '/donors', label: T('nav_donors'), icon: Users },
+        { path: '#', label: T('nav_accounts'), icon: Building },
+        { path: '#', label: T('nav_lists'), icon: List },
+      ]
+    },
+    {
+      label: T('nav_donations_cat'),
+      items: [
+        { path: '#', label: T('nav_pledges'), icon: HeartHandshake },
+        { path: '/accounting', label: T('nav_payments'), icon: Wallet },
+        { path: '#', label: T('nav_schedules'), icon: CalendarClock },
+      ]
+    },
+    {
+      label: T('nav_fundraising_cat'),
+      items: [
+        { path: '#', label: T('nav_campaigns'), icon: Megaphone },
+        { path: '/fundraisers', label: T('nav_fundraisers'), icon: UserPlus },
+        { path: '#', label: T('nav_sponsorships'), icon: Medal },
+        { path: '#', label: T('nav_events'), icon: Ticket },
+      ]
+    },
+    {
+      label: T('nav_expenses_cat'),
+      items: [
+        { path: '#', label: T('nav_vendors'), icon: Store },
+        { path: '/expenses', label: T('nav_bills'), icon: FileText },
+        { path: '#', label: T('nav_print_checks'), icon: Printer },
+      ]
+    },
+    {
+      label: T('nav_accounting_cat'),
+      items: [
+        { path: '/accounting', label: T('nav_transactions'), icon: Wallet },
+        { path: '#', label: T('nav_chart_accounts'), icon: List },
+        { path: '#', label: T('nav_funds'), icon: PieChart },
+        { path: '#', label: T('nav_bank_feed'), icon: Building },
+        { path: '#', label: T('nav_reconciliation'), icon: CheckSquare },
+      ]
+    },
+    {
+      label: T('nav_reports_cat'),
+      items: [
+        { path: '/reports', label: T('nav_fundraising_rep'), icon: BarChart3 },
+        { path: '#', label: T('nav_profit_loss'), icon: BarChart3 },
+      ]
+    },
+    {
+      label: T('nav_system_cat'),
+      items: [
+        { path: '/tasks', label: T('nav_tasks'), icon: CheckSquare, badge: pendingTasks > 0 ? pendingTasks : undefined, badgeUrgent: highTasks > 0 },
+        { path: '/settings', label: T('nav_settings'), icon: Settings },
+        { path: '#', label: T('nav_logout'), icon: LogOut },
+      ]
+    }
   ];
 
-  const pageLabel = navItems.find(i => i.path === location.pathname)?.label || 'Dashboard';
+  // Flatten items to find current page label
+  const flatNavItems = navCategories.flatMap(cat => cat.items);
+  const pageLabel = flatNavItems.find(i => i.path === location.pathname && i.path !== '#')?.label || T('nav_dashboard');
 
   return (
     <div className="app-container" dir={isRtl ? 'rtl' : 'ltr'}>
-      <aside className="sidebar">
-        <div className="sidebar-logo">
+      <aside className="sidebar" style={{ padding: '24px 0', overflowY: 'auto' }}>
+        <div className="sidebar-logo" style={{ padding: '0 24px 20px', borderBottom: '1px solid var(--border)', marginBottom: '20px' }}>
           <div className="sidebar-logo-icon">❤</div>
           <div>
-            <div className="sidebar-logo-text">CharityPro</div>
-            <div className="sidebar-logo-sub">Management System</div>
+            <div className="sidebar-logo-text">{T('app_name')}</div>
+            <div className="sidebar-logo-sub">{T('app_sub')}</div>
           </div>
         </div>
 
-        <nav className="sidebar-nav">
-          <div className="sidebar-section-label">Main Menu</div>
-          {navItems.map((item) => (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={`nav-item ${location.pathname === item.path ? 'active' : ''}`}
-            >
-              <span className="nav-icon"><item.icon size={20} /></span>
-              <span style={{ flex: 1 }}>{item.label}</span>
-              {item.badge !== undefined && (
-                <span style={{
-                  background: item.badgeUrgent ? 'var(--red)' : 'rgba(255,255,255,0.2)',
-                  color: '#fff', borderRadius: '999px', padding: '2px 8px',
-                  fontSize: '0.7rem', fontWeight: 800, minWidth: '20px', textAlign: 'center'
-                }}>{item.badge}</span>
-              )}
-            </Link>
+        <nav className="sidebar-nav" style={{ padding: '0 16px' }}>
+          {navCategories.map((category, idx) => (
+            <div key={idx} style={{ marginBottom: '16px' }}>
+              <div className="sidebar-section-label" style={{ paddingLeft: '8px', paddingRight: '8px', marginBottom: '8px' }}>
+                {category.label}
+              </div>
+              {category.items.map((item, i) => (
+                <Link
+                  key={i}
+                  to={item.path}
+                  className={`nav-item ${location.pathname === item.path && item.path !== '#' ? 'active' : ''}`}
+                  style={{
+                    padding: '8px 12px',
+                    marginBottom: '4px',
+                    borderRadius: '8px',
+                    opacity: item.path === '#' ? 0.6 : 1
+                  }}
+                  onClick={(e) => {
+                    if (item.path === '#') {
+                      e.preventDefault();
+                      alert('This feature is not implemented yet in this demo.');
+                    }
+                  }}
+                >
+                  <span className="nav-icon" style={{ opacity: 0.8 }}><item.icon size={18} /></span>
+                  <span style={{ flex: 1, fontSize: '0.9rem' }}>{item.label}</span>
+                  {item.badge !== undefined && (
+                    <span style={{
+                      background: item.badgeUrgent ? 'var(--red)' : 'rgba(255,255,255,0.2)',
+                      color: '#fff', borderRadius: '999px', padding: '2px 8px',
+                      fontSize: '0.7rem', fontWeight: 800, minWidth: '20px', textAlign: 'center'
+                    }}>{item.badge}</span>
+                  )}
+                </Link>
+              ))}
+            </div>
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          CharityPro v1.0 · Canada 🇨🇦
+        <div className="sidebar-footer" style={{ padding: '20px 24px 0', borderTop: '1px solid var(--border)', marginTop: '20px' }}>
+          {T('app_name')} v1.0 · Canada 🇨🇦
         </div>
       </aside>
 
@@ -78,27 +160,30 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           </h1>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button className="btn btn-secondary" onClick={() => alert('Bulk upload modal coming soon!')} style={{ gap: '8px' }}>
+              <Upload size={16} /> {T('bulk_upload')}
+            </button>
             <div style={{ padding: '8px 16px', fontSize: '0.875rem', fontWeight: 700, color: 'var(--green)', background: 'var(--green-bg)', borderRadius: '999px', border: '1px solid rgba(5,150,105,0.2)' }}>
-              🏦 CAD Balance: ${totalBalance.toLocaleString()}
+              🏦 CAD ${totalBalance.toLocaleString()}
             </div>
 
             <div style={{ position: 'relative' }}>
               <button className="btn btn-primary" onClick={() => setShowQuickMenu(q => !q)}>
-                <Plus size={18} /> New Action
+                <Plus size={18} /> {T('new_action')}
               </button>
 
               {showQuickMenu && (
                 <>
                   <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onClick={() => setShowQuickMenu(false)} />
                   <div style={{
-                    position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 999,
-                    background: 'white', borderRadius: '14px', boxShadow: 'var(--shadow-float)',
+                    position: 'absolute', top: 'calc(100% + 8px)', right: isRtl ? 'auto' : 0, left: isRtl ? 0 : 'auto',
+                    zIndex: 999, background: 'white', borderRadius: '14px', boxShadow: 'var(--shadow-float)',
                     border: '1px solid var(--border)', minWidth: '220px', overflow: 'hidden'
                   }}>
                     {[
-                      { icon: <UserPlus size={18} style={{ color: 'var(--navy-light)' }} />, label: 'Add New Donor', action: () => { setShowQuickMenu(false); setShowAddDonor(true); } },
-                      { icon: <Wallet size={18} style={{ color: 'var(--green)' }} />, label: 'Process Donation', action: () => { setShowQuickMenu(false); setShowPayment(true); } },
-                      { icon: <CheckSquare size={18} style={{ color: 'var(--yellow)' }} />, label: 'Add Task', action: () => { setShowQuickMenu(false); window.location.href = '/tasks'; } },
+                      { icon: <UserPlus size={18} style={{ color: 'var(--navy-light)' }} />, label: T('add_donor'), action: () => { setShowQuickMenu(false); setShowAddDonor(true); } },
+                      { icon: <Wallet size={18} style={{ color: 'var(--green)' }} />, label: T('process_payment'), action: () => { setShowQuickMenu(false); setShowPayment(true); } },
+                      { icon: <CheckSquare size={18} style={{ color: 'var(--yellow)' }} />, label: T('add_task'), action: () => { setShowQuickMenu(false); navigate('/tasks'); } },
                     ].map(item => (
                       <button key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%', padding: '14px 20px', border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', transition: 'background 0.15s' }}
                         onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-input)')}

@@ -1,101 +1,169 @@
 import React from 'react';
 import { useStore } from '../store';
-import { TrendingUp, Users, AlertCircle, Calendar } from 'lucide-react';
+import { TrendingUp, Users, AlertCircle, Calendar, DollarSign, CheckSquare, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
-  const { currency } = useStore();
+  const { transactions, donors, bankAccounts, tasks, bills } = useStore();
+
+  const totalIncomeYTD = transactions.filter(t => t.type === 'approved').reduce((s, t) => s + t.amount, 0);
+  const pendingTotal = transactions.filter(t => t.type === 'pending').reduce((s, t) => s + t.amount, 0);
+  const totalDonors = donors.length;
+  const openTasks = tasks.filter(t => !t.completed).length;
+  const urgentBills = bills.filter(b => b.status === 'urgent').length;
+  const cadBalance = bankAccounts.filter(a => !a.isInternal && a.currency === 'CAD').reduce((s, a) => s + a.balance, 0);
+  const usdBalance = bankAccounts.filter(a => !a.isInternal && a.currency === 'USD').reduce((s, a) => s + a.balance, 0);
+
+  const stats = [
+    { label: 'Total Income (YTD)', value: `$${totalIncomeYTD.toLocaleString()}`, sub: '+15% from last year', icon: <TrendingUp size={22} />, color: 'var(--green)', bg: 'var(--green-bg)' },
+    { label: 'Total Donors', value: String(totalDonors), sub: '+42 new this month', icon: <Users size={22} />, color: 'var(--navy-light)', bg: 'var(--blue-bg)' },
+    { label: 'Pending Pledges', value: `$${pendingTotal.toLocaleString()}`, sub: 'Awaiting collection', icon: <AlertCircle size={22} />, color: 'var(--yellow)', bg: 'var(--yellow-bg)' },
+    { label: 'Open Tasks', value: String(openTasks), sub: urgentBills > 0 ? `${urgentBills} urgent bills` : 'All bills on track', icon: <CheckSquare size={22} />, color: urgentBills > 0 ? 'var(--red)' : 'var(--green)', bg: urgentBills > 0 ? 'var(--red-bg)' : 'var(--green-bg)' },
+  ];
+
+  // Recent 6 transactions
+  const recentTx = transactions.slice(0, 6);
+
+  // Monthly comparison
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const lastMonth = new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().slice(0, 7);
+  const thisMonthTotal = transactions.filter(t => t.type === 'approved' && t.date.startsWith(thisMonth)).reduce((s, t) => s + t.amount, 0);
+  const lastMonthTotal = transactions.filter(t => t.type === 'approved' && t.date.startsWith(lastMonth)).reduce((s, t) => s + t.amount, 0);
+  const monthTrend = lastMonthTotal > 0 ? ((thisMonthTotal - lastMonthTotal) / lastMonthTotal * 100).toFixed(1) : null;
+
+  const statusColors: Record<string, string> = {
+    approved: 'var(--green)', pending: 'var(--yellow)', recording: 'var(--blue)', declined: 'var(--red)'
+  };
+  const statusBg: Record<string, string> = {
+    approved: 'var(--green-bg)', pending: 'var(--yellow-bg)', recording: 'var(--blue-bg)', declined: 'var(--red-bg)'
+  };
 
   return (
-    <div className="grid">
-      <div className="grid grid-cols-4">
-        <div className="card">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="stat-label">Total Income (YTD)</h3>
-            <TrendingUp size={20} className="text-success" />
-          </div>
-          <div className="stat-value">$1,245,000</div>
-          <div className="stat-change positive">+15% from last year</div>
-        </div>
-        
-        <div className="card">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="stat-label">Total Donors</h3>
-            <Users size={20} className="text-primary" />
-          </div>
-          <div className="stat-value">3,421</div>
-          <div className="stat-change positive">+42 new this month</div>
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-        <div className="card">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="stat-label">Pending Pledges</h3>
-            <AlertCircle size={20} className="text-warning" />
+      {/* Stat Cards Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+        {stats.map(stat => (
+          <div key={stat.label} className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', cursor: 'default' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>{stat.label}</div>
+              <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: stat.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: stat.color }}>
+                {stat.icon}
+              </div>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--navy)', fontFamily: 'Outfit, sans-serif', lineHeight: 1 }}>{stat.value}</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{stat.sub}</div>
           </div>
-          <div className="stat-value">$45,200</div>
-          <div className="stat-change">124 pending transactions</div>
-        </div>
-
-        <div className="card">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="stat-label">Upcoming Bills</h3>
-            <Calendar size={20} className="text-danger" />
-          </div>
-          <div className="stat-value">$12,400</div>
-          <div className="stat-change negative">Due within 30 days</div>
-        </div>
+        ))}
       </div>
 
-      <div className="grid grid-cols-2">
-        <div className="card">
-          <h3 className="stat-label mb-4">Recent Activity</h3>
+      {/* Middle row: Recent Transactions + Bank Accounts */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: '20px' }}>
+
+        {/* Recent Transactions */}
+        <div className="card" style={{ padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h3 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Recent Transactions</h3>
+            {monthTrend && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.85rem', fontWeight: 700, color: parseFloat(monthTrend) >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                {parseFloat(monthTrend) >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                {Math.abs(parseFloat(monthTrend))}% vs last month
+              </div>
+            )}
+          </div>
           <div className="table-container">
             <table>
               <thead>
                 <tr>
                   <th>Donor</th>
                   <th>Amount</th>
+                  <th>Method</th>
                   <th>Status</th>
                   <th>Date</th>
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td>Avraham Schwartz</td>
-                  <td>$1,000.00</td>
-                  <td><span className="badge badge-success">Approved</span></td>
-                  <td>Today</td>
-                </tr>
-                <tr>
-                  <td>Yitzchok Cohen</td>
-                  <td>$500.00</td>
-                  <td><span className="badge badge-warning">Pending</span></td>
-                  <td>Yesterday</td>
-                </tr>
-                <tr>
-                  <td>Chaim Levy</td>
-                  <td>$100.00</td>
-                  <td><span className="badge badge-info">Recording</span></td>
-                  <td>Jun 21, 2025</td>
-                </tr>
+                {recentTx.map(tx => {
+                  const donor = donors.find(d => d.id === tx.donorId);
+                  return (
+                    <tr key={tx.id}>
+                      <td style={{ fontWeight: 600 }}>{donor?.name || '—'}</td>
+                      <td style={{ fontWeight: 700 }}>${tx.amount.toLocaleString()} {tx.currency}</td>
+                      <td style={{ fontSize: '0.85rem', textTransform: 'capitalize', color: 'var(--text-muted)' }}>{tx.method.replace('_', ' ')}</td>
+                      <td>
+                        <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 800, background: statusBg[tx.type], color: statusColors[tx.type] }}>
+                          {tx.type.charAt(0).toUpperCase() + tx.type.slice(1)}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{tx.date}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
 
-        <div className="card">
-          <h3 className="stat-label mb-4">Declined Cards Alert</h3>
-          <div className="p-4" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-            <div className="flex items-center gap-4 mb-2">
-              <AlertCircle className="text-danger" size={24} />
-              <h4 style={{ margin: 0, fontWeight: 600, color: 'var(--danger)' }}>Action Required</h4>
+        {/* Bank Accounts + Alerts */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Bank Balances */}
+          <div className="card" style={{ padding: '24px' }}>
+            <h3 style={{ margin: '0 0 16px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Bank Accounts</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {bankAccounts.filter(a => !a.isInternal).map(acc => (
+                <div key={acc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-input)', borderRadius: '10px' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{acc.name}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{acc.currency} Account</div>
+                  </div>
+                  <div style={{ fontWeight: 800, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)', fontSize: '1.05rem' }}>
+                    {acc.currency === 'USD' ? 'USD ' : 'CAD '}${acc.balance.toLocaleString()}
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 16px 0', borderTop: '2px solid var(--navy)', fontWeight: 800, color: 'var(--navy)', fontFamily: 'Outfit, sans-serif' }}>
+                <span>CAD Total</span><span>${cadBalance.toLocaleString()}</span>
+              </div>
             </div>
-            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-              4 recurring payments were declined today. The system automatically tried backup cards for 2 donors. 2 donors require manual follow-up.
-            </p>
-            <button className="btn btn-danger mt-4" style={{ width: '100%' }}>Review Declined Payments</button>
           </div>
+
+          {/* Alerts */}
+          {(urgentBills > 0 || openTasks > 0) && (
+            <div className="card" style={{ padding: '20px', background: 'var(--red-bg)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                <AlertCircle size={20} style={{ color: 'var(--red)' }} />
+                <span style={{ fontWeight: 800, color: 'var(--red)' }}>Action Required</span>
+              </div>
+              {urgentBills > 0 && <p style={{ margin: '0 0 6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>⚠️ {urgentBills} urgent bill{urgentBills > 1 ? 's' : ''} overdue</p>}
+              {openTasks > 0 && <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>📋 {openTasks} task{openTasks > 1 ? 's' : ''} pending</p>}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Bottom row: Upcoming tasks */}
+      <div className="card" style={{ padding: '24px' }}>
+        <h3 style={{ margin: '0 0 16px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Upcoming Tasks</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+          {tasks.filter(t => !t.completed).slice(0, 3).map(task => {
+            const donor = task.donorId ? donors.find(d => d.id === task.donorId) : null;
+            const priorityColor: Record<string, string> = { high: 'var(--red)', medium: 'var(--yellow)', low: 'var(--green)' };
+            return (
+              <div key={task.id} style={{ padding: '16px', background: 'var(--bg-input)', borderRadius: '12px', border: `1px solid ${priorityColor[task.priority]}30` }}>
+                <div style={{ fontWeight: 700, marginBottom: '4px' }}>{task.title}</div>
+                {donor && <div style={{ fontSize: '0.8rem', color: 'var(--navy-light)', marginBottom: '4px' }}>👤 {donor.name}</div>}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Due: {task.dueDate}</div>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 800, color: priorityColor[task.priority], background: `${priorityColor[task.priority]}15`, padding: '2px 8px', borderRadius: '999px', textTransform: 'uppercase' }}>{task.priority}</span>
+                </div>
+              </div>
+            );
+          })}
+          {tasks.filter(t => !t.completed).length === 0 && (
+            <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: 'var(--green)', padding: '20px' }}>✅ All tasks are done!</div>
+          )}
+        </div>
+      </div>
+
     </div>
   );
 };

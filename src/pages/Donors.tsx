@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Search, ChevronRight, UserCircle } from 'lucide-react';
+import { Search, ChevronRight } from 'lucide-react';
 import { PaymentModal } from '../components/PaymentModal';
 import { AddDonorModal } from '../components/AddDonorModal';
+import { useT } from '../i18n';
 
 type DonorTab = 'overview' | 'transactions' | 'recurring' | 'declined' | 'notes';
 
 export const Donors: React.FC = () => {
-  const { donors, transactions, recurringPayments, updateDonorNotes, toggleRecurring, fundraisers } = useStore();
+  const { donors, transactions, recurringPayments, updateDonorNotes, toggleRecurring, fundraisers, isRtl } = useStore();
+  const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterFundraiser, setFilterFundraiser] = useState('');
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
@@ -52,18 +54,18 @@ export const Donors: React.FC = () => {
       <div className="card" style={{ padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
-            Donors ({filteredDonors.length})
+            {T('donors_dir')} ({filteredDonors.length})
           </h2>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowAddDonor(true)}>+ Add Donor</button>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAddDonor(true)}>+ {T('add_donor')}</button>
         </div>
 
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
           <div className="search-box" style={{ flex: 1, minWidth: '180px' }}>
             <Search className="search-icon" size={18} />
-            <input type="text" placeholder="Search by name, phone, email…" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input type="text" placeholder={T('search_donors')} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
           <select className="filter-select" value={filterFundraiser} onChange={e => setFilterFundraiser(e.target.value)} style={{ minWidth: '150px' }}>
-            <option value="">All Fundraisers</option>
+            <option value="">{T('all_fundraisers')}</option>
             {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         </div>
@@ -72,10 +74,10 @@ export const Donors: React.FC = () => {
           <table>
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Phone</th>
-                <th>Given</th>
-                <th>Balance</th>
+                <th>{T('name')}</th>
+                <th>{T('phone')}</th>
+                <th>{T('given')}</th>
+                <th>{T('balance')}</th>
                 <th></th>
               </tr>
             </thead>
@@ -108,7 +110,7 @@ export const Donors: React.FC = () => {
                 </tr>
               ))}
               {filteredDonors.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No donors found</td></tr>
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>{T('no_donors')}</td></tr>
               )}
             </tbody>
           </table>
@@ -141,18 +143,18 @@ export const Donors: React.FC = () => {
 
           {/* Quick Actions */}
           <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setShowPayment(true)}>💳 Process Payment</button>
-            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setShowPayment(true); }}>🔁 Setup Recurring</button>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setShowPayment(true)}>💳 {T('process_payment')}</button>
+            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowPayment(true)}>🔁 {T('setup_recurring')}</button>
           </div>
 
           {/* Tabs */}
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '20px' }}>
             {([
-              ['overview', 'Overview'],
-              ['transactions', `Payments (${donorTransactions.filter(t => t.type !== 'declined').length})`],
-              ['recurring', `Recurring (${donorRecurring.length})`],
-              ['declined', `Declined (${donorDeclined.length})`],
-              ['notes', 'Notes'],
+              ['overview', T('overview')],
+              ['transactions', `${T('payments')} (${donorTransactions.filter(t => t.type !== 'declined').length})`],
+              ['recurring', `${T('recurring')} (${donorRecurring.length})`],
+              ['declined', `${T('declined')} (${donorDeclined.length})`],
+              ['notes', T('notes')],
             ] as [DonorTab, string][]).map(([key, label]) => (
               <button key={key} onClick={() => setDonorTab(key)} style={{
                 padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: 700,
@@ -168,9 +170,9 @@ export const Donors: React.FC = () => {
             <div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
                 {[
-                  { label: 'Total Given', val: `$${selectedDonor.totalGiven.toLocaleString()}`, color: 'var(--green)' },
-                  { label: 'Pending Balance', val: `$${selectedDonor.balanceOwed.toLocaleString()}`, color: selectedDonor.balanceOwed > 0 ? 'var(--red)' : 'var(--text-muted)' },
-                  { label: 'Active Recurring', val: String(donorRecurring.filter(r => r.active).length), color: 'var(--navy-light)' },
+                  { label: T('total_given'), val: `$${selectedDonor.totalGiven.toLocaleString()}`, color: 'var(--green)' },
+                  { label: T('balance_owed'), val: `$${selectedDonor.balanceOwed.toLocaleString()}`, color: selectedDonor.balanceOwed > 0 ? 'var(--red)' : 'var(--text-muted)' },
+                  { label: T('active_recurring'), val: String(donorRecurring.filter(r => r.active).length), color: 'var(--navy-light)' },
                 ].map(s => (
                   <div key={s.label} style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', textAlign: 'center' }}>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>{s.label}</div>
@@ -180,7 +182,7 @@ export const Donors: React.FC = () => {
               </div>
               {selectedDonor.cards && selectedDonor.cards.length > 0 && (
                 <div>
-                  <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>Payment Cards on File</div>
+                  <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>{T('cards_on_file')}</div>
                   {selectedDonor.cards.map(card => (
                     <div key={card.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-input)', borderRadius: '10px', marginBottom: '8px', border: card.isDefault ? '1px solid var(--navy-light)' : '1px solid var(--border)' }}>
                       <div>
@@ -195,7 +197,7 @@ export const Donors: React.FC = () => {
               {selectedDonor.fundraiserId && (
                 <div style={{ marginTop: '16px', padding: '12px 16px', background: 'var(--yellow-bg)', borderRadius: '10px', border: '1px solid rgba(217,119,6,0.2)' }}>
                   <div style={{ color: 'var(--yellow)', fontWeight: 700, fontSize: '0.85rem' }}>
-                    🤝 Referred by: {fundraisers.find(f => f.id === selectedDonor.fundraiserId)?.name || '—'}
+                    🤝 {T('referred_by')}: {fundraisers.find(f => f.id === selectedDonor.fundraiserId)?.name || '—'}
                   </div>
                 </div>
               )}
@@ -217,7 +219,7 @@ export const Donors: React.FC = () => {
                     </tr>
                   ))}
                   {donorTransactions.filter(t => t.type !== 'declined').length === 0 && (
-                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>No transactions yet</td></tr>
+                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>{T('no_donors')}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -230,9 +232,9 @@ export const Donors: React.FC = () => {
               {donorRecurring.length === 0 ? (
                 <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
                   <div style={{ fontSize: '2rem', marginBottom: '12px' }}>🔁</div>
-                  No recurring payments set up.
+                  {T('no_recurring')}
                   <br /><br />
-                  <button className="btn btn-primary" onClick={() => setShowPayment(true)}>+ Setup Recurring</button>
+                  <button className="btn btn-primary" onClick={() => setShowPayment(true)}>+ {T('setup_recurring')}</button>
                 </div>
               ) : (
                 donorRecurring.map(r => (
@@ -242,9 +244,9 @@ export const Donors: React.FC = () => {
                       <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Next: {r.nextDate} · via {methodLabel[r.method]}</div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <span className={`badge ${r.active ? 'badge-green' : 'badge-gray'}`}>{r.active ? 'Active' : 'Paused'}</span>
+                      <span className={`badge ${r.active ? 'badge-green' : 'badge-gray'}`}>{r.active ? (isRtl ? 'אַקטיוו' : 'Active') : (isRtl ? 'פּאָזירט' : 'Paused')}</span>
                       <button className="btn btn-secondary btn-sm" onClick={() => toggleRecurring(r.id)}>
-                        {r.active ? 'Pause' : 'Resume'}
+                        {r.active ? (isRtl ? 'פּאָזירן' : 'Pause') : (isRtl ? 'ווידעראויפֿנעמען' : 'Resume')}
                       </button>
                     </div>
                   </div>
@@ -267,7 +269,7 @@ export const Donors: React.FC = () => {
                     </tr>
                   ))}
                   {donorDeclined.length === 0 && (
-                    <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--green)', padding: '30px' }}>✅ No declined payments</td></tr>
+                    <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--green)', padding: '30px' }}>{T('no_declined')}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -281,11 +283,11 @@ export const Donors: React.FC = () => {
                 value={notesDraft}
                 onChange={e => setNotesDraft(e.target.value)}
                 rows={8}
-                placeholder="Write notes about this donor here… e.g. Prefers to be called on Sundays. Met at the 2025 gala."
+                placeholder={T('notes_placeholder')}
                 style={{ width: '100%' }}
               />
               <button className="btn btn-primary" style={{ marginTop: '12px' }} onClick={() => updateDonorNotes(selectedDonor.id, notesDraft)}>
-                💾 Save Notes
+                {T('save_notes')}
               </button>
             </div>
           )}
