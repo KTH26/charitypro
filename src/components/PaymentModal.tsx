@@ -196,6 +196,26 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                     </div>
                   </div>
 
+                  {/* Credit Card Details */}
+                  {method === 'credit_card' && (
+                    <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                      <div className="form-group" style={{ margin: '0 0 12px 0' }}>
+                        <label>Card Number</label>
+                        <input type="text" placeholder="0000 0000 0000 0000" maxLength={19} />
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label>Expiry (MM/YY)</label>
+                          <input type="text" placeholder="MM/YY" maxLength={5} />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label>CVV</label>
+                          <input type="text" placeholder="123" maxLength={4} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Date + Category */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div className="form-group" style={{ margin: 0 }}>
@@ -276,6 +296,26 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                       </select>
                     </div>
                   </div>
+
+                  {/* Credit Card Details for Recurring */}
+                  {recMethod === 'credit_card' && (
+                    <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                      <div className="form-group" style={{ margin: '0 0 12px 0' }}>
+                        <label>Card Number</label>
+                        <input type="text" placeholder="0000 0000 0000 0000" maxLength={19} />
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label>Expiry (MM/YY)</label>
+                          <input type="text" placeholder="MM/YY" maxLength={5} />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                          <label>CVV</label>
+                          <input type="text" placeholder="123" maxLength={4} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div style={{ background: 'var(--navy-bg)', padding: '16px', borderRadius: '12px', border: '1px solid var(--blue-bg)' }}>
                     <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '4px' }}>📅 Summary</div>
