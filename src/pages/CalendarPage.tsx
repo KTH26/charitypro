@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
 import { Plus, X, Trash2, Calendar, Star } from 'lucide-react';
+import { HDate } from '@hebcal/core';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -106,12 +107,17 @@ export const CalendarPage: React.FC = () => {
               const isToday = new Date().getDate() === day && new Date().getMonth() === selectedMonth;
               return (
                 <div key={day} style={{
-                  minHeight: '70px', borderRadius: '10px', padding: '8px',
+                  minHeight: '70px', borderRadius: '10px', padding: '8px', position: 'relative',
                   background: events.length > 0 ? 'var(--yellow-bg)' : isToday ? 'var(--navy-bg)' : 'var(--bg-input)',
                   border: events.length > 0 ? '1px solid rgba(217,119,6,0.3)' : isToday ? '1px solid var(--navy-light)' : '1px solid var(--border)',
                   transition: 'all 0.2s'
                 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.9rem', color: isToday ? 'var(--navy-light)' : 'var(--text-secondary)', marginBottom: '4px' }}>{day}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: isToday ? 'var(--navy-light)' : 'var(--text-secondary)' }}>{day}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                      {new HDate(new Date(year, selectedMonth, day)).renderGematriya(true)}
+                    </div>
+                  </div>
                   {events.map(e => (
                     <div key={e.id} style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--gold)', background: 'rgba(217,119,6,0.15)', borderRadius: '4px', padding: '2px 6px', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                       <Star size={8} fill="currentColor" /> {e.donor.name.split(' ')[0]}

@@ -11,6 +11,15 @@ import { CalendarPage } from './pages/CalendarPage';
 import { Tasks } from './pages/Tasks';
 import { Settings } from './pages/Settings';
 import { ComingSoon } from './pages/ComingSoon';
+import { Pledges } from './pages/Pledges';
+import { Payments } from './pages/Payments';
+import { Schedules } from './pages/Schedules';
+import { Vendors } from './pages/Vendors';
+import { PrintCheckLayout } from './pages/PrintCheckLayout';
+import { Transactions } from './pages/Transactions';
+import { ChartOfAccounts } from './pages/ChartOfAccounts';
+import { BankFeed } from './pages/BankFeed';
+import { Reconciliation } from './pages/Reconciliation';
 
 function App() {
   return (
@@ -19,8 +28,17 @@ function App() {
         <Route path="/" element={<Layout><Dashboard /></Layout>} />
         <Route path="/donors" element={<Layout><Donors /></Layout>} />
         <Route path="/fundraisers" element={<Layout><Fundraisers /></Layout>} />
+        <Route path="/transactions" element={<Layout><Transactions /></Layout>} />
+        <Route path="/chart-of-accounts" element={<Layout><ChartOfAccounts /></Layout>} />
+        <Route path="/bank-feed" element={<Layout><BankFeed /></Layout>} />
+        <Route path="/reconciliation" element={<Layout><Reconciliation /></Layout>} />
         <Route path="/accounting" element={<Layout><Accounting /></Layout>} />
+        <Route path="/vendors" element={<Layout><Vendors /></Layout>} />
         <Route path="/expenses" element={<Layout><Expenses /></Layout>} />
+        <Route path="/print-check" element={<Layout><PrintCheckLayout /></Layout>} />
+        <Route path="/pledges" element={<Layout><Pledges /></Layout>} />
+        <Route path="/payments" element={<Layout><Payments /></Layout>} />
+        <Route path="/schedules" element={<Layout><Schedules /></Layout>} />
         <Route path="/reports" element={<Layout><Reports /></Layout>} />
         <Route path="/calendar" element={<Layout><CalendarPage /></Layout>} />
         <Route path="/tasks" element={<Layout><Tasks /></Layout>} />

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Calendar, Plus, X, AlertTriangle, Edit2, ArrowRight } from 'lucide-react';
+import { Calendar, Plus, X, AlertTriangle, Edit2, ArrowRight, Printer } from 'lucide-react';
 import type { Bill } from '../store';
-import { useLocation } from 'react-router-dom';
+import { useLocation, Link } from 'react-router-dom';
 import { useT } from '../i18n';
 
 const CATEGORIES = ['Ambulance Operations', 'Administration', 'Fundraising', 'Events', 'Equipment', 'Other'];
@@ -102,6 +102,9 @@ export const Expenses: React.FC = () => {
                     ${bill.amount.toFixed(2)}
                   </div>
                   <button className="btn btn-ghost btn-sm" onClick={() => setEditBillData(bill)}><Edit2 size={14} /></button>
+                  <Link to={`/print-check?billId=${bill.id}`} className="btn btn-secondary btn-sm" style={{ padding: '6px' }} title="Print Check">
+                    <Printer size={16} />
+                  </Link>
                   <button className="btn btn-secondary btn-sm" onClick={() => { setConfirmPay(bill.id); setPayBankId(''); }}>Pay</button>
                 </div>
               </div>

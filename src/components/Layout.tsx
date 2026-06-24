@@ -64,44 +64,31 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             { path: '/donors?tab=latch', label: 'Donor Latch Cards' },
             { path: '/donors?tab=reviews', label: 'Donor Reviews' }
           ]
-        },
-        { path: '/coming-soon', label: T('nav_accounts'), icon: Building },
-        { path: '/coming-soon', label: T('nav_lists'), icon: List },
+        }
       ]
     },
     {
       label: T('nav_donations_cat'),
       items: [
-        { path: '/coming-soon', label: T('nav_pledges'), icon: HeartHandshake },
-        { path: '/accounting', label: T('nav_payments'), icon: Wallet },
-        { path: '/coming-soon', label: T('nav_schedules'), icon: CalendarClock },
-      ]
-    },
-    {
-      label: T('nav_fundraising_cat'),
-      items: [
-        { path: '/coming-soon', label: T('nav_campaigns'), icon: Megaphone },
-        { path: '/fundraisers', label: T('nav_fundraisers'), icon: UserPlus },
-        { path: '/coming-soon', label: T('nav_sponsorships'), icon: Medal },
-        { path: '/coming-soon', label: T('nav_events'), icon: Ticket },
+        { path: '/pledges', label: T('nav_pledges'), icon: HeartHandshake },
+        { path: '/payments', label: T('nav_payments'), icon: Wallet },
+        { path: '/schedules', label: T('nav_schedules'), icon: CalendarClock },
       ]
     },
     {
       label: T('nav_expenses_cat'),
       items: [
-        { path: '/coming-soon', label: T('nav_vendors'), icon: Store },
+        { path: '/vendors', label: T('nav_vendors'), icon: Store },
         { path: '/expenses', label: T('nav_bills'), icon: FileText },
-        { path: '/coming-soon', label: T('nav_print_checks'), icon: Printer },
       ]
     },
     {
       label: T('nav_accounting_cat'),
       items: [
-        { path: '/accounting', label: T('nav_transactions'), icon: Wallet },
-        { path: '/coming-soon', label: T('nav_chart_accounts'), icon: List },
-        { path: '/coming-soon', label: T('nav_funds'), icon: PieChart },
-        { path: '/coming-soon', label: T('nav_bank_feed'), icon: Building },
-        { path: '/coming-soon', label: T('nav_reconciliation'), icon: CheckSquare },
+        { path: '/transactions', label: T('nav_transactions'), icon: Wallet },
+        { path: '/chart-of-accounts', label: T('nav_chart_accounts'), icon: List },
+        { path: '/bank-feed', label: T('nav_bank_feed'), icon: Building },
+        { path: '/reconciliation', label: T('nav_reconciliation'), icon: CheckSquare },
       ]
     },
     {
@@ -116,7 +103,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       items: [
         { path: '/tasks', label: T('nav_tasks'), icon: CheckSquare, badge: pendingTasks > 0 ? pendingTasks : undefined, badgeUrgent: highTasks > 0 },
         { path: '/settings', label: T('nav_settings'), icon: Settings },
-        { path: '/coming-soon', label: T('nav_logout'), icon: LogOut },
+        { path: '#logout', label: T('nav_logout'), icon: LogOut },
       ]
     }
   ];
@@ -145,7 +132,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               {category.items.map((item, i) => (
                 <div key={i} style={{ marginBottom: '4px' }}>
                   <Link
-                    to={item.path}
+                    to={item.path === '#logout' ? '#' : item.path}
+                    onClick={item.path === '#logout' ? (e) => { e.preventDefault(); alert("Logout functionality will clear tokens and redirect to login page."); window.location.href = '/login'; } : undefined}
                     className={`nav-item ${location.pathname === item.path && item.path !== '/coming-soon' ? 'active' : ''}`}
                     style={{
                       padding: '8px 12px',
