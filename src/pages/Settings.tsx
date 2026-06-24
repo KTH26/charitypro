@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { useStore, type DonorSortKey } from '../store';
-import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users } from 'lucide-react';
+import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
-  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy } = useStore();
+  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy, googleSheetSyncUrl, setGoogleSheetSyncUrl } = useStore();
   const T = useT(isRtl);
   const [syncing, setSyncing] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
   const [manualRate, setManualRate] = useState(String(exchangeRate));
+  const [sheetUrl, setSheetUrl] = useState(googleSheetSyncUrl);
+  const [urlSaved, setUrlSaved] = useState(false);
 
   // Fetch live exchange rate from a free public API
   const handleSyncRate = async () => {
@@ -172,6 +174,63 @@ export const Settings: React.FC = () => {
           <div style={{ marginTop: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             {isRtl ? 'איר קענט אויך בײַטן דעם סאָרטירן דירעקט אויפן מדוניים זייט' : 'You can also change the sort directly on the Donors page.'}
           </div>
+        </div>
+      </div>
+
+      {/* Google Sheets Sync */}
+      <div className="card" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '20px', gridColumn: '1 / -1' }}>
+        <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)', fontSize: '1.3rem' }}>
+          🔗 Google Sheets Sync
+        </h2>
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.88rem', lineHeight: 1.6 }}>
+          Paste your Google Sheet published CSV link below. Once saved, the <strong>🔄 Sync</strong> button on the Donors page will re-import directly — no popup ever.
+        </p>
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, position: 'relative' }}>
+            <Link size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+            <input
+              type="url"
+              placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+              value={sheetUrl}
+              onChange={e => { setSheetUrl(e.target.value); setUrlSaved(false); }}
+              style={{ paddingLeft: '40px', fontFamily: 'monospace', fontSize: '0.82rem' }}
+            />
+          </div>
+          {googleSheetSyncUrl && (
+            <button className="btn btn-ghost btn-sm" title="Clear saved link" onClick={() => { setGoogleSheetSyncUrl(''); setSheetUrl(''); setUrlSaved(false); }} style={{ flexShrink: 0, padding: '10px' }}>
+              <X size={16} />
+            </button>
+          )}
+          <button
+            className="btn btn-primary"
+            disabled={!sheetUrl.trim()}
+            onClick={() => {
+              setGoogleSheetSyncUrl(sheetUrl.trim());
+              setUrlSaved(true);
+              setTimeout(() => setUrlSaved(false), 3000);
+            }}
+            style={{ flexShrink: 0, minWidth: '110px' }}
+          >
+            {urlSaved ? <><Check size={15} style={{ marginRight: '6px' }} />Saved!</> : 'Save Link'}
+          </button>
+        </div>
+
+        {googleSheetSyncUrl && (
+          <div style={{ padding: '12px 16px', background: 'var(--green-bg, #f0fdf4)', borderRadius: '10px', border: '1px solid var(--green)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '1.2rem' }}>✅</span>
+            <div>
+              <div style={{ fontWeight: 700, color: 'var(--green)', fontSize: '0.88rem' }}>Link saved — Donors page will sync with one click</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginTop: '2px', fontFamily: 'monospace', wordBreak: 'break-all' }}>{googleSheetSyncUrl}</div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ background: 'var(--bg-input)', borderRadius: '10px', padding: '14px 16px', fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.7 }}>
+          <strong style={{ color: 'var(--navy)' }}>How to get the link:</strong><br />
+          1. Open your Google Sheet → <em>File → Share → Publish to web</em><br />
+          2. Choose your donors sheet tab → select <em>Comma-separated values (.csv)</em><br />
+          3. Click <em>Publish</em> → copy the link → paste it above
         </div>
       </div>
 

@@ -34,7 +34,6 @@ export const Donors: React.FC = () => {
   const [editDonorActive, setEditDonorActive] = useState(false);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [showSyncModal, setShowSyncModal] = useState(false);
   const [tempUrl, setTempUrl] = useState(googleSheetSyncUrl);
   const location = useLocation();
 
@@ -144,7 +143,6 @@ export const Donors: React.FC = () => {
             }
           });
           setSyncing(false);
-          setShowSyncModal(false);
         },
         error: (err: any) => {
           setSyncing(false);
@@ -179,13 +177,16 @@ export const Donors: React.FC = () => {
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
             {T('donors_dir')} ({filteredDonors.length})
           </h2>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="btn btn-secondary btn-sm" onClick={() => {
-              if (googleSheetSyncUrl) handleSync(googleSheetSyncUrl);
-              else setShowSyncModal(true);
-            }} disabled={syncing}>
-              {syncing ? 'Syncing...' : '🔄 Sync Sheets'}
-            </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {googleSheetSyncUrl ? (
+              <button className="btn btn-secondary btn-sm" onClick={() => handleSync(googleSheetSyncUrl)} disabled={syncing}>
+                {syncing ? '⏳ Syncing...' : '🔄 Sync'}
+              </button>
+            ) : (
+              <a href="/settings" style={{ fontSize: '0.8rem', color: 'var(--navy-light)', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+                ⚙️ Configure Sheet URL in Settings
+              </a>
+            )}
             <button className="btn btn-primary btn-sm" onClick={() => setShowAddDonor(true)}>+ {T('add_donor')}</button>
           </div>
         </div>
@@ -600,40 +601,6 @@ export const Donors: React.FC = () => {
       {showAddDonor && <AddDonorModal onClose={() => setShowAddDonor(false)} />}
       {showPayment && selectedDonorId && <PaymentModal donorId={selectedDonorId} onClose={() => setShowPayment(false)} />}
       
-      {showSyncModal && (
-        <div className="modal-overlay" onClick={() => setShowSyncModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 style={{ margin: 0 }}>Configure Google Sheets Sync</h2>
-              <button className="modal-close" onClick={() => setShowSyncModal(false)}><X size={20} /></button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group" style={{ margin: 0 }}>
-                <label>Published CSV Link</label>
-                <input 
-                  type="text" 
-                  placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv" 
-                  value={tempUrl} 
-                  onChange={e => setTempUrl(e.target.value)} 
-                />
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0 }}>
-                  In Google Sheets, go to File &gt; Share &gt; Publish to Web. Choose the specific sheet and "Comma-separated values (.csv)", then paste the link here.
-                </p>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowSyncModal(false)}>Cancel</button>
-              <button className="btn btn-primary" disabled={!tempUrl || syncing} onClick={() => {
-                setGoogleSheetSyncUrl(tempUrl);
-                handleSync(tempUrl);
-              }}>
-                {syncing ? 'Syncing...' : 'Save & Sync'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {editDonorActive && selectedDonor && (
         <AddDonorModal editDonorData={selectedDonor} onClose={() => setEditDonorActive(false)} />
       )}
