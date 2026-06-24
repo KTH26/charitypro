@@ -58,13 +58,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     {
       label: T('nav_contacts_cat'),
       items: [
-        { 
-          path: '/donors', label: T('nav_donors'), icon: Users,
-          subItems: [
-            { path: '/donors?tab=latch', label: 'Donor Latch Cards' },
-            { path: '/donors?tab=reviews', label: 'Donor Reviews' }
-          ]
-        }
+        { path: '/donors', label: T('nav_donors'), icon: Users }
       ]
     },
     {
