@@ -1,40 +1,71 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Search, Filter, ChevronRight, UserCircle } from 'lucide-react';
+import { Search, ChevronRight, UserCircle } from 'lucide-react';
+import { PaymentModal } from '../components/PaymentModal';
+import { AddDonorModal } from '../components/AddDonorModal';
+
+type DonorTab = 'overview' | 'transactions' | 'recurring' | 'declined' | 'notes';
 
 export const Donors: React.FC = () => {
-  const { donors } = useStore();
+  const { donors, transactions, recurringPayments, updateDonorNotes, toggleRecurring, fundraisers } = useStore();
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDonor, setSelectedDonor] = useState<string | null>(null);
+  const [filterFundraiser, setFilterFundraiser] = useState('');
+  const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
+  const [showPayment, setShowPayment] = useState(false);
+  const [showAddDonor, setShowAddDonor] = useState(false);
+  const [donorTab, setDonorTab] = useState<DonorTab>('overview');
+  const [notesDraft, setNotesDraft] = useState('');
 
-  const filteredDonors = donors.filter(d => 
-    d.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    d.phone.includes(searchTerm)
-  );
+  const filteredDonors = donors.filter(d => {
+    const matchSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.phone.includes(searchTerm) || d.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchFundraiser = !filterFundraiser || d.fundraiserId === filterFundraiser;
+    return matchSearch && matchFundraiser;
+  });
+
+  const selectedDonor = donors.find(d => d.id === selectedDonorId);
+
+  const donorTransactions = transactions.filter(t => t.donorId === selectedDonorId);
+  const donorDeclined = donorTransactions.filter(t => t.type === 'declined');
+  const donorRecurring = recurringPayments.filter(r => r.donorId === selectedDonorId);
+
+  const selectDonor = (id: string) => {
+    const d = donors.find(x => x.id === id);
+    setSelectedDonorId(id);
+    setDonorTab('overview');
+    setNotesDraft(d?.notes || '');
+  };
+
+  const statusBadge = (type: string) => {
+    const map: Record<string, string> = {
+      approved: 'badge-success', pending: 'badge-warning', recording: 'badge-info', declined: 'badge-danger'
+    };
+    return <span className={`badge ${map[type] || 'badge-gray'}`}>{type.charAt(0).toUpperCase() + type.slice(1)}</span>;
+  };
+
+  const methodLabel: Record<string, string> = {
+    credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer'
+  };
 
   return (
-    <div className="grid grid-cols-3">
-      <div className="card" style={{ gridColumn: selectedDonor ? 'span 1' : 'span 3' }}>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="header-title" style={{ fontSize: '1.25rem' }}>Donors Directory</h2>
-          <button className="btn btn-primary">+ Add Donor</button>
+    <div style={{ display: 'grid', gridTemplateColumns: selectedDonor ? '1fr 1.6fr' : '1fr', gap: '24px' }}>
+      {/* Donor List */}
+      <div className="card" style={{ padding: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
+            Donors ({filteredDonors.length})
+          </h2>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAddDonor(true)}>+ Add Donor</button>
         </div>
-        
-        <div className="flex gap-4 mb-6">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-3 text-secondary" size={18} />
-            <input 
-              type="text" 
-              className="form-input" 
-              style={{ paddingLeft: '40px' }}
-              placeholder="Search donors by name, phone..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <div className="search-box" style={{ flex: 1, minWidth: '180px' }}>
+            <Search className="search-icon" size={18} />
+            <input type="text" placeholder="Search by name, phone, email…" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
-          <button className="btn btn-secondary">
-            <Filter size={18} /> Filter
-          </button>
+          <select className="filter-select" value={filterFundraiser} onChange={e => setFilterFundraiser(e.target.value)} style={{ minWidth: '150px' }}>
+            <option value="">All Fundraisers</option>
+            {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
         </div>
 
         <div className="table-container">
@@ -43,131 +74,230 @@ export const Donors: React.FC = () => {
               <tr>
                 <th>Name</th>
                 <th>Phone</th>
-                <th>Total Given</th>
+                <th>Given</th>
                 <th>Balance</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {filteredDonors.map(donor => (
-                <tr 
-                  key={donor.id} 
-                  style={{ cursor: 'pointer', backgroundColor: selectedDonor === donor.id ? 'rgba(79, 70, 229, 0.1)' : 'transparent' }}
-                  onClick={() => setSelectedDonor(donor.id)}
+                <tr key={donor.id}
+                  style={{ cursor: 'pointer', background: selectedDonorId === donor.id ? 'var(--navy-bg)' : '' }}
+                  onClick={() => selectDonor(donor.id)}
                 >
-                  <td className="flex items-center gap-2">
-                    <UserCircle className="text-secondary" />
-                    <span style={{ fontWeight: 500 }}>{donor.name}</span>
+                  <td>
+                    <div className="member-info">
+                      <div className="member-avatar" style={{ width: '36px', height: '36px', fontSize: '0.85rem' }}>
+                        {donor.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                      </div>
+                      <div>
+                        <div className="member-name" style={{ fontSize: '0.95rem' }}>{donor.name}</div>
+                        <div className="member-email">{donor.email}</div>
+                      </div>
+                    </div>
                   </td>
-                  <td>{donor.phone}</td>
-                  <td className="text-success">${donor.totalGiven.toLocaleString()}</td>
-                  <td className={donor.balanceOwed > 0 ? 'text-danger' : ''}>
-                    ${donor.balanceOwed.toLocaleString()}
+                  <td style={{ fontSize: '0.9rem' }}>{donor.phone}</td>
+                  <td style={{ color: 'var(--green)', fontWeight: 700 }}>${donor.totalGiven.toLocaleString()}</td>
+                  <td>
+                    {donor.balanceOwed > 0
+                      ? <span style={{ color: 'var(--red)', fontWeight: 700 }}>${donor.balanceOwed.toLocaleString()}</span>
+                      : <span style={{ color: 'var(--green)' }}>—</span>
+                    }
                   </td>
-                  <td className="text-right">
-                    <ChevronRight size={18} className="text-secondary" />
-                  </td>
+                  <td><ChevronRight size={16} style={{ color: 'var(--text-muted)' }} /></td>
                 </tr>
               ))}
+              {filteredDonors.length === 0 && (
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No donors found</td></tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
+      {/* Donor Detail Panel */}
       {selectedDonor && (
-        <div className="card" style={{ gridColumn: 'span 2' }}>
-          {/* Donor Detail View */}
-          {donors.filter(d => d.id === selectedDonor).map(donor => (
-            <div key={donor.id}>
-              <div className="flex justify-between items-start mb-6 pb-6" style={{ borderBottom: '1px solid var(--border-color)' }}>
-                <div className="flex items-center gap-4">
-                  <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: 'var(--surface-lighter)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <UserCircle size={40} className="text-secondary" />
-                  </div>
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>{donor.name}</h2>
-                    <div style={{ color: 'var(--text-secondary)' }}>{donor.address}</div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="stat-label">Total Balance Owed</div>
-                  <div className="stat-value text-danger" style={{ fontSize: '1.5rem' }}>${donor.balanceOwed.toLocaleString()}</div>
-                </div>
+        <div className="card" style={{ padding: '24px' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div className="member-avatar" style={{ width: '56px', height: '56px', fontSize: '1.2rem' }}>
+                {selectedDonor.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
               </div>
-
-              <div className="tabs">
-                <div className="tab active">Overview</div>
-                <div className="tab">Pledges</div>
-                <div className="tab">Transactions</div>
-                <div className="tab text-danger">Declined</div>
-                <div className="tab">Notes</div>
+              <div>
+                <h3 style={{ margin: '0 0 4px', fontSize: '1.4rem' }}>{selectedDonor.name}</h3>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{selectedDonor.phone} · {selectedDonor.email}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{selectedDonor.address}</div>
               </div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>Total Given</div>
+              <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--navy)', fontFamily: 'Outfit, sans-serif' }}>${selectedDonor.totalGiven.toLocaleString()}</div>
+              {selectedDonor.balanceOwed > 0 && (
+                <div style={{ color: 'var(--red)', fontWeight: 700, fontSize: '0.95rem' }}>Owes ${selectedDonor.balanceOwed.toLocaleString()}</div>
+              )}
+            </div>
+          </div>
 
-              <div className="grid grid-cols-2 mb-6">
-                <div className="glass-card">
-                  <h4 className="stat-label mb-4">Payment Methods</h4>
-                  <div className="flex justify-between items-center mb-2 p-3" style={{ backgroundColor: 'var(--surface-dark)', borderRadius: '8px', border: '1px solid var(--primary-color)' }}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>Visa ending in 4242</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Expires 12/26 (Default)</div>
+          {/* Quick Actions */}
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setShowPayment(true)}>💳 Process Payment</button>
+            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setShowPayment(true); }}>🔁 Setup Recurring</button>
+          </div>
+
+          {/* Tabs */}
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '20px' }}>
+            {([
+              ['overview', 'Overview'],
+              ['transactions', `Payments (${donorTransactions.filter(t => t.type !== 'declined').length})`],
+              ['recurring', `Recurring (${donorRecurring.length})`],
+              ['declined', `Declined (${donorDeclined.length})`],
+              ['notes', 'Notes'],
+            ] as [DonorTab, string][]).map(([key, label]) => (
+              <button key={key} onClick={() => setDonorTab(key)} style={{
+                padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: 700,
+                fontSize: '0.82rem', color: donorTab === key ? 'var(--navy-light)' : 'var(--text-muted)',
+                borderBottom: donorTab === key ? '3px solid var(--navy-light)' : '3px solid transparent',
+                transition: 'all 0.2s', fontFamily: 'inherit', whiteSpace: 'nowrap'
+              }}>{label}</button>
+            ))}
+          </div>
+
+          {/* Overview tab */}
+          {donorTab === 'overview' && (
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+                {[
+                  { label: 'Total Given', val: `$${selectedDonor.totalGiven.toLocaleString()}`, color: 'var(--green)' },
+                  { label: 'Pending Balance', val: `$${selectedDonor.balanceOwed.toLocaleString()}`, color: selectedDonor.balanceOwed > 0 ? 'var(--red)' : 'var(--text-muted)' },
+                  { label: 'Active Recurring', val: String(donorRecurring.filter(r => r.active).length), color: 'var(--navy-light)' },
+                ].map(s => (
+                  <div key={s.label} style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>{s.label}</div>
+                    <div style={{ fontSize: '1.3rem', fontWeight: 800, color: s.color, fontFamily: 'Outfit, sans-serif' }}>{s.val}</div>
+                  </div>
+                ))}
+              </div>
+              {selectedDonor.cards && selectedDonor.cards.length > 0 && (
+                <div>
+                  <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>Payment Cards on File</div>
+                  {selectedDonor.cards.map(card => (
+                    <div key={card.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-input)', borderRadius: '10px', marginBottom: '8px', border: card.isDefault ? '1px solid var(--navy-light)' : '1px solid var(--border)' }}>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{card.brand} ending in {card.last4}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Expires {card.expiry}</div>
+                      </div>
+                      {card.isDefault && <span className="badge badge-info">Default</span>}
                     </div>
-                    <span className="badge badge-info">Active</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3" style={{ backgroundColor: 'var(--surface-dark)', borderRadius: '8px' }}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>Mastercard ending in 5555</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Expires 08/25 (Backup)</div>
-                    </div>
-                    <span className="badge badge-secondary">Backup</span>
-                  </div>
-                  <button className="btn btn-secondary mt-4" style={{ width: '100%' }}>+ Add Payment Method</button>
+                  ))}
                 </div>
-
-                <div className="glass-card">
-                  <h4 className="stat-label mb-4">Quick Actions</h4>
-                  <div className="grid" style={{ gap: '12px' }}>
-                    <button className="btn btn-primary w-full justify-center">Process Payment Now</button>
-                    <button className="btn btn-secondary w-full justify-center">Setup Recurring (Recording)</button>
-                    <button className="btn btn-secondary w-full justify-center">Send SMS/Email Receipt</button>
+              )}
+              {selectedDonor.fundraiserId && (
+                <div style={{ marginTop: '16px', padding: '12px 16px', background: 'var(--yellow-bg)', borderRadius: '10px', border: '1px solid rgba(217,119,6,0.2)' }}>
+                  <div style={{ color: 'var(--yellow)', fontWeight: 700, fontSize: '0.85rem' }}>
+                    🤝 Referred by: {fundraisers.find(f => f.id === selectedDonor.fundraiserId)?.name || '—'}
                   </div>
                 </div>
-              </div>
+              )}
+            </div>
+          )}
 
-              <h4 className="stat-label mb-4">Recent Transactions</h4>
-              <table className="mb-4">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Amount</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
+          {/* Transactions tab */}
+          {donorTab === 'transactions' && (
+            <div className="table-container">
+              <table>
+                <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
                 <tbody>
-                  <tr>
-                    <td>Jun 20, 2025</td>
-                    <td>$1,000.00</td>
-                    <td>Credit Card (4242)</td>
-                    <td><span className="badge badge-success">Approved</span></td>
-                  </tr>
-                  <tr>
-                    <td>May 20, 2025</td>
-                    <td>$100.00</td>
-                    <td>Monthly Recording</td>
-                    <td><span className="badge badge-success">Approved</span></td>
-                  </tr>
-                  <tr>
-                    <td>May 18, 2025</td>
-                    <td>$100.00</td>
-                    <td>Monthly Recording</td>
-                    <td><span className="badge badge-danger">Declined (Moved to 4242)</span></td>
-                  </tr>
+                  {donorTransactions.filter(t => t.type !== 'declined').map(t => (
+                    <tr key={t.id}>
+                      <td>{t.date}</td>
+                      <td style={{ fontWeight: 700 }}>${t.amount.toLocaleString()} {t.currency}</td>
+                      <td>{methodLabel[t.method]}</td>
+                      <td>{statusBadge(t.type)}</td>
+                    </tr>
+                  ))}
+                  {donorTransactions.filter(t => t.type !== 'declined').length === 0 && (
+                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>No transactions yet</td></tr>
+                  )}
                 </tbody>
               </table>
-
             </div>
-          ))}
+          )}
+
+          {/* Recurring tab */}
+          {donorTab === 'recurring' && (
+            <div>
+              {donorRecurring.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: '12px' }}>🔁</div>
+                  No recurring payments set up.
+                  <br /><br />
+                  <button className="btn btn-primary" onClick={() => setShowPayment(true)}>+ Setup Recurring</button>
+                </div>
+              ) : (
+                donorRecurring.map(r => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: 'var(--bg-input)', borderRadius: '12px', marginBottom: '10px', border: `1px solid ${r.active ? 'var(--green-bg)' : 'var(--border)'}` }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>${r.amount.toLocaleString()} {r.currency} / {r.frequency}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Next: {r.nextDate} · via {methodLabel[r.method]}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <span className={`badge ${r.active ? 'badge-green' : 'badge-gray'}`}>{r.active ? 'Active' : 'Paused'}</span>
+                      <button className="btn btn-secondary btn-sm" onClick={() => toggleRecurring(r.id)}>
+                        {r.active ? 'Pause' : 'Resume'}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Declined tab */}
+          {donorTab === 'declined' && (
+            <div className="table-container">
+              <table>
+                <thead><tr><th>Date</th><th>Amount</th><th>Notes</th></tr></thead>
+                <tbody>
+                  {donorDeclined.map(t => (
+                    <tr key={t.id}>
+                      <td>{t.date}</td>
+                      <td style={{ fontWeight: 700, color: 'var(--red)' }}>${t.amount.toLocaleString()} {t.currency}</td>
+                      <td style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{t.notes || '—'}</td>
+                    </tr>
+                  ))}
+                  {donorDeclined.length === 0 && (
+                    <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--green)', padding: '30px' }}>✅ No declined payments</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Notes tab */}
+          {donorTab === 'notes' && (
+            <div>
+              <textarea
+                value={notesDraft}
+                onChange={e => setNotesDraft(e.target.value)}
+                rows={8}
+                placeholder="Write notes about this donor here… e.g. Prefers to be called on Sundays. Met at the 2025 gala."
+                style={{ width: '100%' }}
+              />
+              <button className="btn btn-primary" style={{ marginTop: '12px' }} onClick={() => updateDonorNotes(selectedDonor.id, notesDraft)}>
+                💾 Save Notes
+              </button>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Modals */}
+      {showPayment && selectedDonorId && (
+        <PaymentModal donorId={selectedDonorId} onClose={() => setShowPayment(false)} />
+      )}
+      {showAddDonor && (
+        <AddDonorModal onClose={() => setShowAddDonor(false)} />
       )}
     </div>
   );
