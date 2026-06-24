@@ -182,10 +182,10 @@ export const AddDonorModal: React.FC<Props> = ({ onClose, editDonorData }) => {
                 {showAdvanced && (
                   <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', background: 'var(--bg-input)', padding: '20px', borderRadius: '12px' }}>
                     {/* Hebrew Info */}
-                    <div className="form-group" style={{ margin: 0 }}><label>Pre-Title (Eng Title)</label><input type="text" value={form.preTitle} onChange={e => handle('preTitle', e.target.value)} dir="rtl" /></div>
-                    <div className="form-group" style={{ margin: 0 }}><label>Title (פאר טיטל)</label><input type="text" value={form.title} onChange={e => handle('title', e.target.value)} dir="rtl" /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Pre-Title (פאר טיטל)</label><input type="text" value={form.preTitle} onChange={e => handle('preTitle', e.target.value)} dir="rtl" /></div>
                     <div className="form-group" style={{ margin: 0 }}><label>Hebrew First Name (ערשטע נאמען)</label><input type="text" value={form.hebFirstName} onChange={e => handle('hebFirstName', e.target.value)} dir="rtl" /></div>
                     <div className="form-group" style={{ margin: 0 }}><label>Hebrew Last Name (משפחה נאמען)</label><input type="text" value={form.hebLastName} onChange={e => handle('hebLastName', e.target.value)} dir="rtl" /></div>
+                    <div className="form-group" style={{ margin: 0 }}><label>Title (טיטל)</label><input type="text" value={form.title} onChange={e => handle('title', e.target.value)} dir="rtl" /></div>
                     <div className="form-group" style={{ margin: 0 }}><label>Post Title (נאך טיטל)</label><input type="text" value={form.postTitle} onChange={e => handle('postTitle', e.target.value)} dir="rtl" /></div>
                     <div className="form-group" style={{ margin: 0 }}><label>His Father (זיין טאטע)</label><input type="text" value={form.hisFather} onChange={e => handle('hisFather', e.target.value)} dir="rtl" /></div>
                     <div className="form-group" style={{ margin: 0 }}><label>Her Father (איר טאטע)</label><input type="text" value={form.herFather} onChange={e => handle('herFather', e.target.value)} dir="rtl" /></div>

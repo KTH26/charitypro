@@ -372,25 +372,25 @@ export const Donors: React.FC = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', fontSize: '0.84rem' }}>
                     {selectedDonor.preTitle && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Pre-Title:</span>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Pre-Title (פאר טיטל):</span>
                         <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.preTitle}</span>
                       </div>
                     )}
                     {selectedDonor.hebFirstName && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>First:</span>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Hebrew First Name (ערשטע נאמען):</span>
                         <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.hebFirstName}</span>
                       </div>
                     )}
                     {selectedDonor.hebLastName && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Last:</span>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Hebrew Last Name (משפחה נאמען):</span>
                         <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.hebLastName}</span>
                       </div>
                     )}
                     {selectedDonor.title && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: '58px' }}>Title:</span>
+                        <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Title (טיטל):</span>
                         <span style={{ direction: 'rtl', textAlign: 'right', fontWeight: 600 }}>{selectedDonor.title}</span>
                       </div>
                     )}
