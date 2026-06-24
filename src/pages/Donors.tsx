@@ -5,11 +5,12 @@ import { PaymentModal } from '../components/PaymentModal';
 import { AddDonorModal } from '../components/AddDonorModal';
 import { useLocation } from 'react-router-dom';
 import { useT } from '../i18n';
+import Papa from 'papaparse';
 
 type DonorTab = 'overview' | 'transactions' | 'recurring' | 'declined' | 'notes';
 
 export const Donors: React.FC = () => {
-  const { donors, transactions, recurringPayments, updateDonorNotes, toggleRecurring, fundraisers, isRtl } = useStore();
+  const { donors, transactions, recurringPayments, updateDonorNotes, toggleRecurring, fundraisers, isRtl, googleSheetSyncUrl, setGoogleSheetSyncUrl, addDonor, editDonor } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterFundraiser, setFilterFundraiser] = useState('');
@@ -21,6 +22,9 @@ export const Donors: React.FC = () => {
   const [notesDraft, setNotesDraft] = useState('');
   const [editDonorActive, setEditDonorActive] = useState(false);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [tempUrl, setTempUrl] = useState(googleSheetSyncUrl);
   const location = useLocation();
 
   React.useEffect(() => {
@@ -61,6 +65,54 @@ export const Donors: React.FC = () => {
     credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer'
   };
 
+  const handleSync = async (urlToSync: string) => {
+    if (!urlToSync) return;
+    setSyncing(true);
+    try {
+      const response = await fetch(urlToSync);
+      const csvText = await response.text();
+      
+      Papa.parse(csvText, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const data = results.data as any[];
+          data.forEach(row => {
+            const displayId = row['CODE']?.toString().trim();
+            if (!displayId) return; // Skip if no ID
+
+            const existing = donors.find(d => d.displayId === displayId);
+            
+            const donorUpdates = {
+              firstName: row['HID First name']?.toString().trim() || row['HH Given Names']?.toString().trim() || '',
+              lastName: row['Last name']?.toString().trim() || row['HH Surname']?.toString().trim() || '',
+              email: row['Email']?.toString().trim() || '',
+              phone: row['MobilePhone']?.toString().trim() || row['HomePhone']?.toString().trim() || '',
+              address: row['HID Adress']?.toString().trim() || row['HH Address (columns J, I, and H combined)']?.toString().trim() || '',
+              notes: row['HID Note']?.toString().trim() || '',
+              displayId,
+            };
+
+            if (existing) {
+              editDonor(existing.id, donorUpdates);
+            } else {
+              addDonor(donorUpdates);
+            }
+          });
+          setSyncing(false);
+          setShowSyncModal(false);
+        },
+        error: (err: any) => {
+          setSyncing(false);
+          alert('Error parsing CSV: ' + err.message);
+        }
+      });
+    } catch (err: any) {
+      setSyncing(false);
+      alert('Error downloading CSV: ' + err.message);
+    }
+  };
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: selectedDonor ? '380px 1fr' : '1fr', gap: '24px', direction: 'ltr' }}>
       {/* LEFT COLUMN: DONOR LIST */}
@@ -69,7 +121,15 @@ export const Donors: React.FC = () => {
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
             {T('donors_dir')} ({filteredDonors.length})
           </h2>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowAddDonor(true)}>+ {T('add_donor')}</button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => {
+              if (googleSheetSyncUrl) handleSync(googleSheetSyncUrl);
+              else setShowSyncModal(true);
+            }} disabled={syncing}>
+              {syncing ? 'Syncing...' : '🔄 Sync Sheets'}
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowAddDonor(true)}>+ {T('add_donor')}</button>
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
@@ -318,10 +378,44 @@ export const Donors: React.FC = () => {
         </div>
       )}
 
-      {/* Modals */}
-      {showPayment && selectedDonorId && (
-        <PaymentModal donorId={selectedDonorId} onClose={() => setShowPayment(false)} />
+      {showAddDonor && <AddDonorModal onClose={() => setShowAddDonor(false)} />}
+      {showPayment && selectedDonorId && <PaymentModal donorId={selectedDonorId} onClose={() => setShowPayment(false)} />}
+      
+      {showSyncModal && (
+        <div className="modal-overlay" onClick={() => setShowSyncModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ margin: 0 }}>Configure Google Sheets Sync</h2>
+              <button className="modal-close" onClick={() => setShowSyncModal(false)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Published CSV Link</label>
+                <input 
+                  type="text" 
+                  placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv" 
+                  value={tempUrl} 
+                  onChange={e => setTempUrl(e.target.value)} 
+                />
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px', marginBottom: 0 }}>
+                  In Google Sheets, go to File &gt; Share &gt; Publish to Web. Choose the specific sheet and "Comma-separated values (.csv)", then paste the link here.
+                </p>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowSyncModal(false)}>Cancel</button>
+              <button className="btn btn-primary" disabled={!tempUrl || syncing} onClick={() => {
+                setGoogleSheetSyncUrl(tempUrl);
+                handleSync(tempUrl);
+              }}>
+                {syncing ? 'Syncing...' : 'Save & Sync'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
+      
+      {/* Modals */}
       {showAddDonor && (
         <AddDonorModal onClose={() => setShowAddDonor(false)} />
       )}

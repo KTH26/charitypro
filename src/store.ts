@@ -125,10 +125,12 @@ interface AppState {
   bills: Bill[];
   tasks: Task[];
   accountTransfers: AccountTransfer[];
+  googleSheetSyncUrl: string;
 
   toggleRtl: () => void;
   setCurrency: (currency: 'CAD' | 'USD') => void;
   setExchangeRate: (rate: number) => void;
+  setGoogleSheetSyncUrl: (url: string) => void;
 
   addDonor: (donor: Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'> | Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
   editDonor: (id: string, updates: Partial<Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'>>) => void;
@@ -228,10 +230,12 @@ export const useStore = create<AppState>((set) => ({
   bills: mockBills,
   tasks: mockTasks,
   accountTransfers: [],
+  googleSheetSyncUrl: '',
 
   toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
   setCurrency: (currency) => set({ currency }),
   setExchangeRate: (rate) => set({ exchangeRate: rate }),
+  setGoogleSheetSyncUrl: (url) => set({ googleSheetSyncUrl: url }),
 
   addDonor: (donor) => set(state => {
     const nextNum = 1001 + state.donors.length;
