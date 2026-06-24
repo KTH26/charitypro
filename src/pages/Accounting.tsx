@@ -4,16 +4,16 @@ import { RefreshCw, Plus, X, ArrowRight } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Accounting: React.FC = () => {
-  const { isRtl, bankAccounts, accountTransfers, transactions, addBankAccount, transferBetweenAccounts, fundraisers } = useStore();
+  const { isRtl, accounts, accountTransfers, transactions, addAccount, transferBetweenAccounts, fundraisers } = useStore();
   const T = useT(isRtl);
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
-  const [accForm, setAccForm] = useState({ name: '', currency: 'CAD' as 'CAD' | 'USD', type: 'checking' as 'checking' | 'savings' });
+  const [accForm, setAccForm] = useState({ name: '', currency: 'CAD' as 'CAD' | 'USD', type: 'asset' as 'asset' | 'liability' | 'equity' | 'revenue' | 'expense', subType: 'checking' as 'checking' | 'savings' | 'credit_card' | 'loan' | 'payroll' | 'general' | 'internal' });
   const [transferForm, setTransferForm] = useState({ fromId: '', toId: '', amount: '', notes: '' });
   const [transferSuccess, setTransferSuccess] = useState(false);
 
-  const regularAccounts = bankAccounts.filter(a => !a.isInternal);
-  const internalAccounts = bankAccounts.filter(a => a.isInternal);
+  const regularAccounts = accounts.filter(a => a.type === 'asset');
+  const internalAccounts = accounts.filter(a => a.type === 'expense' && a.subType === 'payroll');
 
   const bankFeedItems = [
     { bank: 'Deposit – Check 442', amount: 500, match: 'Yitzchok Cohen', sub: 'Pending Check', status: 'match' },
@@ -111,8 +111,8 @@ export const Accounting: React.FC = () => {
             <div style={{ marginTop: '20px' }}>
               <div style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>{T('recent_transfers')}</div>
               {accountTransfers.slice(0, 3).map(t => {
-                const from = bankAccounts.find(a => a.id === t.fromAccountId);
-                const to = bankAccounts.find(a => a.id === t.toAccountId);
+                const from = accounts.find(a => a.id === t.fromAccountId);
+                const to = accounts.find(a => a.id === t.toAccountId);
                 return (
                   <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-light)', fontSize: '0.85rem' }}>
                     <div style={{ color: 'var(--text-secondary)' }}>{from?.name} → {to?.name}</div>
@@ -198,8 +198,10 @@ export const Accounting: React.FC = () => {
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Type</label>
                     <select value={accForm.type} onChange={e => setAccForm(f => ({ ...f, type: e.target.value as any }))}>
-                      <option value="checking">Checking</option>
-                      <option value="savings">Savings</option>
+                      <option value="asset">Asset (Bank Account)</option>
+                      <option value="liability">Liability (Credit Card)</option>
+                      <option value="revenue">Revenue</option>
+                      <option value="expense">Expense</option>
                     </select>
                   </div>
                 </div>
@@ -207,7 +209,7 @@ export const Accounting: React.FC = () => {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowAddAccount(false)}>Cancel</button>
-              <button className="btn btn-primary" disabled={!accForm.name} onClick={() => { addBankAccount({ ...accForm, balance: 0 }); setShowAddAccount(false); }}>+ Add Account</button>
+              <button className="btn btn-primary" disabled={!accForm.name} onClick={() => { addAccount({ ...accForm, balance: 0 }); setShowAddAccount(false); }}>+ Add Account</button>
             </div>
           </div>
         </div>

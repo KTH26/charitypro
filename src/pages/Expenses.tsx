@@ -8,11 +8,12 @@ import { useT } from '../i18n';
 const CATEGORIES = ['Ambulance Operations', 'Administration', 'Fundraising', 'Events', 'Equipment', 'Other'];
 
 export const Expenses: React.FC = () => {
-  const { isRtl, bills, addBill, markBillPaid, bankAccounts, editBill } = useStore();
+  const { isRtl, bills, addBill, markBillPaid, accounts, editBill } = useStore();
   const T = useT(isRtl);
   const [showAdd, setShowAdd] = useState(false);
   const [confirmPay, setConfirmPay] = useState<string | null>(null);
-  const [payBankId, setPayBankId] = useState<string>('');
+  const [paySourceId, setPaySourceId] = useState<string>('');
+  const [payOffsetId, setPayOffsetId] = useState<string>('');
   const [editBillData, setEditBillData] = useState<Bill | null>(null);
   const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: 'Ambulance Operations', status: 'pending' as 'pending' | 'urgent' });
   const location = useLocation();
@@ -105,7 +106,7 @@ export const Expenses: React.FC = () => {
                   <Link to={`/print-check?billId=${bill.id}`} className="btn btn-secondary btn-sm" style={{ padding: '6px' }} title="Print Check">
                     <Printer size={16} />
                   </Link>
-                  <button className="btn btn-secondary btn-sm" onClick={() => { setConfirmPay(bill.id); setPayBankId(''); }}>Pay</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => { setConfirmPay(bill.id); setPaySourceId(''); setPayOffsetId(''); }}>Pay</button>
                 </div>
               </div>
             ))}
@@ -234,24 +235,33 @@ export const Expenses: React.FC = () => {
                 Mark <strong>{bills.find(b => b.id === confirmPay)?.vendor}</strong> (${bills.find(b => b.id === confirmPay)?.amount.toFixed(2)}) as paid?
               </p>
               <div className="form-group" style={{ marginTop: '20px', textAlign: 'left' }}>
-                <label>Payment Account</label>
-                <div style={{ fontSize: '0.8rem', color: 'var(--navy-light)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <a href="/accounting" style={{ color: 'inherit', textDecoration: 'none' }}>Manage accounts in Accounting <ArrowRight size={12} /></a>
-                </div>
-                <select value={payBankId} onChange={e => setPayBankId(e.target.value)}>
-                  <option value="">— Select Account (Required) —</option>
-                  <optgroup label="Standard Bank Accounts">
-                    {bankAccounts.filter(a => !a.isInternal).map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance.toLocaleString()})</option>)}
+                <label>Paid From (Source Account) *</label>
+                <select value={paySourceId} onChange={e => setPaySourceId(e.target.value)}>
+                  <option value="">— Select Asset/Liability Account —</option>
+                  <optgroup label="Assets">
+                    {accounts.filter(a => a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance.toLocaleString()})</option>)}
                   </optgroup>
-                  <optgroup label="Fundraiser Payroll Accounts">
-                    {bankAccounts.filter(a => a.isInternal).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  <optgroup label="Liabilities">
+                    {accounts.filter(a => a.type === 'liability').map(a => <option key={a.id} value={a.id}>{a.name} (${a.balance.toLocaleString()})</option>)}
+                  </optgroup>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginTop: '12px', textAlign: 'left', marginBottom: 0 }}>
+                <label>Allocated To (Offset Account) *</label>
+                <select value={payOffsetId} onChange={e => setPayOffsetId(e.target.value)}>
+                  <option value="">— Select Expense/Payroll Account —</option>
+                  <optgroup label="Expenses">
+                    {accounts.filter(a => a.type === 'expense' && a.subType !== 'payroll').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </optgroup>
+                  <optgroup label="Payroll">
+                    {accounts.filter(a => a.type === 'expense' && a.subType === 'payroll').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                   </optgroup>
                 </select>
               </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setConfirmPay(null)}>Cancel</button>
-              <button className="btn btn-primary" disabled={!payBankId} onClick={() => { markBillPaid(confirmPay, payBankId); setConfirmPay(null); }}>✅ Confirm Paid</button>
+              <button className="btn btn-primary" disabled={!paySourceId || !payOffsetId} onClick={() => { markBillPaid(confirmPay, paySourceId, payOffsetId); setConfirmPay(null); }}>✅ Confirm Paid</button>
             </div>
           </div>
         </div>

@@ -13,7 +13,7 @@ import { BulkUploadModal } from './BulkUploadModal';
 import { useT } from '../i18n';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isRtl, donors, tasks, bankAccounts } = useStore();
+  const { isRtl, donors, tasks, accounts } = useStore();
   const location = useLocation();
   const navigate = useNavigate();
   const T = useT(isRtl);
@@ -26,7 +26,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
   const pendingTasks = tasks.filter(t => !t.completed).length;
   const highTasks = tasks.filter(t => !t.completed && t.priority === 'high').length;
-  const totalBalance = bankAccounts.filter(a => !a.isInternal && a.currency === 'CAD').reduce((s, a) => s + a.balance, 0);
+  const totalBalance = accounts.filter(a => a.type === 'asset' && a.currency === 'CAD').reduce((s, a) => s + a.balance, 0);
 
   interface NavSubItem {
     path: string;

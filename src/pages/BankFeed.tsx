@@ -5,19 +5,19 @@ import { useT } from '../i18n';
 
 // Dummy live bank feed data
 const mockLiveFeed = [
-  { id: 'lf1', date: '2025-06-24', description: 'STRIPE TRANSFER', amount: 4500.00, status: 'unmatched', bankAccountId: 'ba1' },
-  { id: 'lf2', date: '2025-06-23', description: 'CHECK DEPOSIT INTERAC', amount: 250.00, status: 'unmatched', bankAccountId: 'ba1' },
-  { id: 'lf3', date: '2025-06-23', description: 'UNKNOWN WIRE REF 4829', amount: 15000.00, status: 'unmatched', bankAccountId: 'ba2' },
-  { id: 'lf4', date: '2025-06-22', description: 'SHELL GAS STATION', amount: -145.20, status: 'unmatched', bankAccountId: 'ba1' },
+  { id: 'lf1', date: '2025-06-24', description: 'STRIPE TRANSFER', amount: 4500.00, status: 'unmatched', sourceAccountId: 'ba1' },
+  { id: 'lf2', date: '2025-06-23', description: 'CHECK DEPOSIT INTERAC', amount: 250.00, status: 'unmatched', sourceAccountId: 'ba1' },
+  { id: 'lf3', date: '2025-06-23', description: 'UNKNOWN WIRE REF 4829', amount: 15000.00, status: 'unmatched', sourceAccountId: 'ba2' },
+  { id: 'lf4', date: '2025-06-22', description: 'SHELL GAS STATION', amount: -145.20, status: 'unmatched', sourceAccountId: 'ba1' },
 ];
 
 export const BankFeed: React.FC = () => {
-  const { bankAccounts, isRtl } = useStore();
+  const { accounts, isRtl } = useStore();
   const T = useT(isRtl);
-  const [selectedBank, setSelectedBank] = useState(bankAccounts[0]?.id || '');
+  const [selectedBank, setSelectedBank] = useState(accounts[0]?.id || '');
   const [feed, setFeed] = useState(mockLiveFeed);
 
-  const activeFeed = feed.filter(f => f.bankAccountId === selectedBank);
+  const activeFeed = feed.filter(f => f.sourceAccountId === selectedBank);
 
   const handleSendReview = (id: string) => {
     setFeed(feed.map(f => f.id === id ? { ...f, status: 'review' } : f));
@@ -38,7 +38,7 @@ export const BankFeed: React.FC = () => {
             </h2>
           </div>
           <select className="filter-select" value={selectedBank} onChange={e => setSelectedBank(e.target.value)} style={{ minWidth: '250px' }}>
-            {bankAccounts.filter(a => !a.isInternal).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {accounts.filter(a => a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </div>
 

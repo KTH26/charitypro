@@ -4,12 +4,12 @@ import { CheckSquare } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Reconciliation: React.FC = () => {
-  const { bankAccounts, isRtl } = useStore();
+  const { accounts, isRtl } = useStore();
   const T = useT(isRtl);
-  const [selectedBank, setSelectedBank] = useState(bankAccounts[0]?.id || '');
+  const [selectedBank, setSelectedBank] = useState(accounts[0]?.id || '');
   const [statementBalance, setStatementBalance] = useState('');
   
-  const account = bankAccounts.find(a => a.id === selectedBank);
+  const account = accounts.find(a => a.id === selectedBank);
   const diff = account ? account.balance - (parseFloat(statementBalance) || 0) : 0;
 
   return (
@@ -27,7 +27,7 @@ export const Reconciliation: React.FC = () => {
           <div className="form-group" style={{ margin: 0 }}>
             <label>Select Account to Reconcile</label>
             <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)}>
-              {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </div>
           <div className="form-group" style={{ margin: 0 }}>

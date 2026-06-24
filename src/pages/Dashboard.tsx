@@ -4,7 +4,7 @@ import { TrendingUp, Users, AlertCircle, Calendar, DollarSign, CheckSquare, Arro
 import { useT } from '../i18n';
 
 export const Dashboard: React.FC = () => {
-  const { isRtl, transactions, donors, bankAccounts, tasks, bills, editTransaction } = useStore();
+  const { isRtl, transactions, donors, accounts, tasks, bills, editTransaction } = useStore();
   const T = useT(isRtl);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
 
@@ -13,8 +13,8 @@ export const Dashboard: React.FC = () => {
   const totalDonors = donors.length;
   const openTasks = tasks.filter(t => !t.completed).length;
   const urgentBills = bills.filter(b => b.status === 'urgent').length;
-  const cadBalance = bankAccounts.filter(a => !a.isInternal && a.currency === 'CAD').reduce((s, a) => s + a.balance, 0);
-  const usdBalance = bankAccounts.filter(a => !a.isInternal && a.currency === 'USD').reduce((s, a) => s + a.balance, 0);
+  const cadBalance = accounts.filter(a => a.type === 'asset' && a.currency === 'CAD').reduce((s, a) => s + a.balance, 0);
+  const usdBalance = accounts.filter(a => a.type === 'asset' && a.currency === 'USD').reduce((s, a) => s + a.balance, 0);
 
   const stats = [
     { label: T('total_income_ytd'), value: `$${totalIncomeYTD.toLocaleString()}`, sub: '+15% from last year', icon: <TrendingUp size={22} />, color: 'var(--green)', bg: 'var(--green-bg)' },
@@ -118,7 +118,7 @@ export const Dashboard: React.FC = () => {
           <div className="card" style={{ padding: '24px' }}>
             <h3 style={{ margin: '0 0 16px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>{T('bank_accounts')}</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {bankAccounts.filter(a => !a.isInternal).map(acc => (
+              {accounts.filter(a => a.type === 'asset').map(acc => (
                 <div key={acc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-input)', borderRadius: '10px' }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{acc.name}</div>

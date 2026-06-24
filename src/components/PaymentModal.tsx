@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, CreditCard, DollarSign, CheckSquare, Smartphone, Calendar, User, Tag, FileText } from 'lucide-react';
+import { X, CreditCard, DollarSign, CheckSquare, Smartphone, Calendar, User, Tag, FileText, Building } from 'lucide-react';
 import { useStore } from '../store';
 
 interface Props {
@@ -18,7 +18,7 @@ const FREQUENCIES = [
 type TabType = 'one_time' | 'recurring' | 'pledge';
 
 export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
-  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate } = useStore();
+  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate, accounts } = useStore();
   const donor = donors.find(d => d.id === donorId);
   const [tab, setTab] = useState<TabType>('one_time');
   const [success, setSuccess] = useState(false);
@@ -27,7 +27,8 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer'>('credit_card');
   const [txCurrency, setTxCurrency] = useState<'CAD' | 'USD'>(currency);
-  const [category, setCategory] = useState('General');
+  const [sourceAccountId, setSourceAccountId] = useState('');
+  const [offsetAccountId, setOffsetAccountId] = useState('');
   const [fundraiserId, setFundraiserId] = useState('');
   const [notes, setNotes] = useState('');
   const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
@@ -61,8 +62,9 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       type: method === 'check' ? 'pending' : 'approved',
       method,
       currency: txCurrency,
+      sourceAccountId,
+      offsetAccountId,
       fundraiserId: fundraiserId || undefined,
-      category,
       notes,
     });
     setSuccess(true);
@@ -79,8 +81,9 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       type: 'recording',
       method,
       currency: txCurrency,
+      sourceAccountId,
+      offsetAccountId,
       fundraiserId: fundraiserId || undefined,
-      category,
       notes,
     });
     setSuccess(true);
@@ -216,28 +219,40 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                     </div>
                   )}
 
-                  {/* Date + Category */}
+                  {/* Accounts */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label><Building size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Paid Into (Asset)</label>
+                      <select value={sourceAccountId} onChange={e => setSourceAccountId(e.target.value)}>
+                        <option value="">— Select Bank Account —</option>
+                        {accounts.filter(a => a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label><Tag size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Allocated To (Revenue)</label>
+                      <select value={offsetAccountId} onChange={e => setOffsetAccountId(e.target.value)}>
+                        <option value="">— Select Revenue/Fund —</option>
+                        {accounts.filter(a => a.type === 'revenue').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Date */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div className="form-group" style={{ margin: 0 }}>
                       <label><Calendar size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Date</label>
                       <input type="date" value={txDate} onChange={e => setTxDate(e.target.value)} />
                     </div>
                     <div className="form-group" style={{ margin: 0 }}>
-                      <label><Tag size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Category</label>
-                      <select value={category} onChange={e => setCategory(e.target.value)}>
-                        {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                      <label>Referred by Fundraiser</label>
+                      <select value={fundraiserId} onChange={e => setFundraiserId(e.target.value)}>
+                        <option value="">— None —</option>
+                        {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name} ({f.percentage}%)</option>)}
                       </select>
                     </div>
                   </div>
 
-                  {/* Fundraiser */}
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label>Referred by Fundraiser (optional)</label>
-                    <select value={fundraiserId} onChange={e => setFundraiserId(e.target.value)}>
-                      <option value="">— None —</option>
-                      {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name} ({f.percentage}%)</option>)}
-                    </select>
-                  </div>
+
 
                   {/* Notes */}
                   <div className="form-group" style={{ margin: 0 }}>

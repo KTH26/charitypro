@@ -41,9 +41,10 @@ export interface Transaction {
   type: 'approved' | 'pending' | 'recording' | 'declined';
   method: 'credit_card' | 'check' | 'cash' | 'e_transfer';
   currency: 'CAD' | 'USD';
-  bankAccountId?: string;
+  sourceAccountId?: string; // e.g. Bank Account (Asset)
+  offsetAccountId?: string; // e.g. Category/Fundraiser Payroll (Revenue/Expense)
   fundraiserId?: string;
-  category?: string;
+  category?: string; // Keeping for legacy string tags
   notes?: string;
 }
 
@@ -65,16 +66,16 @@ export interface Fundraiser {
   phone?: string;
   percentage: number;
   balanceOwed: number;
-  internalAccountBalance?: number; // expenses charged to fundraiser account
+  internalAccountBalance?: number; // legacy tracking, mostly handled by accounts now
 }
 
-export interface BankAccount {
+export interface Account {
   id: string;
   name: string;
   currency: 'CAD' | 'USD';
   balance: number;
-  type: 'checking' | 'savings' | 'internal';
-  isInternal?: boolean; // hidden internal accounts for fundraiser tracking
+  type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+  subType?: 'checking' | 'savings' | 'credit_card' | 'loan' | 'payroll' | 'general' | 'internal';
   linkedFundraiserId?: string;
 }
 
@@ -85,7 +86,8 @@ export interface Bill {
   dueDate: string;
   status: 'pending' | 'urgent' | 'paid' | 'scheduled';
   category: string;
-  bankAccountId?: string;
+  sourceAccountId?: string; // Where it's paid from
+  offsetAccountId?: string; // What expense it's allocated to
   isScheduled?: boolean;
   paidDate?: string;
 }
@@ -119,7 +121,7 @@ interface AppState {
   transactions: Transaction[];
   recurringPayments: RecurringPayment[];
   fundraisers: Fundraiser[];
-  bankAccounts: BankAccount[];
+  accounts: Account[];
   bills: Bill[];
   tasks: Task[];
   accountTransfers: AccountTransfer[];
@@ -128,37 +130,30 @@ interface AppState {
   setCurrency: (currency: 'CAD' | 'USD') => void;
   setExchangeRate: (rate: number) => void;
 
-  // Donor actions
   addDonor: (donor: Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
   editDonor: (id: string, updates: Partial<Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>>) => void;
   updateDonorNotes: (donorId: string, notes: string) => void;
   addSponsorshipDay: (donorId: string, day: Omit<SponsorshipDay, 'id'>) => void;
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
 
-  // Transaction actions
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
   editTransaction: (id: string, updates: Partial<Omit<Transaction, 'id'>>) => void;
 
-  // Recurring actions
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
   toggleRecurring: (id: string) => void;
 
-  // Fundraiser actions
   addFundraiser: (f: Omit<Fundraiser, 'id' | 'balanceOwed'>) => void;
   payOutFundraiser: (id: string) => void;
   chargeToFundraiser: (id: string, amount: number) => void;
 
-  // Bank account actions
-  addBankAccount: (acc: Omit<BankAccount, 'id'>) => void;
+  addAccount: (acc: Omit<Account, 'id'>) => void;
   transferBetweenAccounts: (transfer: Omit<AccountTransfer, 'id'>) => void;
 
-  // Bill actions
   addBill: (bill: Omit<Bill, 'id'>) => void;
   editBill: (id: string, updates: Partial<Omit<Bill, 'id'>>) => void;
-  markBillPaid: (id: string, bankAccountId?: string) => void;
+  markBillPaid: (id: string, sourceAccountId?: string, offsetAccountId?: string) => void;
 
-  // Task actions
   addTask: (task: Omit<Task, 'id' | 'createdAt'>) => void;
   completeTask: (id: string) => void;
   deleteTask: (id: string) => void;
@@ -177,18 +172,23 @@ const mockDonors: Donor[] = [
   { id: '5', displayId: 'D-1005', firstName: 'Eli', lastName: 'Friedman', name: 'Eli Friedman', phone: '514-555-0505', email: 'eli@example.com', address: '654 Vimy Ave, Montreal, QC', totalGiven: 450, balanceOwed: 0, notes: '' },
 ];
 
+const mockAccounts: Account[] = [
+  { id: 'a1', name: 'BMO Canadian Account', currency: 'CAD', balance: 124500, type: 'asset', subType: 'checking' },
+  { id: 'a2', name: 'Chase USD Account', currency: 'USD', balance: 45200, type: 'asset', subType: 'checking' },
+  { id: 'a3', name: 'Fundraiser Payroll – Moshe Weiss', currency: 'CAD', balance: 1200, type: 'expense', subType: 'payroll', linkedFundraiserId: 'f1' },
+  { id: 'a4', name: 'Fundraiser Payroll – David Klein', currency: 'CAD', balance: 500, type: 'expense', subType: 'payroll', linkedFundraiserId: 'f2' },
+  { id: 'a5', name: 'General Donations', currency: 'CAD', balance: 250000, type: 'revenue', subType: 'general' },
+  { id: 'a6', name: 'Building Fund', currency: 'CAD', balance: 150000, type: 'revenue', subType: 'general' },
+  { id: 'a7', name: 'Ambulance Operations Expense', currency: 'CAD', balance: 45000, type: 'expense', subType: 'general' },
+  { id: 'a8', name: 'Office Rent Expense', currency: 'CAD', balance: 24000, type: 'expense', subType: 'general' },
+];
+
 const mockTransactions: Transaction[] = [
-  { id: 't1', donorId: '1', amount: 1000, date: '2025-06-20', type: 'approved', method: 'credit_card', currency: 'CAD', bankAccountId: 'ba1', fundraiserId: 'f1', category: 'General' },
-  { id: 't2', donorId: '2', amount: 500, date: '2025-06-21', type: 'pending', method: 'check', currency: 'CAD', bankAccountId: 'ba1', fundraiserId: 'f2', category: 'General' },
-  { id: 't3', donorId: '3', amount: 100, date: '2025-06-22', type: 'recording', method: 'credit_card', currency: 'USD', amountCAD: 135, bankAccountId: 'ba2', category: 'Campaign' },
-  { id: 't4', donorId: '1', amount: 500, date: '2025-05-20', type: 'approved', method: 'credit_card', currency: 'CAD', bankAccountId: 'ba1', category: 'General' },
-  { id: 't5', donorId: '3', amount: 1200, date: '2025-05-10', type: 'declined', method: 'credit_card', currency: 'CAD', category: 'General', notes: 'Card expired – moved to backup' },
-  { id: 't6', donorId: '4', amount: 2000, date: '2025-04-05', type: 'approved', method: 'e_transfer', currency: 'CAD', bankAccountId: 'ba1', category: 'Building Fund' },
-  { id: 't7', donorId: '1', amount: 2000, date: '2024-12-01', type: 'approved', method: 'check', currency: 'CAD', bankAccountId: 'ba1', category: 'General' },
-  { id: 't8', donorId: '1', amount: 10000, date: '2024-03-15', type: 'approved', method: 'credit_card', currency: 'CAD', bankAccountId: 'ba1', category: 'General' },
-  { id: 't9', donorId: '2', amount: 1500, date: '2024-08-10', type: 'approved', method: 'cash', currency: 'CAD', bankAccountId: 'ba1', category: 'General' },
-  { id: 't10', donorId: '3', amount: 3500, date: '2024-01-20', type: 'approved', method: 'check', currency: 'CAD', bankAccountId: 'ba1', category: 'Building Fund' },
-  { id: 't11', donorId: '4', amount: 3800, date: '2024-06-01', type: 'approved', method: 'e_transfer', currency: 'CAD', bankAccountId: 'ba1', category: 'General' },
+  { id: 't1', donorId: '1', amount: 1000, date: '2025-06-20', type: 'approved', method: 'credit_card', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a5', fundraiserId: 'f1', category: 'General' },
+  { id: 't2', donorId: '2', amount: 500, date: '2025-06-21', type: 'pending', method: 'check', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a5', fundraiserId: 'f2', category: 'General' },
+  { id: 't3', donorId: '3', amount: 100, date: '2025-06-22', type: 'recording', method: 'credit_card', currency: 'USD', amountCAD: 135, sourceAccountId: 'a2', offsetAccountId: 'a6', category: 'Campaign' },
+  { id: 't4', donorId: '1', amount: 500, date: '2025-05-20', type: 'approved', method: 'credit_card', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a5', category: 'General' },
+  { id: 't6', donorId: '4', amount: 2000, date: '2025-04-05', type: 'approved', method: 'e_transfer', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a6', category: 'Building Fund' },
 ];
 
 const mockRecurring: RecurringPayment[] = [
@@ -201,25 +201,16 @@ const mockFundraisers: Fundraiser[] = [
   { id: 'f2', name: 'David Klein', email: 'david@example.com', phone: '416-555-0301', percentage: 15, balanceOwed: 1200, internalAccountBalance: 500 },
 ];
 
-const mockBankAccounts: BankAccount[] = [
-  { id: 'ba1', name: 'BMO Canadian Account', currency: 'CAD', balance: 124500, type: 'checking' },
-  { id: 'ba2', name: 'Chase USD Account', currency: 'USD', balance: 45200, type: 'checking' },
-  { id: 'ba3', name: 'Internal – Moshe Weiss', currency: 'CAD', balance: 1200, type: 'internal', isInternal: true, linkedFundraiserId: 'f1' },
-  { id: 'ba4', name: 'Internal – David Klein', currency: 'CAD', balance: 500, type: 'internal', isInternal: true, linkedFundraiserId: 'f2' },
-];
-
 const mockBills: Bill[] = [
-  { id: 'b1', vendor: 'Hatzolah Maintenance', amount: 1250.00, dueDate: '2025-07-01', status: 'pending', category: 'Ambulance Operations', bankAccountId: 'ba1' },
-  { id: 'b2', vendor: 'Fuel Supplier', amount: 3400.00, dueDate: '2025-06-25', status: 'urgent', category: 'Ambulance Operations', bankAccountId: 'ba1' },
-  { id: 'b3', vendor: 'Office Rent', amount: 2000.00, dueDate: '2025-07-05', status: 'pending', category: 'Administration', bankAccountId: 'ba1' },
-  { id: 'b4', vendor: 'Annual Insurance', amount: 8500.00, dueDate: '2025-08-01', status: 'scheduled', category: 'Administration', bankAccountId: 'ba1', isScheduled: true },
+  { id: 'b1', vendor: 'Hatzolah Maintenance', amount: 1250.00, dueDate: '2025-07-01', status: 'pending', category: 'Ambulance Operations', sourceAccountId: 'a1', offsetAccountId: 'a7' },
+  { id: 'b2', vendor: 'Fuel Supplier', amount: 3400.00, dueDate: '2025-06-25', status: 'urgent', category: 'Ambulance Operations', sourceAccountId: 'a1', offsetAccountId: 'a7' },
+  { id: 'b3', vendor: 'Office Rent', amount: 2000.00, dueDate: '2025-07-05', status: 'pending', category: 'Administration', sourceAccountId: 'a1', offsetAccountId: 'a8' },
 ];
 
 const mockTasks: Task[] = [
   { id: 'task1', donorId: '2', title: 'Follow up on pending check', notes: 'Check #1042 from Yitzchok Cohen has not cleared yet.', dueDate: '2025-06-28', priority: 'high', type: 'call', completed: false, createdAt: '2025-06-22' },
   { id: 'task2', donorId: '3', title: 'Collect outstanding balance $1,200', notes: 'Chaim has an open balance from March pledge.', dueDate: '2025-07-05', priority: 'high', type: 'call', completed: false, createdAt: '2025-06-20' },
   { id: 'task3', donorId: '1', title: 'Send thank you for $1,000 donation', dueDate: '2025-06-25', priority: 'low', type: 'email', completed: false, createdAt: '2025-06-21' },
-  { id: 'task4', title: 'Pay Fuel Supplier bill', notes: 'URGENT - overdue', dueDate: '2025-06-25', priority: 'high', type: 'payment', completed: false, createdAt: '2025-06-22' },
 ];
 
 let nextId = 200;
@@ -233,7 +224,7 @@ export const useStore = create<AppState>((set) => ({
   transactions: mockTransactions,
   recurringPayments: mockRecurring,
   fundraisers: mockFundraisers,
-  bankAccounts: mockBankAccounts,
+  accounts: mockAccounts,
   bills: mockBills,
   tasks: mockTasks,
   accountTransfers: [],
@@ -243,7 +234,6 @@ export const useStore = create<AppState>((set) => ({
   setExchangeRate: (rate) => set({ exchangeRate: rate }),
 
   addDonor: (donor) => set(state => {
-    // Generate a new sequential Display ID like D-1006
     const nextNum = 1001 + state.donors.length;
     const displayId = `D-${nextNum}`;
     const name = `${donor.firstName} ${donor.lastName}`.trim();
@@ -288,23 +278,30 @@ export const useStore = create<AppState>((set) => ({
       if (tx.type === 'recording') return { ...d, balanceOwed: Math.max(0, d.balanceOwed - effectiveAmount) };
       return d;
     });
-    // Update bank account balance
-    const updatedAccounts = tx.bankAccountId && tx.type === 'approved'
-      ? state.bankAccounts.map(a => {
-          if (a.id !== tx.bankAccountId) return a;
-          // If transaction is USD but bank account is CAD, add effectiveAmount (which is amountCAD)
-          // Else add the raw amount.
-          const amountToAdd = (a.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
-          return { ...a, balance: a.balance + amountToAdd };
-        })
-      : state.bankAccounts;
-    // Update fundraiser balance if applicable
+
+    let updatedAccounts = state.accounts;
+    if (tx.type === 'approved') {
+      updatedAccounts = updatedAccounts.map(a => {
+        let newBalance = a.balance;
+        const amountToAdd = (a.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
+
+        if (a.id === tx.sourceAccountId) {
+           newBalance += amountToAdd; // Source Bank gets cash
+        }
+        if (a.id === tx.offsetAccountId) {
+           newBalance += amountToAdd; // Revenue account gets credited
+        }
+        return { ...a, balance: newBalance };
+      });
+    }
+
     const updatedFundraisers = tx.fundraiserId && tx.type === 'approved'
       ? state.fundraisers.map(f => f.id === tx.fundraiserId
           ? { ...f, balanceOwed: f.balanceOwed + (tx.amount * f.percentage / 100) }
           : f)
       : state.fundraisers;
-    return { transactions: [newTx, ...state.transactions], donors: updatedDonors, bankAccounts: updatedAccounts, fundraisers: updatedFundraisers };
+      
+    return { transactions: [newTx, ...state.transactions], donors: updatedDonors, accounts: updatedAccounts, fundraisers: updatedFundraisers };
   }),
 
   updateTransaction: (id, updates) => set((state) => ({
@@ -337,18 +334,18 @@ export const useStore = create<AppState>((set) => ({
       : f)
   })),
 
-  addBankAccount: (acc) => set((state) => ({
-    bankAccounts: [...state.bankAccounts, { ...acc, id: uid() }]
+  addAccount: (acc) => set((state) => ({
+    accounts: [...state.accounts, { ...acc, id: uid() }]
   })),
 
   transferBetweenAccounts: (transfer) => set((state) => {
     const newTransfer = { ...transfer, id: uid() };
-    const updatedAccounts = state.bankAccounts.map(a => {
+    const updatedAccounts = state.accounts.map(a => {
       if (a.id === transfer.fromAccountId) return { ...a, balance: a.balance - transfer.amount };
       if (a.id === transfer.toAccountId) return { ...a, balance: a.balance + transfer.amount };
       return a;
     });
-    return { bankAccounts: updatedAccounts, accountTransfers: [newTransfer, ...state.accountTransfers] };
+    return { accounts: updatedAccounts, accountTransfers: [newTransfer, ...state.accountTransfers] };
   }),
 
   addBill: (bill) => set((state) => ({
@@ -359,28 +356,32 @@ export const useStore = create<AppState>((set) => ({
     bills: state.bills.map(b => b.id === id ? { ...b, ...updates } : b)
   })),
 
-  markBillPaid: (id, bankAccountId) => set((state) => {
+  markBillPaid: (id, sourceAccountId, offsetAccountId) => set((state) => {
     const bill = state.bills.find(b => b.id === id);
     if (!bill) return state;
 
-    let updatedAccounts = state.bankAccounts;
-    let updatedFundraisers = state.fundraisers;
+    const finalSource = sourceAccountId || bill.sourceAccountId;
+    const finalOffset = offsetAccountId || bill.offsetAccountId;
 
-    if (bankAccountId) {
-      const bank = state.bankAccounts.find(a => a.id === bankAccountId);
-      if (bank) {
-        updatedAccounts = state.bankAccounts.map(a => a.id === bankAccountId ? { ...a, balance: a.balance - bill.amount } : a);
-        if (bank.isInternal && bank.linkedFundraiserId) {
-          updatedFundraisers = state.fundraisers.map(f => f.id === bank.linkedFundraiserId
-            ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount), internalAccountBalance: (f.internalAccountBalance || 0) + bill.amount }
-            : f);
-        }
-      }
+    let updatedAccounts = state.accounts.map(a => {
+      let newBalance = a.balance;
+      if (a.id === finalSource) newBalance -= bill.amount; // Bank loses money
+      if (a.id === finalOffset) newBalance += bill.amount; // Expense account increases
+      return { ...a, balance: newBalance };
+    });
+
+    let updatedFundraisers = state.fundraisers;
+    // Sync with fundraiser if offset is a payroll account
+    const offsetAcc = state.accounts.find(a => a.id === finalOffset);
+    if (offsetAcc && offsetAcc.linkedFundraiserId) {
+      updatedFundraisers = state.fundraisers.map(f => f.id === offsetAcc.linkedFundraiserId
+        ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount), internalAccountBalance: (f.internalAccountBalance || 0) + bill.amount }
+        : f);
     }
 
     return {
-      bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], bankAccountId } : b),
-      bankAccounts: updatedAccounts,
+      bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId: finalSource, offsetAccountId: finalOffset } : b),
+      accounts: updatedAccounts,
       fundraisers: updatedFundraisers
     };
   }),
