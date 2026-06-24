@@ -165,6 +165,7 @@ interface AppState {
   bills: Bill[];
   tasks: Task[];
   accountTransfers: AccountTransfer[];
+  matchedBankTransactions: string[];
   googleSheetSyncUrl: string;
 
   toggleRtl: () => void;
@@ -200,6 +201,8 @@ interface AppState {
   addTask: (task: Omit<Task, 'id' | 'createdAt'>) => void;
   completeTask: (id: string) => void;
   deleteTask: (id: string) => void;
+
+  matchBankTransaction: (id: string) => void;
 }
 
 const mockDonors: Donor[] = [
@@ -325,8 +328,9 @@ export const useStore = create<AppState>()(
       fundraisers: [],
       accounts: [],
       bills: [],
-      tasks: [],
+      tasks: mockTasks,
       accountTransfers: [],
+      matchedBankTransactions: [],
       googleSheetSyncUrl: '',
 
       toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
@@ -492,6 +496,10 @@ export const useStore = create<AppState>()(
 
       deleteTask: (id) => set(state => ({
         tasks: state.tasks.filter(t => t.id !== id)
+      })),
+
+      matchBankTransaction: (id) => set((state) => ({
+        matchedBankTransactions: [...state.matchedBankTransactions, id]
       })),
     }),
     {

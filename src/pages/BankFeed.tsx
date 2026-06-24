@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../store';
-import { Building, Send, Check, Link as LinkIcon, RefreshCw } from 'lucide-react';
+import { Building, Send, Check, Link as LinkIcon, RefreshCw, X } from 'lucide-react';
 import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
-  const { accounts, isRtl } = useStore();
+  const { accounts, isRtl, matchedBankTransactions, matchBankTransaction, addBill, addTransaction } = useStore();
   const T = useT(isRtl);
   const [selectedBank, setSelectedBank] = useState(accounts[0]?.id || '');
   const [feed, setFeed] = useState<any[]>([]);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasConnection, setHasConnection] = useState(false);
+
+  // Match Modal State
+  const [matchingTx, setMatchingTx] = useState<any | null>(null);
+  const [matchType, setMatchType] = useState<'expense' | 'deposit'>('expense');
+  const [matchCategory, setMatchCategory] = useState('');
+  const [matchEntity, setMatchEntity] = useState(''); // Vendor or Donor name
 
   // 1. Fetch link token on mount
   useEffect(() => {
@@ -42,13 +48,12 @@ export const BankFeed: React.FC = () => {
           date: t.date,
           description: t.name,
           amount: t.amount * -1, // Plaid positive amount is a withdrawal (expense), so flip it for our UI
-          status: 'unmatched',
+          status: matchedBankTransactions.includes(t.transaction_id) ? 'matched' : 'unmatched',
           sourceAccountId: selectedBank || 'default'
         }));
         setFeed(mappedFeed);
         setHasConnection(true);
       } else {
-        // Probably not connected yet or token expired
         setHasConnection(false);
       }
     } catch (err) {
@@ -57,10 +62,9 @@ export const BankFeed: React.FC = () => {
     setLoading(false);
   };
 
-  // Try to load transactions on mount (if they have a token already saved)
   useEffect(() => {
     fetchTransactions();
-  }, []);
+  }, [matchedBankTransactions]); // re-run or re-map when matchedBankTransactions changes
 
   // 3. Configure Plaid Link
   const onSuccess = useCallback(async (public_token: string, metadata: any) => {
@@ -71,7 +75,6 @@ export const BankFeed: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ public_token }),
       });
-      // After exchange, fetch the transactions immediately
       await fetchTransactions();
     } catch (err) {
       console.error('Exchange failed', err);
@@ -89,8 +92,43 @@ export const BankFeed: React.FC = () => {
     alert('Transaction sent to "Needs Review" tab for the other user.');
   };
 
-  const handleMatch = (id: string) => {
-    setFeed(feed.map(f => f.id === id ? { ...f, status: 'matched' } : f));
+  const openMatchModal = (tx: any) => {
+    setMatchingTx(tx);
+    setMatchType(tx.amount < 0 ? 'expense' : 'deposit');
+    setMatchEntity(tx.description);
+    setMatchCategory('');
+  };
+
+  const submitMatch = () => {
+    if (!matchingTx) return;
+
+    if (matchType === 'expense') {
+      addBill({
+        vendor: matchEntity,
+        amount: Math.abs(matchingTx.amount),
+        dueDate: matchingTx.date,
+        status: 'paid', // Bank feed means it's already paid
+        category: matchCategory || 'Uncategorized Expense',
+        paidDate: matchingTx.date,
+        sourceAccountId: selectedBank,
+      });
+    } else {
+      // It's a deposit (e.g. from a donor)
+      addTransaction({
+        donorId: 'unknown', // Ideally we'd map this to a real donor, but for simple matching we just record the deposit
+        amount: Math.abs(matchingTx.amount),
+        date: matchingTx.date,
+        type: 'approved',
+        method: 'e_transfer',
+        currency: 'CAD',
+        sourceAccountId: selectedBank,
+        category: matchCategory || 'General Donation',
+        notes: `Bank Deposit: ${matchEntity}`
+      });
+    }
+
+    matchBankTransaction(matchingTx.id);
+    setMatchingTx(null);
   };
 
   return (
@@ -143,7 +181,7 @@ export const BankFeed: React.FC = () => {
                   <td>{t.date}</td>
                   <td style={{ fontWeight: 600, fontFamily: 'monospace', fontSize: '0.9rem' }}>{t.description}</td>
                   <td style={{ fontWeight: 700, color: t.amount > 0 ? 'var(--green)' : 'var(--navy)' }}>
-                    ${t.amount.toFixed(2)}
+                    ${Math.abs(t.amount).toFixed(2)} {t.amount < 0 ? '(Out)' : '(In)'}
                   </td>
                   <td>
                     {t.status === 'unmatched' && <span className="badge badge-warning">Unmatched</span>}
@@ -154,7 +192,7 @@ export const BankFeed: React.FC = () => {
                     <div style={{ display: 'flex', gap: '8px' }}>
                       {t.status === 'unmatched' && (
                         <>
-                          <button className="btn btn-secondary btn-sm" onClick={() => handleMatch(t.id)} title="Match to existing transaction">
+                          <button className="btn btn-secondary btn-sm" onClick={() => openMatchModal(t)} title="Categorize and Record">
                             <Check size={14} /> Match
                           </button>
                           <button className="btn btn-ghost btn-sm" onClick={() => handleSendReview(t.id)} title="Send for Review">
@@ -187,6 +225,46 @@ export const BankFeed: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {matchingTx && (
+        <div className="modal-overlay" onClick={() => setMatchingTx(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Match Transaction</h2>
+              <button className="modal-close" onClick={() => setMatchingTx(null)}><X size={20} /></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px' }}>
+                <div style={{ fontWeight: 600 }}>{matchingTx.description}</div>
+                <div style={{ color: 'var(--text-muted)' }}>{matchingTx.date} • ${Math.abs(matchingTx.amount).toFixed(2)}</div>
+              </div>
+
+              <div className="form-group">
+                <label>Type</label>
+                <select value={matchType} onChange={e => setMatchType(e.target.value as any)}>
+                  <option value="expense">Expense / Bill</option>
+                  <option value="deposit">Deposit / Donation</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>{matchType === 'expense' ? 'Vendor Name' : 'Donor / Source Name'}</label>
+                <input type="text" value={matchEntity} onChange={e => setMatchEntity(e.target.value)} />
+              </div>
+
+              <div className="form-group">
+                <label>Category / Fund</label>
+                <input type="text" placeholder="e.g. Office Supplies, General Fund" value={matchCategory} onChange={e => setMatchCategory(e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer" style={{ marginTop: '24px' }}>
+              <button className="btn btn-secondary" onClick={() => setMatchingTx(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={submitMatch}>Record {matchType === 'expense' ? 'Expense' : 'Deposit'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .spin { animation: spin 1s linear infinite; }
