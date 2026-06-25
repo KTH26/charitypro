@@ -24,10 +24,10 @@ app.post('/sync', async (c) => {
 // Set PLAID_ENV=development in Cloudflare dashboard / .dev.vars for real bank connections.
 
 const getPlaidUrl = (envVal?: string) => {
-  let env = envVal?.trim().toLowerCase() || 'development';
-  // If the user accidentally pasted the full URL, clean it up:
-  env = env.replace('https://', '').replace('.plaid.com', '').replace('/', '');
-  return `https://${env}.plaid.com`;
+  const env = envVal?.trim().toLowerCase() || '';
+  if (env.includes('production')) return 'https://production.plaid.com';
+  if (env.includes('sandbox')) return 'https://sandbox.plaid.com';
+  return 'https://development.plaid.com';
 };
 
 app.post('/plaid/create_link_token', async (c) => {
