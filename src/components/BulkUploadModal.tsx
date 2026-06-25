@@ -14,6 +14,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
   const [file, setFile] = useState<File | null>(null);
   
   const [step, setStep] = useState<'upload' | 'review' | 'success'>('upload');
+  const [fileEncoding, setFileEncoding] = useState<'utf-8' | 'windows-1255'>('utf-8');
   const [matchedRows, setMatchedRows] = useState<any[]>([]);
   const [unmatchedRows, setUnmatchedRows] = useState<any[]>([]);
   
@@ -34,6 +35,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
     if (dataType === 'pledges') {
       Papa.parse(file, {
         header: true,
+        encoding: fileEncoding,
         skipEmptyLines: true,
         complete: (results) => {
           const rows = results.data as any[];
@@ -314,6 +316,19 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
                   </div>
                 )}
               </div>
+
+              <div style={{ marginTop: '20px', textAlign: 'center' }}>
+                <label style={{ fontSize: '0.9rem', fontWeight: 600, marginRight: '8px', color: 'var(--navy)' }}>File Origin:</label>
+                <select 
+                  value={fileEncoding} 
+                  onChange={e => setFileEncoding(e.target.value as any)}
+                  style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '0.9rem', background: 'var(--bg-input)', cursor: 'pointer' }}
+                >
+                  <option value="utf-8">Standard CSV (UTF-8)</option>
+                  <option value="windows-1255">Saved from old Excel (Hebrew/Yiddish)</option>
+                </select>
+              </div>
+
               <div style={{ marginTop: '16px', textAlign: 'center' }}>
                 <button 
                   className="btn btn-secondary btn-sm" 
