@@ -4,7 +4,7 @@ import { TrendingUp, Users, AlertCircle, Calendar, DollarSign, CheckSquare, Arro
 import { useT } from '../i18n';
 
 export const Dashboard: React.FC = () => {
-  const { isRtl, transactions, donors, accounts, tasks, bills, editTransaction } = useStore();
+  const { isRtl, transactions, donors, accounts, tasks, bills, editTransaction, solaApiKey, setSolaApiKey } = useStore();
   const T = useT(isRtl);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
 
@@ -170,6 +170,25 @@ export const Dashboard: React.FC = () => {
           {tasks.filter(t => !t.completed).length === 0 && (
             <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: 'var(--green)', padding: '20px' }}>{T('all_tasks_done')}</div>
           )}
+        </div>
+      </div>
+
+      {/* Settings Row */}
+      <div className="card" style={{ padding: '24px' }}>
+        <h3 style={{ margin: '0 0 16px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>System Settings & Integrations</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+          {/* Sola Payments API Key */}
+          <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px' }}>
+            <h4 style={{ margin: '0 0 8px', color: 'var(--navy)' }}>Sola Payments API</h4>
+            <p style={{ margin: '0 0 12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>Enter your Sola Reporting API key to enable live synchronization.</p>
+            <input 
+              type="password" 
+              placeholder="e.g. sk_live_..." 
+              value={solaApiKey} 
+              onChange={e => setSolaApiKey(e.target.value)} 
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', fontFamily: 'monospace' }}
+            />
+          </div>
         </div>
       </div>
 

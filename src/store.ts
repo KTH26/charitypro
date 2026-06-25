@@ -167,11 +167,15 @@ interface AppState {
   accountTransfers: AccountTransfer[];
   matchedBankTransactions: string[];
   googleSheetSyncUrl: string;
+  solaApiKey: string;
+  lastSolaSyncDate: string;
 
   toggleRtl: () => void;
   setCurrency: (currency: 'CAD' | 'USD') => void;
   setExchangeRate: (rate: number) => void;
   setGoogleSheetSyncUrl: (url: string) => void;
+  setSolaApiKey: (key: string) => void;
+  setLastSolaSyncDate: (date: string) => void;
   setDonorSortBy: (key: DonorSortKey) => void;
 
   addDonor: (donor: Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'> | Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
@@ -332,11 +336,15 @@ export const useStore = create<AppState>()(
       accountTransfers: [],
       matchedBankTransactions: [],
       googleSheetSyncUrl: '',
+      solaApiKey: '',
+      lastSolaSyncDate: '',
 
       toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
       setCurrency: (currency) => set({ currency }),
       setExchangeRate: (rate) => set({ exchangeRate: rate }),
       setGoogleSheetSyncUrl: (url) => set({ googleSheetSyncUrl: url }),
+      setSolaApiKey: (key) => set({ solaApiKey: key }),
+      setLastSolaSyncDate: (date) => set({ lastSolaSyncDate: date }),
       setDonorSortBy: (key) => set({ donorSortBy: key }),
 
       addDonor: (donor) => set(state => {

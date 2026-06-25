@@ -20,6 +20,7 @@ import { Transactions } from './pages/Transactions';
 import { ChartOfAccounts } from './pages/ChartOfAccounts';
 import { BankFeed } from './pages/BankFeed';
 import { Reconciliation } from './pages/Reconciliation';
+import { SolaSync } from './pages/SolaSync';
 
 function App() {
   return (
@@ -44,6 +45,7 @@ function App() {
         <Route path="/tasks" element={<Layout><Tasks /></Layout>} />
         <Route path="/settings" element={<Layout><Settings /></Layout>} />
         <Route path="/coming-soon" element={<Layout><ComingSoon /></Layout>} />
+        <Route path="/sola-sync" element={<Layout><SolaSync /></Layout>} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>

@@ -136,4 +136,38 @@ app.post('/plaid/transactions', async (c) => {
   }
 });
 
+// Sola (Cardknox) Integration Proxy
+app.post('/sola/report', async (c) => {
+  try {
+    const { apiKey, startDate, endDate } = await c.req.json();
+    if (!apiKey) return c.json({ error: 'API Key is required' }, 400);
+
+    const reqBody = {
+      xKey: apiKey,
+      xVersion: '4.5.9',
+      xSoftwareName: 'CharityApp',
+      xSoftwareVersion: '1.0',
+      xCommand: 'report:approved',
+      xBeginDate: startDate,
+      xEndDate: endDate,
+    };
+
+    const res = await fetch('https://x1.cardknox.com/reportjson', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reqBody)
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return c.json({ error: 'Sola API error', status: res.status, details: text }, 400);
+    }
+
+    const data = await res.json();
+    return c.json(data);
+  } catch (err: any) {
+    return c.json({ error: 'Worker crash', message: err.message, stack: err.stack }, 500);
+  }
+});
+
 export const onRequest = handle(app)

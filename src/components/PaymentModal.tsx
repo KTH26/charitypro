@@ -42,6 +42,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [recStartDate, setRecStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [recMethod, setRecMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer'>('credit_card');
   const [recCurrency, setRecCurrency] = useState<'CAD' | 'USD'>(currency);
+  const [recInstallments, setRecInstallments] = useState('12');
 
   if (!donor) return null;
 
@@ -92,6 +93,8 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
 
   const handleRecurring = () => {
     if (!recAmount || isNaN(+recAmount)) return;
+    
+    // Add the recurring schedule record
     addRecurring({
       donorId,
       amount: parseFloat(recAmount),
@@ -101,6 +104,36 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       currency: recCurrency,
       active: true,
     });
+
+    // Generate pending transactions for future installments
+    const installments = parseInt(recInstallments) || 12;
+    let currentDate = new Date(recStartDate);
+    const amt = parseFloat(recAmount);
+
+    for (let i = 0; i < installments; i++) {
+      addTransaction({
+        donorId,
+        amount: amt,
+        amountCAD: getAmountCAD(recAmount),
+        date: currentDate.toISOString().split('T')[0],
+        type: 'pending', // Always pending so it doesn't affect balance until approved via Sola
+        method: recMethod,
+        currency: recCurrency,
+        notes: `Installment ${i + 1} of ${installments}`,
+      });
+
+      // Increment date based on frequency
+      if (recFrequency === 'weekly') {
+        currentDate.setDate(currentDate.getDate() + 7);
+      } else if (recFrequency === 'monthly') {
+        currentDate.setMonth(currentDate.getMonth() + 1);
+      } else if (recFrequency === 'quarterly') {
+        currentDate.setMonth(currentDate.getMonth() + 3);
+      } else if (recFrequency === 'yearly') {
+        currentDate.setFullYear(currentDate.getFullYear() + 1);
+      }
+    }
+
     setSuccess(true);
     setTimeout(onClose, 1800);
   };
@@ -302,6 +335,10 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                       <input type="date" value={recStartDate} onChange={e => setRecStartDate(e.target.value)} />
                     </div>
                     <div className="form-group" style={{ margin: 0 }}>
+                      <label>Number of Installments</label>
+                      <input type="number" placeholder="12" value={recInstallments} onChange={e => setRecInstallments(e.target.value)} />
+                    </div>
+                    <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>
                       <label>Payment Method</label>
                       <select value={recMethod} onChange={e => setRecMethod(e.target.value as any)}>
                         <option value="credit_card">Credit Card</option>
@@ -335,7 +372,8 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                   <div style={{ background: 'var(--navy-bg)', padding: '16px', borderRadius: '12px', border: '1px solid var(--blue-bg)' }}>
                     <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '4px' }}>📅 Summary</div>
                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-                      Donor will be charged <strong>${recAmount || '0'} {recCurrency}</strong> every <strong>{recFrequency}</strong> starting <strong>{recStartDate}</strong>.
+                      Donor will be charged <strong>${recAmount || '0'} {recCurrency}</strong> every <strong>{recFrequency}</strong> for <strong>{recInstallments || '12'} installments</strong>, starting <strong>{recStartDate}</strong>.<br/>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>(This will instantly generate {recInstallments || '12'} 'pending' transactions in their profile).</span>
                     </div>
                   </div>
                 </div>
