@@ -5,19 +5,42 @@ const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAI
 
 app.get('/sync', async (c) => {
   try {
-    const result = await c.env.DB.prepare('SELECT data FROM store WHERE id = 1').first()
-    return c.json({ value: result?.data || null })
+    const results = await c.env.DB.prepare('SELECT data FROM store WHERE id >= 1000 ORDER BY id ASC').all()
+    if (results && results.results && results.results.length > 0) {
+      const fullString = results.results.map((r: any) => r.data).join('');
+      return c.json({ value: fullString })
+    }
+
+    // Fallback to legacy id=1 if no chunks exist
+    const legacy = await c.env.DB.prepare('SELECT data FROM store WHERE id = 1').first()
+    return c.json({ value: legacy?.data || null })
   } catch (e) {
     return c.json({ value: null })
   }
 })
 
 app.post('/sync', async (c) => {
-  const { value } = await c.req.json()
-  await c.env.DB.prepare(
-    'INSERT INTO store (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data'
-  ).bind(value).run()
-  return c.json({ success: true })
+  try {
+    const { value } = await c.req.json()
+    if (!value) return c.json({ success: true })
+
+    const chunkSize = 500000;
+    const chunks = [];
+    for (let i = 0; i < value.length; i += chunkSize) {
+      chunks.push(value.slice(i, i + chunkSize));
+    }
+
+    await c.env.DB.prepare('DELETE FROM store WHERE id >= 1000').run();
+    
+    for (let i = 0; i < chunks.length; i++) {
+      await c.env.DB.prepare('INSERT INTO store (id, data) VALUES (?, ?)').bind(1000 + i, chunks[i]).run();
+    }
+
+    return c.json({ success: true })
+  } catch (err: any) {
+    console.error(err);
+    return c.json({ success: false, error: err.message }, 500)
+  }
 })
 
 // Plaid Integration
