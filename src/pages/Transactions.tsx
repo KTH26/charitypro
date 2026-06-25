@@ -68,6 +68,10 @@ export const Transactions: React.FC = () => {
             <option value="check">Check</option>
             <option value="cash">Cash</option>
             <option value="e_transfer">E-Transfer</option>
+            <option value="vouchers">Vouchers</option>
+            <option value="eizer">Eizer</option>
+            <option value="bnei_leivy">Bnei Leivy</option>
+            <option value="other">Other</option>
           </select>
           <select className="filter-select" value={filterType} onChange={e => { setFilterType(e.target.value); setCurrentPage(1); }}>
             <option value="">All Types</option>

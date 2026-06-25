@@ -32,7 +32,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
 
   // One-time / pledge form state
   const [amount, setAmount] = useState('');
-  const [method, setMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer'>('credit_card');
+  const [method, setMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other'>('credit_card');
   const [txCurrency, setTxCurrency] = useState<'CAD' | 'USD'>(currency);
   const [sourceAccountId, setSourceAccountId] = useState('');
   const [offsetAccountId, setOffsetAccountId] = useState('');
@@ -48,7 +48,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [recAmount, setRecAmount] = useState('');
   const [recFrequency, setRecFrequency] = useState<'weekly' | 'monthly' | 'quarterly' | 'yearly'>('monthly');
   const [recStartDate, setRecStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [recMethod, setRecMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer'>('credit_card');
+  const [recMethod, setRecMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other'>('credit_card');
   const [recCurrency, setRecCurrency] = useState<'CAD' | 'USD'>(currency);
   const [recInstallments, setRecInstallments] = useState('12');
 
@@ -233,8 +233,8 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
     setTimeout(onClose, 1800);
   };
 
-  const methodIcon = { credit_card: <CreditCard size={16} />, check: <CheckSquare size={16} />, cash: <DollarSign size={16} />, e_transfer: <Smartphone size={16} /> };
-  const methodLabel = { credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer' };
+  const methodIcon = { credit_card: <CreditCard size={16} />, check: <CheckSquare size={16} />, cash: <DollarSign size={16} />, e_transfer: <Smartphone size={16} />, vouchers: <DollarSign size={16} />, eizer: <DollarSign size={16} />, bnei_leivy: <DollarSign size={16} />, other: <CheckSquare size={16} /> };
+  const methodLabel = { credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer', vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'Other' };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -318,7 +318,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Payment Method</label>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px' }}>
-                      {(['credit_card', 'check', 'cash', 'e_transfer'] as const).map(m => (
+                      {(['credit_card', 'check', 'cash', 'e_transfer', 'vouchers', 'eizer', 'bnei_leivy', 'other'] as const).map(m => (
                         <button key={m} onClick={() => setMethod(m)} style={{
                           padding: '12px 8px', border: `2px solid ${method === m ? 'var(--navy-light)' : 'var(--border)'}`,
                           borderRadius: '12px', background: method === m ? 'var(--navy-bg)' : 'var(--bg-input)',
@@ -450,6 +450,10 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                         <option value="check">Check</option>
                         <option value="cash">Cash</option>
                         <option value="e_transfer">E-Transfer</option>
+                        <option value="vouchers">Vouchers</option>
+                        <option value="eizer">Eizer</option>
+                        <option value="bnei_leivy">Bnei Leivy</option>
+                        <option value="other">Other</option>
                       </select>
                     </div>
                   </div>

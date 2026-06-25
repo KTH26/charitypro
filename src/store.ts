@@ -76,7 +76,7 @@ export interface Transaction {
   amountCAD?: number; // for USD transactions, the CAD equivalent
   date: string;
   type: 'approved' | 'pending' | 'recording' | 'declined';
-  method: 'credit_card' | 'check' | 'cash' | 'e_transfer';
+  method: 'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other';
   currency: 'CAD' | 'USD';
   sourceAccountId?: string; // e.g. Bank Account (Asset)
   offsetAccountId?: string; // e.g. Category/Fundraiser Payroll (Revenue/Expense)
@@ -92,7 +92,7 @@ export interface RecurringPayment {
   amount: number;
   frequency: 'weekly' | 'monthly' | 'quarterly' | 'yearly';
   nextDate: string;
-  method: 'credit_card' | 'check' | 'cash' | 'e_transfer';
+  method: 'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other';
   currency: 'CAD' | 'USD';
   active: boolean;
 }

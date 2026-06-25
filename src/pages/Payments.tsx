@@ -33,7 +33,7 @@ export const Payments: React.FC = () => {
   };
 
   const methodLabel: Record<string, string> = {
-    credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer'
+    credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer', vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'Other'
   };
 
   return (

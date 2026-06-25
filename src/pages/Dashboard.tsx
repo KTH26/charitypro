@@ -218,12 +218,16 @@ export const Dashboard: React.FC = () => {
                   </div>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Method</label>
-                    <select value={editTx.method} onChange={e => setEditTx({ ...editTx, method: e.target.value as any })}>
-                      <option value="credit_card">Credit Card</option>
-                      <option value="check">Check</option>
-                      <option value="cash">Cash</option>
-                      <option value="e_transfer">E-Transfer</option>
-                    </select>
+                      <select value={editTx.method} onChange={e => setEditTx({ ...editTx, method: e.target.value as any })}>
+                        <option value="credit_card">Credit Card</option>
+                        <option value="check">Check</option>
+                        <option value="cash">Cash</option>
+                        <option value="e_transfer">E-Transfer</option>
+                        <option value="vouchers">Vouchers</option>
+                        <option value="eizer">Eizer</option>
+                        <option value="bnei_leivy">Bnei Leivy</option>
+                        <option value="other">Other</option>
+                      </select>
                   </div>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
