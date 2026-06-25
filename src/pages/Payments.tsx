@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { Search, Wallet, Upload } from 'lucide-react';
 import { PaymentModal } from '../components/PaymentModal';
@@ -7,6 +8,7 @@ import { useT } from '../i18n';
 
 export const Payments: React.FC = () => {
   const { transactions, donors, isRtl } = useStore();
+  const navigate = useNavigate();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [showPayment, setShowPayment] = useState(false);
@@ -142,8 +144,8 @@ export const Payments: React.FC = () => {
               {paginatedPayments.map(payment => {
                 const donor = donors.find(d => d.id === payment.donorId);
                 return (
-                  <tr key={payment.id}>
-                    <td>
+                  <tr key={payment.id} onClick={() => navigate(`/donors?donorId=${payment.donorId}`)} style={{ cursor: 'pointer' }} className="hover-bg">
+                    <td onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={selectedIds.includes(payment.id)} onChange={() => handleSelect(payment.id)} />
                     </td>
                     <td>{payment.date}</td>
