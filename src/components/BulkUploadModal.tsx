@@ -32,7 +32,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
   const handleUpload = () => {
     if (!file) return;
 
-    if (dataType === 'pledges') {
+    if (dataType === 'pledges' || dataType === 'transactions') {
       Papa.parse(file, {
         header: true,
         encoding: fileEncoding,
@@ -124,7 +124,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               donorId: finalDonorId,
               amount: amount,
               date: parsedDate,
-              type: 'recording',
+              type: dataType === 'pledges' ? 'recording' : 'approved',
               method: (item.row['Method']?.toLowerCase() || 'check') as any,
               currency: (item.row['Currency']?.toUpperCase() || 'CAD') as any,
               category: item.row['Category'] || 'General',
