@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { Search } from 'lucide-react';
 import { useT } from '../i18n';
@@ -9,16 +9,30 @@ export const Transactions: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [filterYear, setFilterYear] = useState('All');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
+
+  const years = useMemo(() => {
+    const y = new Set<string>();
+    transactions.forEach(t => y.add(t.date.substring(0, 4)));
+    return Array.from(y).sort((a, b) => b.localeCompare(a));
+  }, [transactions]);
 
   const filteredTransactions = transactions.filter(t => {
+    if (filterYear !== 'All' && !t.date.startsWith(filterYear)) return false;
+    
     const matchSearch = t.notes?.toLowerCase().includes(searchTerm.toLowerCase()) || t.category?.toLowerCase().includes(searchTerm.toLowerCase()) || t.amount.toString().includes(searchTerm);
     const matchAccount = filterAccount ? (t.sourceAccountId === filterAccount || t.offsetAccountId === filterAccount) : true;
     return matchSearch && matchAccount;
   });
 
+  const totalPages = Math.ceil(filteredTransactions.length / PAGE_SIZE);
+  const paginatedTransactions = filteredTransactions.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
-      setSelectedIds(filteredTransactions.map(t => t.id));
+      setSelectedIds(paginatedTransactions.map(t => t.id));
     } else {
       setSelectedIds([]);
     }
@@ -39,14 +53,18 @@ export const Transactions: React.FC = () => {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
           <div className="search-box" style={{ width: '300px' }}>
             <Search className="search-icon" size={18} />
-            <input type="text" placeholder="Search transactions..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input type="text" placeholder="Search transactions..." value={searchTerm} onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }} />
           </div>
-          <select className="filter-select" value={filterAccount} onChange={e => setFilterAccount(e.target.value)} style={{ minWidth: '200px' }}>
+          <select className="filter-select" value={filterAccount} onChange={e => { setFilterAccount(e.target.value); setCurrentPage(1); }} style={{ minWidth: '200px' }}>
             <option value="">All Accounts</option>
             {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <select className="filter-select" value={filterYear} onChange={e => { setFilterYear(e.target.value); setCurrentPage(1); }}>
+            <option value="All">All Years</option>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </div>
 
@@ -67,7 +85,7 @@ export const Transactions: React.FC = () => {
             <thead>
               <tr>
                 <th style={{ width: '40px' }}>
-                  <input type="checkbox" checked={selectedIds.length === filteredTransactions.length && filteredTransactions.length > 0} onChange={handleSelectAll} />
+                  <input type="checkbox" checked={selectedIds.length === paginatedTransactions.length && paginatedTransactions.length > 0} onChange={handleSelectAll} />
                 </th>
                 <th>Date</th>
                 <th>Type</th>
@@ -78,7 +96,7 @@ export const Transactions: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredTransactions.map(t => (
+              {paginatedTransactions.map(t => (
                 <tr key={t.id}>
                   <td>
                     <input type="checkbox" checked={selectedIds.includes(t.id)} onChange={() => handleSelect(t.id)} />
@@ -98,12 +116,20 @@ export const Transactions: React.FC = () => {
                   <td style={{ fontWeight: 700, textAlign: 'right' }}>${t.amount.toLocaleString()} {t.currency}</td>
                 </tr>
               ))}
-              {filteredTransactions.length === 0 && (
+              {paginatedTransactions.length === 0 && (
                 <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No transactions found.</td></tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: '20px', gap: '16px' }}>
+            <button className="btn btn-secondary btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</button>
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Page {currentPage} of {totalPages}</span>
+            <button className="btn btn-secondary btn-sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        )}
       </div>
     </div>
   );

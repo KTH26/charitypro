@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { HeartHandshake, Plus, Search, ChevronRight, Edit2, Upload } from 'lucide-react';
 import { PaymentModal } from '../components/PaymentModal';
@@ -13,16 +13,58 @@ export const Pledges: React.FC = () => {
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [filterYear, setFilterYear] = useState('All');
+  const [filterOpen, setFilterOpen] = useState('All');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
 
-  const pledges = transactions.filter(t => t.type === 'recording').sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const donorPayments = useMemo(() => {
+    const map = new Map<string, number>();
+    transactions.forEach(t => {
+      if (t.type === 'approved' || t.type === 'pending') {
+        map.set(t.donorId, (map.get(t.donorId) || 0) + (t.amountCAD ?? t.amount));
+      }
+    });
+    return map;
+  }, [transactions]);
 
-  const filteredPledges = pledges.filter(p => {
+  const pledgesWithBalance = useMemo(() => {
+    const sortedPledges = [...transactions.filter(t => t.type === 'recording')].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const remainingPayments = new Map(donorPayments);
+    
+    const mapped = sortedPledges.map(p => {
+      const amount = p.amountCAD ?? p.amount;
+      const donorPaid = remainingPayments.get(p.donorId) || 0;
+      let balance = 0;
+      if (donorPaid >= amount) {
+        remainingPayments.set(p.donorId, donorPaid - amount);
+      } else {
+        balance = amount - donorPaid;
+        remainingPayments.set(p.donorId, 0);
+      }
+      return { ...p, openBalance: balance };
+    });
+    return mapped.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [transactions, donorPayments]);
+
+  const years = useMemo(() => {
+    const y = new Set<string>();
+    pledgesWithBalance.forEach(p => y.add(p.date.substring(0, 4)));
+    return Array.from(y).sort((a, b) => b.localeCompare(a));
+  }, [pledgesWithBalance]);
+
+  const filteredPledges = pledgesWithBalance.filter(p => {
+    if (filterYear !== 'All' && !p.date.startsWith(filterYear)) return false;
+    if (filterOpen === 'Open' && p.openBalance <= 0) return false;
+    
     const donor = donors.find(d => d.id === p.donorId);
     if (!donor) return false;
     return donor.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.amount.toString().includes(searchTerm);
   });
 
   const totalPledgesAmount = filteredPledges.reduce((sum, p) => sum + (p.amountCAD ?? p.amount), 0);
+  const totalPages = Math.ceil(filteredPledges.length / PAGE_SIZE);
+  const paginatedPledges = filteredPledges.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const handleAddPledge = () => {
     if (donors.length > 0) {
@@ -35,7 +77,7 @@ export const Pledges: React.FC = () => {
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
-      setSelectedIds(filteredPledges.map(p => p.id));
+      setSelectedIds(paginatedPledges.map(p => p.id));
     } else {
       setSelectedIds([]);
     }
@@ -67,11 +109,19 @@ export const Pledges: React.FC = () => {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
           <div className="search-box" style={{ width: '300px' }}>
             <Search className="search-icon" size={18} />
-            <input type="text" placeholder="Search pledges by donor..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input type="text" placeholder="Search pledges by donor..." value={searchTerm} onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }} />
           </div>
+          <select className="filter-select" value={filterYear} onChange={e => { setFilterYear(e.target.value); setCurrentPage(1); }}>
+            <option value="All">All Years</option>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <select className="filter-select" value={filterOpen} onChange={e => { setFilterOpen(e.target.value); setCurrentPage(1); }}>
+            <option value="All">All Pledges</option>
+            <option value="Open">Open Pledges (Has Balance)</option>
+          </select>
         </div>
 
         {selectedIds.length > 0 && (
@@ -91,7 +141,7 @@ export const Pledges: React.FC = () => {
             <thead>
               <tr>
                 <th style={{ width: '40px' }}>
-                  <input type="checkbox" checked={selectedIds.length === filteredPledges.length && filteredPledges.length > 0} onChange={handleSelectAll} />
+                  <input type="checkbox" checked={selectedIds.length === paginatedPledges.length && paginatedPledges.length > 0} onChange={handleSelectAll} />
                 </th>
                 <th>Date</th>
                 <th>Donor</th>
@@ -102,7 +152,7 @@ export const Pledges: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredPledges.map(pledge => {
+              {paginatedPledges.map(pledge => {
                 const donor = donors.find(d => d.id === pledge.donorId);
                 return (
                   <tr key={pledge.id}>
@@ -111,19 +161,38 @@ export const Pledges: React.FC = () => {
                     </td>
                     <td>{pledge.date}</td>
                     <td style={{ fontWeight: 600 }}>{donor?.name || 'Unknown'}</td>
-                    <td style={{ fontWeight: 700, color: 'var(--gold)' }}>${pledge.amount.toLocaleString()} {pledge.currency}</td>
+                    <td style={{ fontWeight: 700, color: 'var(--gold)' }}>
+                      ${pledge.amount.toLocaleString()} {pledge.currency}
+                      {pledge.openBalance > 0 && pledge.openBalance < (pledge.amountCAD ?? pledge.amount) && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--red)', fontWeight: 600 }}>Bal: ${pledge.openBalance.toLocaleString()}</div>
+                      )}
+                    </td>
                     <td style={{ fontSize: '0.9rem' }}>{pledge.category}</td>
                     <td style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{pledge.sponsor || '—'}</td>
-                    <td><span className="badge badge-info">Pledge / Owed</span></td>
+                    <td>
+                      {pledge.openBalance > 0 ? (
+                        <span className="badge badge-warning">Open Balance</span>
+                      ) : (
+                        <span className="badge badge-success">Paid Off</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
-              {filteredPledges.length === 0 && (
+              {paginatedPledges.length === 0 && (
                 <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No pledges found.</td></tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: '20px', gap: '16px' }}>
+            <button className="btn btn-secondary btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</button>
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Page {currentPage} of {totalPages}</span>
+            <button className="btn btn-secondary btn-sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        )}
       </div>
 
       {showPayment && selectedDonorId && (

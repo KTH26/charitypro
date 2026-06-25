@@ -26,6 +26,8 @@ export const Donors: React.FC = () => {
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterFundraiser, setFilterFundraiser] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showPayment, setShowPayment] = useState(false);
@@ -62,6 +64,9 @@ export const Donors: React.FC = () => {
     const matchFundraiser = filterFundraiser ? d.fundraiserId === filterFundraiser : true;
     return matchSearch && matchFundraiser;
   }).sort((a, b) => getSortValue(a, donorSortBy).localeCompare(getSortValue(b, donorSortBy)));
+
+  const totalPages = Math.ceil(filteredDonors.length / PAGE_SIZE);
+  const paginatedDonors = filteredDonors.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const selectedDonor = donors.find(d => d.id === selectedDonorId);
 
@@ -208,9 +213,9 @@ export const Donors: React.FC = () => {
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
           <div className="search-box" style={{ flex: 1, minWidth: '180px' }}>
             <Search className="search-icon" size={18} />
-            <input type="text" placeholder={T('search_donors')} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input type="text" placeholder={T('search_donors')} value={searchTerm} onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }} />
           </div>
-          <select className="filter-select" value={filterFundraiser} onChange={e => setFilterFundraiser(e.target.value)} style={{ minWidth: '130px' }}>
+          <select className="filter-select" value={filterFundraiser} onChange={e => { setFilterFundraiser(e.target.value); setCurrentPage(1); }} style={{ minWidth: '130px' }}>
             <option value="">{T('all_fundraisers')}</option>
             {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
@@ -246,7 +251,7 @@ export const Donors: React.FC = () => {
             <thead>
               <tr>
                 <th style={{ width: '40px' }}>
-                  <input type="checkbox" checked={selectedIds.length === filteredDonors.length && filteredDonors.length > 0} onChange={handleSelectAll} />
+                  <input type="checkbox" checked={selectedIds.length === paginatedDonors.length && paginatedDonors.length > 0} onChange={handleSelectAll} />
                 </th>
                 <th>{T('name')}</th>
                 <th>{T('phone')}</th>
@@ -256,7 +261,7 @@ export const Donors: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredDonors.map(donor => (
+              {paginatedDonors.map(donor => (
                 <tr key={donor.id}
                   style={{ cursor: 'pointer', background: selectedDonorId === donor.id ? 'var(--navy-bg)' : '' }}
                   onClick={() => selectDonor(donor.id)}
@@ -291,12 +296,20 @@ export const Donors: React.FC = () => {
                   <td><ChevronRight size={16} style={{ color: 'var(--text-muted)' }} /></td>
                 </tr>
               ))}
-              {filteredDonors.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>{T('no_donors')}</td></tr>
+              {paginatedDonors.length === 0 && (
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>{T('no_donors')}</td></tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: '20px', gap: '16px' }}>
+            <button className="btn btn-secondary btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Previous</button>
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Page {currentPage} of {totalPages}</span>
+            <button className="btn btn-secondary btn-sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        )}
       </div>
 
       {/* RIGHT COLUMN: DONOR DETAILS PANEL */}
