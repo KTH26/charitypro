@@ -82,6 +82,7 @@ export interface Transaction {
   offsetAccountId?: string; // e.g. Category/Fundraiser Payroll (Revenue/Expense)
   fundraiserId?: string;
   category?: string; // Keeping for legacy string tags
+  sponsor?: string;
   notes?: string;
 }
 

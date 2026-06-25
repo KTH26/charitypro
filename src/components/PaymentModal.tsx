@@ -37,6 +37,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [sourceAccountId, setSourceAccountId] = useState('');
   const [offsetAccountId, setOffsetAccountId] = useState('');
   const [fundraiserId, setFundraiserId] = useState('');
+  const [sponsor, setSponsor] = useState('');
   const [notes, setNotes] = useState('');
   const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
   
@@ -116,6 +117,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       sourceAccountId,
       offsetAccountId,
       fundraiserId: fundraiserId || undefined,
+      sponsor: sponsor || undefined,
       notes: finalNotes,
     });
     setSuccess(true);
@@ -135,6 +137,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       sourceAccountId,
       offsetAccountId,
       fundraiserId: fundraiserId || undefined,
+      sponsor: sponsor || undefined,
       notes,
     });
     setSuccess(true);
@@ -383,7 +386,11 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                     </div>
                   </div>
 
-
+                  {/* Sponsor */}
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label><User size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Sponsor (optional)</label>
+                    <input type="text" value={sponsor} onChange={e => setSponsor(e.target.value)} placeholder="e.g. In memory of..." />
+                  </div>
 
                   {/* Notes */}
                   <div className="form-group" style={{ margin: 0 }}>

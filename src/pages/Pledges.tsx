@@ -69,6 +69,7 @@ export const Pledges: React.FC = () => {
                 <th>Donor</th>
                 <th>Amount</th>
                 <th>Category</th>
+                <th>Sponsor</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -81,12 +82,13 @@ export const Pledges: React.FC = () => {
                     <td style={{ fontWeight: 600 }}>{donor?.name || 'Unknown'}</td>
                     <td style={{ fontWeight: 700, color: 'var(--gold)' }}>${pledge.amount.toLocaleString()} {pledge.currency}</td>
                     <td style={{ fontSize: '0.9rem' }}>{pledge.category}</td>
+                    <td style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{pledge.sponsor || '—'}</td>
                     <td><span className="badge badge-info">Pledge / Owed</span></td>
                   </tr>
                 );
               })}
               {filteredPledges.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No pledges found.</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No pledges found.</td></tr>
               )}
             </tbody>
           </table>
