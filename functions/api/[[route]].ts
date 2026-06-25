@@ -43,6 +43,52 @@ app.post('/sync', async (c) => {
   }
 })
 
+app.get('/init-db', async (c) => {
+  try {
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS store_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id TEXT,
+        action TEXT,
+        payload TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    return c.json({ success: true, message: 'Real-time event table created successfully.' });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+app.get('/events', async (c) => {
+  try {
+    const since = parseInt(c.req.query('since') || '0', 10);
+    const results = await c.env.DB.prepare('SELECT id, client_id, action, payload FROM store_events WHERE id > ? ORDER BY id ASC LIMIT 500').bind(since).all();
+    return c.json({ success: true, events: results.results || [] });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+app.post('/events', async (c) => {
+  try {
+    const { clientId, action, payload } = await c.req.json();
+    if (!clientId || !action) return c.json({ success: false, error: 'Missing fields' }, 400);
+
+    const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    
+    // Chunk massive events if payload is too large (>500KB) to avoid D1 limits.
+    // In our case, the frontend will chunk bulkAddTransactions directly, so we just insert.
+    const result = await c.env.DB.prepare(
+      'INSERT INTO store_events (client_id, action, payload) VALUES (?, ?, ?) RETURNING id'
+    ).bind(clientId, action, payloadStr).first();
+    
+    return c.json({ success: true, id: result?.id });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
 // Plaid Integration
 // Set PLAID_ENV=development in Cloudflare dashboard / .dev.vars for real bank connections.
 

@@ -175,6 +175,37 @@ export const Settings: React.FC = () => {
             {isRtl ? 'איר קענט אויך בײַטן דעם סאָרטירן דירעקט אויפן מדוניים זייט' : 'You can also change the sort directly on the Donors page.'}
           </div>
         </div>
+
+        {/* Force Cloud Sync */}
+        <div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            <Globe size={16} /> {isRtl ? 'וואָלקן סינק (איינמאָל)' : 'Force Cloud Sync (One-Time)'}
+          </label>
+          <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem', flex: 1, lineHeight: 1.5 }}>
+              {isRtl ? 'ניצן דאָס בלויז איין מאָל צו דאַונלאָודן די פולע דאַטנבאַזע פֿון וואָלקן. דאָס וועט איבערשרײַבן דײַן לאָקאַלע דאַטן.' : 'Use this to manually download the full snapshot from the cloud. This will overwrite your local data!'}
+            </p>
+            <button className="btn btn-secondary" onClick={async () => {
+              if (window.confirm(isRtl ? 'דאָס וועט איבערשרײַבן דײַן לאָקאַלע דאַטן. ביסטו זיכער?' : 'Overwrite local data with cloud snapshot?')) {
+                try {
+                  const res = await fetch('/api/sync');
+                  if (!res.ok) throw new Error();
+                  const data = await res.json();
+                  if (data.value) {
+                    localStorage.setItem('charity-store', data.value);
+                    window.location.reload();
+                  } else {
+                    alert('No cloud data found.');
+                  }
+                } catch {
+                  alert('Sync failed.');
+                }
+              }
+            }} style={{ whiteSpace: 'nowrap', borderColor: '#ef4444', color: '#ef4444' }}>
+              <RefreshCw size={16} /> {isRtl ? 'ציען פֿון וואָלקן' : 'Pull from Cloud'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Google Sheets Sync */}

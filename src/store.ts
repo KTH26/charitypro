@@ -154,6 +154,8 @@ export interface AccountTransfer {
 export type DonorSortKey = 'lastName' | 'firstName' | 'hebLastName' | 'hebFirstName';
 
 interface AppState {
+  clientId: string;
+  lastEventId: number;
   isRtl: boolean;
   currency: 'CAD' | 'USD';
   exchangeRate: number;
@@ -329,6 +331,8 @@ const dualStorage: StateStorage = {
 export const useStore = create<AppState>()(
   persist(
     (set) => ({
+      clientId: Math.random().toString(36).substr(2, 9),
+      lastEventId: 0,
       isRtl: false,
       currency: 'CAD',
       exchangeRate: 1.35,
@@ -619,3 +623,61 @@ export const useStore = create<AppState>()(
     }
   )
 );
+
+export const isRemote = { current: false };
+
+const pushEvent = (action: string, args: any[]) => {
+  if (isRemote.current) return;
+  const state = useStore.getState();
+  fetch('/api/events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: state.clientId, action, payload: args })
+  }).catch(() => {});
+};
+
+export const applyRemoteEvent = (action: string, args: any[]) => {
+  isRemote.current = true;
+  const store = useStore.getState() as any;
+  if (typeof store[action] === 'function') {
+    store[action](...(Array.isArray(args) ? args : [args]));
+  }
+  isRemote.current = false;
+};
+
+// Wrap methods for Event Sourcing
+const methodsToWrap = [
+  'addDonor', 'editDonor', 'updateDonorNotes', 'addSponsorshipDay', 'removeSponsorshipDay', 'deleteDonors',
+  'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions',
+  'addRecurring', 'toggleRecurring',
+  'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
+  'addAccount', 'transferBetweenAccounts',
+  'addBill', 'editBill', 'markBillPaid', 'deleteBills',
+  'addTask', 'completeTask', 'deleteTask',
+  'matchBankTransaction'
+];
+
+const storeState = useStore.getState() as any;
+const overrides: any = {};
+
+methodsToWrap.forEach(method => {
+  if (typeof storeState[method] === 'function') {
+    const original = storeState[method];
+    overrides[method] = (...args: any[]) => {
+      if (!isRemote.current) {
+        if (method === 'bulkAddTransactions' && Array.isArray(args[0])) {
+          const txs = args[0];
+          for (let i = 0; i < txs.length; i += 500) {
+            pushEvent('bulkAddTransactions', [txs.slice(i, i + 500)]);
+          }
+        } else {
+          pushEvent(method, args);
+        }
+      }
+      return original(...args);
+    };
+  }
+});
+
+useStore.setState(overrides);
+

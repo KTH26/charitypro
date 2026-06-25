@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { SyncEngine } from './components/SyncEngine';
 import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
 import { Donors } from './pages/Donors';
@@ -25,6 +26,7 @@ import { SolaSync } from './pages/SolaSync';
 function App() {
   return (
     <BrowserRouter>
+      <SyncEngine />
       <Routes>
         <Route path="/" element={<Layout><Dashboard /></Layout>} />
         <Route path="/donors" element={<Layout><Donors /></Layout>} />
