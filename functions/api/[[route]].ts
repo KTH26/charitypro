@@ -24,63 +24,80 @@ app.post('/sync', async (c) => {
 // Set PLAID_ENV=development in Cloudflare dashboard / .dev.vars for real bank connections.
 
 app.post('/plaid/create_link_token', async (c) => {
-  const PLAID_ENV = c.env.PLAID_ENV || 'development';
-  const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+  try {
+    const PLAID_ENV = c.env.PLAID_ENV?.trim() || 'development';
+    const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
 
-  const reqBody = {
-    client_id: c.env.PLAID_CLIENT_ID,
-    secret: c.env.PLAID_SECRET,
-    client_name: "Charity App",
-    country_codes: ["US", "CA"],
-    language: "en",
-    user: { client_user_id: "user_1" },
-    products: ["transactions"]
-  };
+    const reqBody = {
+      client_id: c.env.PLAID_CLIENT_ID?.trim(),
+      secret: c.env.PLAID_SECRET?.trim(),
+      client_name: "Charity App",
+      country_codes: ["US", "CA"],
+      language: "en",
+      user: { client_user_id: "user_1" },
+      products: ["transactions"]
+    };
 
-  const res = await fetch(`${PLAID_URL}/link/token/create`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reqBody)
-  });
-  
-  const data = await res.json();
-  return c.json(data);
+    const res = await fetch(`${PLAID_URL}/link/token/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reqBody)
+    });
+    
+    if (!res.ok) {
+      const text = await res.text();
+      return c.json({ error: 'Plaid API error', status: res.status, details: text }, 400);
+    }
+
+    const data = await res.json();
+    return c.json(data);
+  } catch (err: any) {
+    return c.json({ error: 'Worker crash', message: err.message, stack: err.stack }, 500);
+  }
 });
 
 app.post('/plaid/exchange_public_token', async (c) => {
-  const PLAID_ENV = c.env.PLAID_ENV || 'development';
-  const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+  try {
+    const PLAID_ENV = c.env.PLAID_ENV?.trim() || 'development';
+    const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
 
-  const { public_token } = await c.req.json();
-  
-  const reqBody = {
-    client_id: c.env.PLAID_CLIENT_ID,
-    secret: c.env.PLAID_SECRET,
-    public_token
-  };
+    const { public_token } = await c.req.json();
+    
+    const reqBody = {
+      client_id: c.env.PLAID_CLIENT_ID?.trim(),
+      secret: c.env.PLAID_SECRET?.trim(),
+      public_token
+    };
 
-  const res = await fetch(`${PLAID_URL}/item/public_token/exchange`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reqBody)
-  });
-  
-  const data = await res.json();
-  // We store the access_token securely in the D1 database (id = 2)
-  if (data.access_token) {
-    await c.env.DB.prepare(
-      'INSERT INTO store (id, data) VALUES (2, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data'
-    ).bind(data.access_token).run();
+    const res = await fetch(`${PLAID_URL}/item/public_token/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reqBody)
+    });
+    
+    if (!res.ok) {
+      const text = await res.text();
+      return c.json({ error: 'Plaid API error', status: res.status, details: text }, 400);
+    }
+
+    const data = await res.json();
+    if (data.access_token) {
+      await c.env.DB.prepare(
+        'INSERT INTO store (id, data) VALUES (2, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data'
+      ).bind(data.access_token).run();
+    }
+
+    return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ error: 'Worker crash', message: err.message, stack: err.stack }, 500);
   }
-
-  return c.json({ success: true });
 });
 
 app.post('/plaid/transactions', async (c) => {
-  const PLAID_ENV = c.env.PLAID_ENV || 'development';
-  const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
-
   try {
+    const PLAID_ENV = c.env.PLAID_ENV?.trim() || 'development';
+    const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+
     const result = await c.env.DB.prepare('SELECT data FROM store WHERE id = 2').first();
     const access_token = result?.data as string;
 
@@ -91,8 +108,8 @@ app.post('/plaid/transactions', async (c) => {
     const endDate = new Date();
 
     const reqBody = {
-      client_id: c.env.PLAID_CLIENT_ID,
-      secret: c.env.PLAID_SECRET,
+      client_id: c.env.PLAID_CLIENT_ID?.trim(),
+      secret: c.env.PLAID_SECRET?.trim(),
       access_token,
       start_date: startDate.toISOString().split('T')[0],
       end_date: endDate.toISOString().split('T')[0]
@@ -104,10 +121,15 @@ app.post('/plaid/transactions', async (c) => {
       body: JSON.stringify(reqBody)
     });
     
+    if (!res.ok) {
+      const text = await res.text();
+      return c.json({ error: 'Plaid API error', status: res.status, details: text }, 400);
+    }
+
     const data = await res.json();
     return c.json(data);
   } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+    return c.json({ error: 'Worker crash', message: err.message, stack: err.stack }, 500);
   }
 });
 
