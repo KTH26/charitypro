@@ -6,12 +6,13 @@ import { BulkUploadModal } from '../components/BulkUploadModal';
 import { useT } from '../i18n';
 
 export const Pledges: React.FC = () => {
-  const { transactions, donors, isRtl } = useStore();
+  const { transactions, donors, isRtl, deleteTransactions } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [showPayment, setShowPayment] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const pledges = transactions.filter(t => t.type === 'recording').sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -30,6 +31,18 @@ export const Pledges: React.FC = () => {
     } else {
       alert("Please add a donor first.");
     }
+  };
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedIds(filteredPledges.map(p => p.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   return (
@@ -61,10 +74,25 @@ export const Pledges: React.FC = () => {
           </div>
         </div>
 
+        {selectedIds.length > 0 && (
+          <div style={{ background: 'var(--red-bg)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '12px 16px', borderRadius: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: 'var(--red)', fontWeight: 600 }}>{selectedIds.length} pledges selected</span>
+            <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
+              if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} pledges?`)) {
+                deleteTransactions(selectedIds);
+                setSelectedIds([]);
+              }
+            }}>Delete Selected</button>
+          </div>
+        )}
+
         <div className="table-container">
           <table>
             <thead>
               <tr>
+                <th style={{ width: '40px' }}>
+                  <input type="checkbox" checked={selectedIds.length === filteredPledges.length && filteredPledges.length > 0} onChange={handleSelectAll} />
+                </th>
                 <th>Date</th>
                 <th>Donor</th>
                 <th>Amount</th>
@@ -78,6 +106,9 @@ export const Pledges: React.FC = () => {
                 const donor = donors.find(d => d.id === pledge.donorId);
                 return (
                   <tr key={pledge.id}>
+                    <td>
+                      <input type="checkbox" checked={selectedIds.includes(pledge.id)} onChange={() => handleSelect(pledge.id)} />
+                    </td>
                     <td>{pledge.date}</td>
                     <td style={{ fontWeight: 600 }}>{donor?.name || 'Unknown'}</td>
                     <td style={{ fontWeight: 700, color: 'var(--gold)' }}>${pledge.amount.toLocaleString()} {pledge.currency}</td>
@@ -88,7 +119,7 @@ export const Pledges: React.FC = () => {
                 );
               })}
               {filteredPledges.length === 0 && (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No pledges found.</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No pledges found.</td></tr>
               )}
             </tbody>
           </table>

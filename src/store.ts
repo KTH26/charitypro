@@ -184,10 +184,14 @@ interface AppState {
   updateDonorNotes: (donorId: string, notes: string) => void;
   addSponsorshipDay: (donorId: string, day: Omit<SponsorshipDay, 'id'>) => void;
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
+  deleteDonors: (ids: string[]) => void;
 
+
+  
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
   editTransaction: (id: string, updates: Partial<Omit<Transaction, 'id'>>) => void;
+  deleteTransactions: (ids: string[]) => void;
 
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
   toggleRecurring: (id: string) => void;
@@ -202,6 +206,7 @@ interface AppState {
   addBill: (bill: Omit<Bill, 'id'>) => void;
   editBill: (id: string, updates: Partial<Omit<Bill, 'id'>>) => void;
   markBillPaid: (id: string, sourceAccountId?: string, offsetAccountId?: string) => void;
+  deleteBills: (ids: string[]) => void;
 
   addTask: (task: Omit<Task, 'id' | 'createdAt'>) => void;
   completeTask: (id: string) => void;
@@ -384,6 +389,12 @@ export const useStore = create<AppState>()(
           : d)
       })),
 
+      deleteDonors: (ids) => set(state => ({
+        donors: state.donors.filter(d => !ids.includes(d.id)),
+        transactions: state.transactions.filter(t => !ids.includes(t.donorId)),
+        recurringPayments: state.recurringPayments.filter(r => !ids.includes(r.donorId)),
+      })),
+
       addTransaction: (tx) => set((state) => {
         const newTx = { ...tx, id: uid() };
         const effectiveAmount = tx.amountCAD ?? tx.amount;
@@ -420,6 +431,10 @@ export const useStore = create<AppState>()(
 
       editTransaction: (id, updates) => set((state) => ({
         transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
+      })),
+
+      deleteTransactions: (ids) => set(state => ({
+        transactions: state.transactions.filter(t => !ids.includes(t.id))
       })),
 
       addRecurring: (rec) => set((state) => ({
@@ -462,8 +477,14 @@ export const useStore = create<AppState>()(
         bills: [...state.bills, { ...bill, id: uid() }]
       })),
 
+
+
       editBill: (id, updates) => set((state) => ({
         bills: state.bills.map(b => b.id === id ? { ...b, ...updates } : b)
+      })),
+
+      deleteBills: (ids) => set(state => ({
+        bills: state.bills.filter(b => !ids.includes(b.id))
       })),
 
       markBillPaid: (id, sourceAccountId, offsetAccountId) => set((state) => {

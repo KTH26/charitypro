@@ -8,7 +8,7 @@ import { useT } from '../i18n';
 const CATEGORIES = ['Ambulance Operations', 'Administration', 'Fundraising', 'Events', 'Equipment', 'Other'];
 
 export const Expenses: React.FC = () => {
-  const { isRtl, bills, addBill, markBillPaid, accounts, editBill } = useStore();
+  const { isRtl, bills, addBill, markBillPaid, accounts, editBill, deleteBills } = useStore();
   const T = useT(isRtl);
   const [showAdd, setShowAdd] = useState(false);
   const [confirmPay, setConfirmPay] = useState<string | null>(null);
@@ -16,6 +16,7 @@ export const Expenses: React.FC = () => {
   const [payOffsetId, setPayOffsetId] = useState<string>('');
   const [editBillData, setEditBillData] = useState<Bill | null>(null);
   const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: 'Ambulance Operations', status: 'pending' as 'pending' | 'urgent' });
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const location = useLocation();
 
   React.useEffect(() => {
@@ -32,6 +33,18 @@ export const Expenses: React.FC = () => {
     addBill({ vendor: form.vendor, amount: parseFloat(form.amount), dueDate: form.dueDate, status: form.status, category: form.category });
     setForm({ vendor: '', amount: '', dueDate: '', category: 'Ambulance Operations', status: 'pending' });
     setShowAdd(false);
+  };
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedIds(bills.map(b => b.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const activeBills = bills.filter(b => b.status !== 'paid');
@@ -68,17 +81,30 @@ export const Expenses: React.FC = () => {
         {/* Bills */}
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <div>
-              <h2 style={{ margin: '0 0 4px', fontSize: '1.15rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
-                {T('upcoming_bills')}
-              </h2>
-              <div style={{ color: 'var(--red)', fontWeight: 700, fontSize: '0.95rem' }}>
-                {T('total_due')}: ${totalDue.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <input type="checkbox" checked={selectedIds.length === bills.length && bills.length > 0} onChange={handleSelectAll} title="Select All" />
+              <div>
+                <h2 style={{ margin: '0 0 4px', fontSize: '1.15rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
+                  {T('upcoming_bills')}
+                </h2>
+                <div style={{ color: 'var(--red)', fontWeight: 700, fontSize: '0.95rem' }}>
+                  {T('total_due')}: ${totalDue.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+                </div>
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>
-              <Plus size={14} /> {T('add_bill')}
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {selectedIds.length > 0 && (
+                <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
+                  if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} bills?`)) {
+                    deleteBills(selectedIds);
+                    setSelectedIds([]);
+                  }
+                }}>Delete Selected ({selectedIds.length})</button>
+              )}
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>
+                <Plus size={14} /> {T('add_bill')}
+              </button>
+            </div>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -90,6 +116,7 @@ export const Expenses: React.FC = () => {
                 border: bill.status === 'urgent' ? '1px solid rgba(239,68,68,0.2)' : '1px solid var(--border)'
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <input type="checkbox" checked={selectedIds.includes(bill.id)} onChange={() => handleSelect(bill.id)} />
                   <Calendar size={18} style={{ color: bill.status === 'urgent' ? 'var(--red)' : 'var(--navy-muted)', flexShrink: 0 }} />
                   <div>
                     <div style={{ fontWeight: 700 }}>{bill.vendor}</div>
@@ -120,7 +147,10 @@ export const Expenses: React.FC = () => {
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>{T('recently_paid')}</div>
               {paidBills.map(bill => (
                 <div key={bill.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-light)', opacity: 0.6 }}>
-                  <div style={{ fontWeight: 600 }}>{bill.vendor}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <input type="checkbox" checked={selectedIds.includes(bill.id)} onChange={() => handleSelect(bill.id)} />
+                    <div style={{ fontWeight: 600 }}>{bill.vendor}</div>
+                  </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <span style={{ fontWeight: 700 }}>${bill.amount.toFixed(2)}</span>
                     <span className="badge badge-green">Paid</span>

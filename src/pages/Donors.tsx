@@ -21,12 +21,13 @@ export const Donors: React.FC = () => {
     donors, transactions, recurringPayments,
     updateDonorNotes, toggleRecurring, fundraisers, isRtl,
     googleSheetSyncUrl, setGoogleSheetSyncUrl, addDonor, editDonor,
-    donorSortBy, setDonorSortBy,
+    donorSortBy, setDonorSortBy, deleteDonors
   } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterFundraiser, setFilterFundraiser] = useState('');
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showPayment, setShowPayment] = useState(false);
   const [showAddDonor, setShowAddDonor] = useState(false);
   const [donorTab, setDonorTab] = useState<DonorTab>('overview');
@@ -73,6 +74,18 @@ export const Donors: React.FC = () => {
     setSelectedDonorId(id);
     setDonorTab('overview');
     setNotesDraft(d?.notes || '');
+  };
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedIds(filteredDonors.map(d => d.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const statusBadge = (type: string) => {
@@ -213,10 +226,28 @@ export const Donors: React.FC = () => {
           </select>
         </div>
 
+        {selectedIds.length > 0 && (
+          <div style={{ background: 'var(--red-bg)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '12px 16px', borderRadius: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: 'var(--red)', fontWeight: 600 }}>{selectedIds.length} donors selected</span>
+            <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
+              if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} donors and all their associated transactions/pledges?`)) {
+                deleteDonors(selectedIds);
+                setSelectedIds([]);
+                if (selectedDonorId && selectedIds.includes(selectedDonorId)) {
+                  setSelectedDonorId(null);
+                }
+              }
+            }}>Delete Selected</button>
+          </div>
+        )}
+
         <div className="table-container">
           <table>
             <thead>
               <tr>
+                <th style={{ width: '40px' }}>
+                  <input type="checkbox" checked={selectedIds.length === filteredDonors.length && filteredDonors.length > 0} onChange={handleSelectAll} />
+                </th>
                 <th>{T('name')}</th>
                 <th>{T('phone')}</th>
                 <th>{T('given')}</th>
@@ -230,6 +261,9 @@ export const Donors: React.FC = () => {
                   style={{ cursor: 'pointer', background: selectedDonorId === donor.id ? 'var(--navy-bg)' : '' }}
                   onClick={() => selectDonor(donor.id)}
                 >
+                  <td onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={selectedIds.includes(donor.id)} onChange={() => handleSelect(donor.id)} />
+                  </td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div className="member-avatar" style={{ width: '36px', height: '36px', fontSize: '0.85rem' }}>
