@@ -114,7 +114,7 @@ export const Donors: React.FC = () => {
               displayId,
               hebFirstName: row['ערשטע נאמען']?.toString().trim() || '',
               hebLastName: row['משפחה נאמען']?.toString().trim() || '',
-              preTitle: (row['title'] ?? row['Title'] ?? row[' title'])?.toString().trim() || '',
+              preTitle: (row['title'] ?? row['Title'] ?? row[' title'] ?? row['title '] ?? row['Title '] ?? row[' TITLE '])?.toString().trim() || '',
               title: row['טיטל']?.toString().trim() || '',
               postTitle: row['נאך טיטל']?.toString().trim() || '',
               doubleNames: row['דאפעלטע נעמען']?.toString().trim() || '',
