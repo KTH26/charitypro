@@ -27,6 +27,8 @@ export const BankFeed: React.FC = () => {
         const data = await res.json();
         if (data.link_token) {
           setLinkToken(data.link_token);
+        } else {
+          console.error('Plaid create_link_token error:', data);
         }
       } catch (err) {
         console.error('Failed to get link token', err);
@@ -41,6 +43,11 @@ export const BankFeed: React.FC = () => {
     try {
       const res = await fetch('/api/plaid/transactions', { method: 'POST' });
       const data = await res.json();
+      
+      if (data.error) {
+        console.error('Plaid transactions error:', data);
+      }
+      
       if (data.transactions) {
         // Map Plaid transactions to our feed format
         const mappedFeed = data.transactions.map((t: any) => ({
