@@ -26,8 +26,7 @@ app.post('/sync', async (c) => {
 const getPlaidUrl = (envVal?: string) => {
   const env = envVal?.trim().toLowerCase() || '';
   if (env.includes('production')) return 'https://production.plaid.com';
-  if (env.includes('sandbox')) return 'https://sandbox.plaid.com';
-  return 'https://development.plaid.com';
+  return 'https://sandbox.plaid.com'; // Development environment was deprecated in 2024
 };
 
 app.post('/plaid/create_link_token', async (c) => {
