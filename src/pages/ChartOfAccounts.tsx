@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { useStore } from '../store';
 import { Plus, X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { useT } from '../i18n';
+import { AddAccountModal } from '../components/AddAccountModal';
 
 export const ChartOfAccounts: React.FC = () => {
   const { accounts, transactions, bills, isRtl } = useStore();
   const T = useT(isRtl);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [showAddAccount, setShowAddAccount] = useState(false);
 
   const groupedAccounts = accounts.reduce((acc, account) => {
     if (!acc[account.type]) acc[account.type] = [];
@@ -55,7 +57,7 @@ export const ChartOfAccounts: React.FC = () => {
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'Outfit, sans-serif', fontWeight: 800, color: 'var(--navy)' }}>
             Chart of Accounts
           </h2>
-          <button className="btn btn-primary btn-sm">
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAddAccount(true)}>
             <Plus size={14} /> Add Account
           </button>
         </div>
@@ -183,6 +185,8 @@ export const ChartOfAccounts: React.FC = () => {
           </div>
         </div>
       )}
+
+      {showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} />}
     </div>
   );
 };
