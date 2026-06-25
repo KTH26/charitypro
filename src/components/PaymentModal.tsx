@@ -18,10 +18,17 @@ const FREQUENCIES = [
 type TabType = 'one_time' | 'recurring' | 'pledge';
 
 export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
-  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate, accounts } = useStore();
+  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate, accounts, solaApiKey } = useStore();
   const donor = donors.find(d => d.id === donorId);
   const [tab, setTab] = useState<TabType>('one_time');
   const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Card details
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExp, setCardExp] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
 
   // One-time / pledge form state
   const [amount, setAmount] = useState('');
@@ -53,20 +60,63 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
     return num * exchangeRate; // If rate is 1.35 (USD -> CAD), then USD -> CAD is * 1.35
   };
 
-  const handleOneTime = () => {
+  const handleOneTime = async () => {
     if (!amount || isNaN(+amount)) return;
+    setError('');
+
+    let finalNotes = notes;
+    let finalType = method === 'check' ? 'pending' : 'approved';
+
+    if (method === 'credit_card') {
+      if (!solaApiKey) {
+        setError('Sola API Key is missing. Please configure it in settings.');
+        return;
+      }
+      if (!cardNumber || !cardExp) {
+        setError('Please enter credit card details.');
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await fetch('/api/sola/charge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apiKey: solaApiKey,
+            amount: parseFloat(amount),
+            cardNum: cardNumber.replace(/\s/g, ''),
+            exp: cardExp.replace('/', ''),
+            cvv: cardCvv,
+            name: donor?.name
+          })
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.error || 'Payment declined.');
+          setLoading(false);
+          return;
+        }
+        finalNotes = finalNotes ? `${finalNotes} (Ref: ${data.ref})` : `Ref: ${data.ref}`;
+      } catch (err: any) {
+        setError('Network error processing card.');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+    }
+
     addTransaction({
       donorId,
       amount: parseFloat(amount),
       amountCAD: getAmountCAD(amount),
       date: txDate,
-      type: method === 'check' ? 'pending' : 'approved',
+      type: finalType as any,
       method,
       currency: txCurrency,
       sourceAccountId,
       offsetAccountId,
       fundraiserId: fundraiserId || undefined,
-      notes,
+      notes: finalNotes,
     });
     setSuccess(true);
     setTimeout(onClose, 1800);
@@ -91,10 +141,52 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
     setTimeout(onClose, 1800);
   };
 
-  const handleRecurring = () => {
+  const handleRecurring = async () => {
     if (!recAmount || isNaN(+recAmount)) return;
+    setError('');
+
+    let finalNotes = '';
+
+    if (recMethod === 'credit_card') {
+      if (!solaApiKey) {
+        setError('Sola API Key is missing. Please configure it in settings.');
+        return;
+      }
+      if (!cardNumber || !cardExp) {
+        setError('Please enter credit card details.');
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await fetch('/api/sola/recurring', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apiKey: solaApiKey,
+            amount: parseFloat(recAmount),
+            cardNum: cardNumber.replace(/\s/g, ''),
+            exp: cardExp.replace('/', ''),
+            name: donor?.name,
+            schedule: recFrequency,
+            nextDate: recStartDate.replace(/-/g, '')
+          })
+        });
+        const data = await res.json();
+        if (!data.success) {
+          setError(data.error || 'Failed to setup recurring schedule in Sola.');
+          setLoading(false);
+          return;
+        }
+        finalNotes = `(Sola Ref: ${data.ref})`;
+      } catch (err: any) {
+        setError('Network error processing recurring setup.');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+    }
     
-    // Add the recurring schedule record
+    // Add the recurring schedule record locally
     addRecurring({
       donorId,
       amount: parseFloat(recAmount),
@@ -119,7 +211,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
         type: 'pending', // Always pending so it doesn't affect balance until approved via Sola
         method: recMethod,
         currency: recCurrency,
-        notes: `Installment ${i + 1} of ${installments}`,
+        notes: `Installment ${i + 1} of ${installments} ${finalNotes}`,
       });
 
       // Increment date based on frequency
@@ -179,6 +271,12 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
               ))}
             </div>
 
+            {error && (
+              <div style={{ margin: '20px 40px 0', padding: '12px', background: 'var(--red-bg)', color: 'var(--red)', borderRadius: '8px', border: '1px solid var(--red)', fontSize: '0.9rem' }}>
+                {error}
+              </div>
+            )}
+
             <div className="modal-body">
               {(tab === 'one_time' || tab === 'pledge') && (
                 <div style={{ display: 'grid', gap: '20px' }}>
@@ -237,16 +335,16 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                     <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
                       <div className="form-group" style={{ margin: '0 0 12px 0' }}>
                         <label>Card Number</label>
-                        <input type="text" placeholder="0000 0000 0000 0000" maxLength={19} />
+                        <input type="text" placeholder="0000 0000 0000 0000" maxLength={19} value={cardNumber} onChange={e => setCardNumber(e.target.value)} />
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                         <div className="form-group" style={{ margin: 0 }}>
                           <label>Expiry (MM/YY)</label>
-                          <input type="text" placeholder="MM/YY" maxLength={5} />
+                          <input type="text" placeholder="MM/YY" maxLength={5} value={cardExp} onChange={e => setCardExp(e.target.value)} />
                         </div>
                         <div className="form-group" style={{ margin: 0 }}>
                           <label>CVV</label>
-                          <input type="text" placeholder="123" maxLength={4} />
+                          <input type="text" placeholder="123" maxLength={4} value={cardCvv} onChange={e => setCardCvv(e.target.value)} />
                         </div>
                       </div>
                     </div>
@@ -354,16 +452,16 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                     <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
                       <div className="form-group" style={{ margin: '0 0 12px 0' }}>
                         <label>Card Number</label>
-                        <input type="text" placeholder="0000 0000 0000 0000" maxLength={19} />
+                        <input type="text" placeholder="0000 0000 0000 0000" maxLength={19} value={cardNumber} onChange={e => setCardNumber(e.target.value)} />
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                         <div className="form-group" style={{ margin: 0 }}>
                           <label>Expiry (MM/YY)</label>
-                          <input type="text" placeholder="MM/YY" maxLength={5} />
+                          <input type="text" placeholder="MM/YY" maxLength={5} value={cardExp} onChange={e => setCardExp(e.target.value)} />
                         </div>
                         <div className="form-group" style={{ margin: 0 }}>
                           <label>CVV</label>
-                          <input type="text" placeholder="123" maxLength={4} />
+                          <input type="text" placeholder="123" maxLength={4} value={cardCvv} onChange={e => setCardCvv(e.target.value)} />
                         </div>
                       </div>
                     </div>
@@ -381,10 +479,10 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-              {tab === 'one_time' && <button className="btn btn-primary" onClick={handleOneTime} disabled={!amount}>✅ Process Payment</button>}
-              {tab === 'pledge' && <button className="btn btn-primary" onClick={handlePledge} disabled={!amount} style={{ background: 'linear-gradient(135deg, var(--gold-light), var(--gold))' }}>📋 Record Pledge</button>}
-              {tab === 'recurring' && <button className="btn btn-primary" onClick={handleRecurring} disabled={!recAmount}>🔁 Activate Recurring</button>}
+              <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+              {tab === 'one_time' && <button className="btn btn-primary" onClick={handleOneTime} disabled={!amount || loading}>{loading ? 'Processing...' : '✅ Process Payment'}</button>}
+              {tab === 'pledge' && <button className="btn btn-primary" onClick={handlePledge} disabled={!amount || loading} style={{ background: 'linear-gradient(135deg, var(--gold-light), var(--gold))' }}>📋 Record Pledge</button>}
+              {tab === 'recurring' && <button className="btn btn-primary" onClick={handleRecurring} disabled={!recAmount || loading}>{loading ? 'Processing...' : '🔁 Activate Recurring'}</button>}
             </div>
           </>
         )}
