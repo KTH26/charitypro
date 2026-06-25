@@ -189,6 +189,7 @@ interface AppState {
 
   
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
+  bulkAddTransactions: (txs: Omit<Transaction, 'id'>[]) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
   editTransaction: (id: string, updates: Partial<Omit<Transaction, 'id'>>) => void;
   deleteTransactions: (ids: string[]) => void;
@@ -423,6 +424,86 @@ export const useStore = create<AppState>()(
           : state.fundraisers;
           
         return { transactions: [newTx, ...state.transactions], donors: updatedDonors, accounts: updatedAccounts, fundraisers: updatedFundraisers };
+      }),
+
+      bulkAddTransactions: (txs) => set((state) => {
+        const newTxs = txs.map(tx => ({ ...tx, id: uid() }));
+        
+        let updatedDonors = [...state.donors];
+        let updatedAccounts = [...state.accounts];
+        let updatedFundraisers = [...state.fundraisers];
+        
+        // Maps to accumulate changes and apply them efficiently
+        const donorUpdates = new Map<string, { totalGiven: number, balanceOwed: number }>();
+        const accountUpdates = new Map<string, number>();
+        const fundraiserUpdates = new Map<string, number>();
+
+        for (const tx of txs) {
+          const effectiveAmount = tx.amountCAD ?? tx.amount;
+          
+          // Accumulate donor updates
+          const dUpdate = donorUpdates.get(tx.donorId) || { totalGiven: 0, balanceOwed: 0 };
+          if (tx.type === 'approved') dUpdate.totalGiven += effectiveAmount;
+          if (tx.type === 'recording') dUpdate.balanceOwed -= effectiveAmount; // We will adjust the base later
+          donorUpdates.set(tx.donorId, dUpdate);
+
+          // Accumulate account updates
+          if (tx.type === 'approved') {
+            const amountToAdd = tx.amount; // Simplify since this is batch processing. (The original code had a bug where it just checked if a.currency === CAD and tx.currency === USD, but in bulk it's better to just add).
+            // Actually, wait, let's keep exact same logic as original
+            
+            if (tx.sourceAccountId) {
+              const acc = updatedAccounts.find(a => a.id === tx.sourceAccountId);
+              if (acc) {
+                const add = (acc.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
+                accountUpdates.set(tx.sourceAccountId, (accountUpdates.get(tx.sourceAccountId) || 0) + add);
+              }
+            }
+            if (tx.offsetAccountId) {
+              const acc = updatedAccounts.find(a => a.id === tx.offsetAccountId);
+              if (acc) {
+                const add = (acc.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
+                accountUpdates.set(tx.offsetAccountId, (accountUpdates.get(tx.offsetAccountId) || 0) + add);
+              }
+            }
+          }
+
+          // Accumulate fundraiser updates
+          if (tx.fundraiserId && tx.type === 'approved') {
+            const f = updatedFundraisers.find(f => f.id === tx.fundraiserId);
+            if (f) {
+               fundraiserUpdates.set(tx.fundraiserId, (fundraiserUpdates.get(tx.fundraiserId) || 0) + (tx.amount * f.percentage / 100));
+            }
+          }
+        }
+
+        // Apply accumulations
+        updatedDonors = updatedDonors.map(d => {
+          if (!donorUpdates.has(d.id)) return d;
+          const updates = donorUpdates.get(d.id)!;
+          return {
+            ...d,
+            totalGiven: d.totalGiven + updates.totalGiven,
+            balanceOwed: Math.max(0, d.balanceOwed + updates.balanceOwed) // balanceOwed updates are negative for payments
+          };
+        });
+
+        updatedAccounts = updatedAccounts.map(a => {
+          if (!accountUpdates.has(a.id)) return a;
+          return { ...a, balance: a.balance + accountUpdates.get(a.id)! };
+        });
+
+        updatedFundraisers = updatedFundraisers.map(f => {
+          if (!fundraiserUpdates.has(f.id)) return f;
+          return { ...f, balanceOwed: f.balanceOwed + fundraiserUpdates.get(f.id)! };
+        });
+
+        return {
+          transactions: [...newTxs, ...state.transactions],
+          donors: updatedDonors,
+          accounts: updatedAccounts,
+          fundraisers: updatedFundraisers
+        };
       }),
 
       updateTransaction: (id, updates) => set((state) => ({

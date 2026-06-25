@@ -8,7 +8,7 @@ interface Props {
 }
 
 export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
-  const { donors, addTransaction, addDonor } = useStore();
+  const { donors, bulkAddTransactions, addDonor } = useStore();
   const [dataType, setDataType] = useState<'donors' | 'transactions' | 'expenses' | 'pledges'>('donors');
   const [isDragging, setIsDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -102,6 +102,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
     // Now process transactions
     setTimeout(() => {
       const currentDonors = useStore.getState().donors;
+      const transactionsToAdd: any[] = [];
       
       allToProcess.forEach(item => {
         let finalDonorId = item.donorId;
@@ -120,7 +121,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
                 parsedDate = d.toISOString().split('T')[0];
               }
             }
-            addTransaction({
+            transactionsToAdd.push({
               donorId: finalDonorId,
               amount: amount,
               date: parsedDate,
@@ -134,6 +135,10 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
           }
         }
       });
+
+      if (transactionsToAdd.length > 0) {
+        bulkAddTransactions(transactionsToAdd);
+      }
 
       setStep('success');
       setTimeout(onClose, 2000);
