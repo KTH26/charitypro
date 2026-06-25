@@ -9,18 +9,18 @@ export const Transactions: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [filterYear, setFilterYear] = useState('All');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [filterMethod, setFilterMethod] = useState('');
+  const [filterType, setFilterType] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 50;
 
-  const years = useMemo(() => {
-    const y = new Set<string>();
-    transactions.forEach(t => y.add(t.date.substring(0, 4)));
-    return Array.from(y).sort((a, b) => b.localeCompare(a));
-  }, [transactions]);
-
   const filteredTransactions = transactions.filter(t => {
-    if (filterYear !== 'All' && !t.date.startsWith(filterYear)) return false;
+    if (fromDate && t.date < fromDate) return false;
+    if (toDate && t.date > toDate) return false;
+    if (filterMethod && t.method !== filterMethod) return false;
+    if (filterType && t.type !== filterType) return false;
     
     const matchSearch = t.notes?.toLowerCase().includes(searchTerm.toLowerCase()) || t.category?.toLowerCase().includes(searchTerm.toLowerCase()) || t.amount.toString().includes(searchTerm);
     const matchAccount = filterAccount ? (t.sourceAccountId === filterAccount || t.offsetAccountId === filterAccount) : true;
@@ -58,14 +58,32 @@ export const Transactions: React.FC = () => {
             <Search className="search-icon" size={18} />
             <input type="text" placeholder="Search transactions..." value={searchTerm} onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }} />
           </div>
-          <select className="filter-select" value={filterAccount} onChange={e => { setFilterAccount(e.target.value); setCurrentPage(1); }} style={{ minWidth: '200px' }}>
+          <select className="filter-select" value={filterAccount} onChange={e => { setFilterAccount(e.target.value); setCurrentPage(1); }} style={{ minWidth: '150px' }}>
             <option value="">All Accounts</option>
             {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
-          <select className="filter-select" value={filterYear} onChange={e => { setFilterYear(e.target.value); setCurrentPage(1); }}>
-            <option value="All">All Years</option>
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          <select className="filter-select" value={filterMethod} onChange={e => { setFilterMethod(e.target.value); setCurrentPage(1); }}>
+            <option value="">All Methods</option>
+            <option value="credit_card">Credit Card</option>
+            <option value="check">Check</option>
+            <option value="cash">Cash</option>
+            <option value="e_transfer">E-Transfer</option>
           </select>
+          <select className="filter-select" value={filterType} onChange={e => { setFilterType(e.target.value); setCurrentPage(1); }}>
+            <option value="">All Types</option>
+            <option value="approved">Approved</option>
+            <option value="pending">Pending</option>
+            <option value="declined">Declined</option>
+            <option value="recording">Pledge (Recording)</option>
+          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>From:</span>
+            <input type="date" className="filter-select" value={fromDate} onChange={e => { setFromDate(e.target.value); setCurrentPage(1); }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>To:</span>
+            <input type="date" className="filter-select" value={toDate} onChange={e => { setToDate(e.target.value); setCurrentPage(1); }} />
+          </div>
         </div>
 
         {selectedIds.length > 0 && (
