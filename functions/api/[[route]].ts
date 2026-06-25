@@ -23,10 +23,16 @@ app.post('/sync', async (c) => {
 // Plaid Integration
 // Set PLAID_ENV=development in Cloudflare dashboard / .dev.vars for real bank connections.
 
+const getPlaidUrl = (envVal?: string) => {
+  let env = envVal?.trim().toLowerCase() || 'development';
+  // If the user accidentally pasted the full URL, clean it up:
+  env = env.replace('https://', '').replace('.plaid.com', '').replace('/', '');
+  return `https://${env}.plaid.com`;
+};
+
 app.post('/plaid/create_link_token', async (c) => {
   try {
-    const PLAID_ENV = c.env.PLAID_ENV?.trim() || 'development';
-    const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+    const PLAID_URL = getPlaidUrl(c.env.PLAID_ENV);
 
     const reqBody = {
       client_id: c.env.PLAID_CLIENT_ID?.trim(),
@@ -58,8 +64,7 @@ app.post('/plaid/create_link_token', async (c) => {
 
 app.post('/plaid/exchange_public_token', async (c) => {
   try {
-    const PLAID_ENV = c.env.PLAID_ENV?.trim() || 'development';
-    const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+    const PLAID_URL = getPlaidUrl(c.env.PLAID_ENV);
 
     const { public_token } = await c.req.json();
     
@@ -95,8 +100,7 @@ app.post('/plaid/exchange_public_token', async (c) => {
 
 app.post('/plaid/transactions', async (c) => {
   try {
-    const PLAID_ENV = c.env.PLAID_ENV?.trim() || 'development';
-    const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+    const PLAID_URL = getPlaidUrl(c.env.PLAID_ENV);
 
     const result = await c.env.DB.prepare('SELECT data FROM store WHERE id = 2').first();
     const access_token = result?.data as string;
