@@ -1,0 +1,8 @@
+name = "charity-app"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-03-20"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "charity-db"
+database_id = "210266c7-283d-4410-b4b3-33ad43d2131e"
