@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { handle } from 'hono/cloudflare-pages'
 
-const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string } }>().basePath('/api')
+const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string } }>().basePath('/api')
 
 app.get('/sync', async (c) => {
   try {
@@ -21,10 +21,12 @@ app.post('/sync', async (c) => {
 })
 
 // Plaid Integration
-const PLAID_ENV = 'sandbox'; // The user provided a Sandbox secret
-const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+// Set PLAID_ENV=development in Cloudflare dashboard / .dev.vars for real bank connections.
 
 app.post('/plaid/create_link_token', async (c) => {
+  const PLAID_ENV = c.env.PLAID_ENV || 'development';
+  const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+
   const reqBody = {
     client_id: c.env.PLAID_CLIENT_ID,
     secret: c.env.PLAID_SECRET,
@@ -46,6 +48,9 @@ app.post('/plaid/create_link_token', async (c) => {
 });
 
 app.post('/plaid/exchange_public_token', async (c) => {
+  const PLAID_ENV = c.env.PLAID_ENV || 'development';
+  const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+
   const { public_token } = await c.req.json();
   
   const reqBody = {
@@ -72,6 +77,9 @@ app.post('/plaid/exchange_public_token', async (c) => {
 });
 
 app.post('/plaid/transactions', async (c) => {
+  const PLAID_ENV = c.env.PLAID_ENV || 'development';
+  const PLAID_URL = `https://${PLAID_ENV}.plaid.com`;
+
   try {
     const result = await c.env.DB.prepare('SELECT data FROM store WHERE id = 2').first();
     const access_token = result?.data as string;
