@@ -157,6 +157,8 @@ export const Donors: React.FC = () => {
           });
           if (upserts.length > 0) {
             useStore.getState().bulkUpsertDonors(upserts);
+          } else {
+            alert("No donors were found in the link you provided. Please make sure the link ends with 'pub?output=csv' and that your sheet has a 'CODE' column.");
           }
           setSyncing(false);
         },
