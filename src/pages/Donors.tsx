@@ -116,12 +116,11 @@ export const Donors: React.FC = () => {
         skipEmptyLines: true,
         complete: (results) => {
           const data = results.data as any[];
+          const upserts: any[] = [];
           data.forEach(row => {
             const displayId = row['CODE']?.toString().trim();
             if (!displayId) return;
 
-            const existing = donors.find(d => d.displayId === displayId);
-            
             const donorUpdates = {
               firstName: row['HID First name']?.toString().trim() || row[' title ערשטע נאמען']?.toString().trim() || row['HH Given Names']?.toString().trim() || '',
               lastName: row['Last name']?.toString().trim() || row['משפחה נאמען']?.toString().trim() || row['HH Surname']?.toString().trim() || '',
@@ -154,13 +153,11 @@ export const Donors: React.FC = () => {
               addrPostalCode: row['Postel Code']?.toString().trim() || '',
               addrLandlord: row['Landlord']?.toString().trim() || '',
             };
-
-            if (existing) {
-              editDonor(existing.id, donorUpdates);
-            } else {
-              addDonor(donorUpdates);
-            }
+            upserts.push(donorUpdates);
           });
+          if (upserts.length > 0) {
+            useStore.getState().bulkUpsertDonors(upserts);
+          }
           setSyncing(false);
         },
         error: (err: any) => {

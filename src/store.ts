@@ -187,8 +187,7 @@ interface AppState {
   addSponsorshipDay: (donorId: string, day: Omit<SponsorshipDay, 'id'>) => void;
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
   deleteDonors: (ids: string[]) => void;
-
-
+  bulkUpsertDonors: (donors: any[]) => void;
   
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
   bulkAddTransactions: (txs: Omit<Transaction, 'id'>[]) => void;
@@ -399,6 +398,26 @@ export const useStore = create<AppState>()(
         transactions: state.transactions.filter(t => !ids.includes(t.donorId)),
         recurringPayments: state.recurringPayments.filter(r => !ids.includes(r.donorId)),
       })),
+
+      bulkUpsertDonors: (donorsArray) => set(state => {
+        let updatedDonors = [...state.donors];
+        let nextNum = 1001 + state.donors.length;
+        
+        for (const d of donorsArray) {
+          const existingIndex = updatedDonors.findIndex(x => x.displayId === d.displayId);
+          if (existingIndex !== -1) {
+             const oldD = updatedDonors[existingIndex];
+             const newD = { ...oldD, ...d };
+             newD.name = `${newD.firstName} ${newD.lastName}`.trim();
+             updatedDonors[existingIndex] = newD;
+          } else {
+             const displayId = d.displayId || `D-${nextNum++}`;
+             const name = `${d.firstName} ${d.lastName}`.trim();
+             updatedDonors.push({ ...d, id: Math.random().toString(), displayId, name, totalGiven: 0, balanceOwed: 0, cards: [], sponsorshipDays: [] });
+          }
+        }
+        return { donors: updatedDonors };
+      }),
 
       addTransaction: (tx) => set((state) => {
         const newTx = { ...tx, id: uid() };
@@ -648,6 +667,7 @@ export const applyRemoteEvent = (action: string, args: any[]) => {
 // Wrap methods for Event Sourcing
 const methodsToWrap = [
   'addDonor', 'editDonor', 'updateDonorNotes', 'addSponsorshipDay', 'removeSponsorshipDay', 'deleteDonors',
+  'bulkUpsertDonors',
   'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions',
   'addRecurring', 'toggleRecurring',
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
@@ -669,6 +689,11 @@ methodsToWrap.forEach(method => {
           const txs = args[0];
           for (let i = 0; i < txs.length; i += 500) {
             pushEvent('bulkAddTransactions', [txs.slice(i, i + 500)]);
+          }
+        } else if (method === 'bulkUpsertDonors' && Array.isArray(args[0])) {
+          const donorsArr = args[0];
+          for (let i = 0; i < donorsArr.length; i += 500) {
+            pushEvent('bulkUpsertDonors', [donorsArr.slice(i, i + 500)]);
           }
         } else {
           pushEvent(method, args);
