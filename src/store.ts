@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { StateStorage } from 'zustand/middleware';
+import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 
 export interface Donor {
   id: string;
@@ -291,9 +292,16 @@ const LOCAL_KEY = 'charity-store';
  */
 const dualStorage: StateStorage = {
   getItem: async (name): Promise<string | null> => {
-    // 1. Try localStorage first — instant, synchronous-like
-    const local = localStorage.getItem(name);
+    // 1. Try IndexedDB first — supports gigabytes of data natively
+    const local = await idbGet(name);
     if (local) return local;
+
+    // Fallback to old localStorage for seamless migration
+    const legacyLocal = localStorage.getItem(name);
+    if (legacyLocal) {
+      await idbSet(name, legacyLocal); // Migrate it
+      return legacyLocal;
+    }
 
     // 2. No local data → first-ever load → pull from cloud
     try {
@@ -301,8 +309,8 @@ const dualStorage: StateStorage = {
       if (!res.ok) return null;
       const data = await res.json();
       if (data.value) {
-        // Seed localStorage so the next reload is instant
-        localStorage.setItem(name, data.value);
+        // Seed IndexedDB so the next reload is instant
+        await idbSet(name, data.value);
       }
       return data.value ?? null;
     } catch (e) {
@@ -311,8 +319,8 @@ const dualStorage: StateStorage = {
   },
 
   setItem: async (name, value): Promise<void> => {
-    // Always write to localStorage immediately (synchronous, never fails)
-    localStorage.setItem(name, value);
+    // Always write to IndexedDB immediately (supports massive data sizes)
+    await idbSet(name, value);
 
     // Also push to cloud in the background (don't await — never block the UI)
     fetch('/api/sync', {
@@ -323,7 +331,8 @@ const dualStorage: StateStorage = {
   },
 
   removeItem: async (name): Promise<void> => {
-    localStorage.removeItem(name);
+    await idbDel(name);
+    localStorage.removeItem(name); // Clean up legacy
   },
 };
 
