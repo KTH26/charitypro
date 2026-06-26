@@ -186,9 +186,16 @@ export const Settings: React.FC = () => {
               {isRtl ? 'ניצן דאָס בלויז איין מאָל צו דאַונלאָודן די פולע דאַטנבאַזע פֿון וואָלקן. דאָס וועט איבערשרײַבן דײַן לאָקאַלע דאַטן.' : 'Use this to manually download the full snapshot from the cloud. This will overwrite your local data!'}
             </p>
             <button className="btn btn-secondary" onClick={async () => {
-              if (window.confirm(isRtl ? 'דאָס וועט איבערשרײַבן דײַן לאָקאַלע דאַטן. ביסטו זיכער?' : 'Overwrite local data with cloud snapshot?')) {
-                try {
-                  const res = await fetch('/api/sync');
+              const totalLocal = useStore.getState().donors.length + useStore.getState().transactions.length;
+              if (totalLocal > 5) {
+                const check = window.prompt(isRtl ? "ווארענונג: איר האט שוין לאקאלע דאטן. טייפט 'OVERWRITE' צו מעקן אייערע דאטן און נעמען פונעם קלאוד." : "WARNING: You already have local data! Pulling from the cloud will DELETE your local data and replace it with the cloud backup. If you are absolutely sure, type 'OVERWRITE' to proceed:");
+                if (check !== 'OVERWRITE') return;
+              } else {
+                if (!window.confirm(isRtl ? 'דאָס וועט איבערשרײַבן דײַן לאָקאַלע דאַטן. ביסטו זיכער?' : 'Overwrite local data with cloud snapshot?')) return;
+              }
+              
+              try {
+                const res = await fetch('/api/sync');
                   if (!res.ok) throw new Error();
                   const data = await res.json();
                   if (data.value) {
@@ -197,9 +204,8 @@ export const Settings: React.FC = () => {
                   } else {
                     alert('No cloud data found.');
                   }
-                } catch {
-                  alert('Sync failed.');
-                }
+              } catch {
+                alert('Sync failed.');
               }
             }} style={{ whiteSpace: 'nowrap', borderColor: '#ef4444', color: '#ef4444' }}>
               <RefreshCw size={16} /> {isRtl ? 'ציען פֿון וואָלקן' : 'Pull from Cloud'}
