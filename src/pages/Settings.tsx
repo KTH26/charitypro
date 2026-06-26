@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useStore, type DonorSortKey } from '../store';
-import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X } from 'lucide-react';
+import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
@@ -209,6 +209,43 @@ export const Settings: React.FC = () => {
               }
             }} style={{ whiteSpace: 'nowrap', borderColor: '#ef4444', color: '#ef4444' }}>
               <RefreshCw size={16} /> {isRtl ? 'ציען פֿון וואָלקן' : 'Pull from Cloud'}
+            </button>
+          </div>
+        </div>
+
+        {/* Download Local Backup */}
+        <div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            <Download size={16} /> {isRtl ? 'אראפקאפיע באַקאַפּ' : 'Download Offline Backup'}
+          </label>
+          <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem', flex: 1, lineHeight: 1.5 }}>
+              {isRtl 
+                ? 'אראפקאפיע א קאפיע פון דיין גאנצע דאַטאַבייס (דאָנאָרס, פיימענטס, און סעטטינגס) ווי א פייל צו דיין קאָמפּיוטער. פערפעקט פאר מאַכן זיכערהייט קאפיעס.' 
+                : 'Download a complete copy of your entire database (donors, payments, and settings) as a file to your computer for safe keeping.'}
+            </p>
+            <button className="btn btn-primary" onClick={() => {
+              const state = useStore.getState();
+              // Create a safe copy of the state without non-serializable elements
+              const backup = {
+                donors: state.donors,
+                transactions: state.transactions,
+                accounts: state.accounts,
+                fundraisers: state.fundraisers,
+                recurringSchedules: state.recurringSchedules,
+                currency: state.currency,
+                exchangeRate: state.exchangeRate,
+                isRtl: state.isRtl
+              };
+              const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 2));
+              const downloadAnchorNode = document.createElement('a');
+              downloadAnchorNode.setAttribute("href", dataStr);
+              downloadAnchorNode.setAttribute("download", `charity_backup_${new Date().toISOString().split('T')[0]}.json`);
+              document.body.appendChild(downloadAnchorNode);
+              downloadAnchorNode.click();
+              downloadAnchorNode.remove();
+            }} style={{ whiteSpace: 'nowrap' }}>
+              <Download size={16} /> {isRtl ? 'סעיוו באַקאַפּ' : 'Save Backup File'}
             </button>
           </div>
         </div>
