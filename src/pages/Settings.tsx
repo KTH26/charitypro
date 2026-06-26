@@ -232,7 +232,7 @@ export const Settings: React.FC = () => {
                 transactions: state.transactions,
                 accounts: state.accounts,
                 fundraisers: state.fundraisers,
-                recurringSchedules: state.recurringSchedules,
+                recurringPayments: state.recurringPayments,
                 currency: state.currency,
                 exchangeRate: state.exchangeRate,
                 isRtl: state.isRtl
