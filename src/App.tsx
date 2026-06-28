@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SyncEngine } from './components/SyncEngine';
 import { Layout } from './components/Layout';
@@ -25,6 +25,21 @@ import { SolaSync } from './pages/SolaSync';
 import { Payroll } from './pages/Payroll';
 
 function App() {
+  const [hasHydrated, setHasHydrated] = useState(false);
+
+  useEffect(() => {
+    // Zustand persist exports .persist object on the store hook
+    import('./store').then(({ useStore }) => {
+      const unsub = useStore.persist.onFinishHydration(() => setHasHydrated(true));
+      setHasHydrated(useStore.persist.hasHydrated());
+      return unsub;
+    });
+  }, []);
+
+  if (!hasHydrated) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--bg-app)' }}><div className="loader" style={{ width: '40px', height: '40px', border: '4px solid var(--border)', borderTopColor: 'var(--navy)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}><style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style></div></div>;
+  }
+
   return (
     <BrowserRouter>
       <SyncEngine />
