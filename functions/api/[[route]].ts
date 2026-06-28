@@ -24,17 +24,20 @@ app.post('/sync', async (c) => {
     const { value } = await c.req.json()
     if (!value) return c.json({ success: true })
 
-    const chunkSize = 500000;
+    const chunkSize = 200000; // ~200KB characters to stay well under D1 limits
     const chunks = [];
     for (let i = 0; i < value.length; i += chunkSize) {
       chunks.push(value.slice(i, i + chunkSize));
     }
 
-    await c.env.DB.prepare('DELETE FROM store WHERE id >= 1000').run();
+    const stmts = [];
+    stmts.push(c.env.DB.prepare('DELETE FROM store WHERE id >= 1000'));
     
     for (let i = 0; i < chunks.length; i++) {
-      await c.env.DB.prepare('INSERT INTO store (id, data) VALUES (?, ?)').bind(1000 + i, chunks[i]).run();
+      stmts.push(c.env.DB.prepare('INSERT INTO store (id, data) VALUES (?, ?)').bind(1000 + i, chunks[i]));
     }
+
+    await c.env.DB.batch(stmts);
 
     return c.json({ success: true })
   } catch (err: any) {
