@@ -134,7 +134,8 @@ app.post('/plaid/exchange_public_token', async (c) => {
   try {
     const PLAID_URL = getPlaidUrl(c.env.PLAID_ENV);
 
-    const { public_token } = await c.req.json();
+    const { public_token, accountId } = await c.req.json();
+    if (!accountId) return c.json({ error: 'accountId is required' }, 400);
     
     const reqBody = {
       client_id: c.env.PLAID_CLIENT_ID?.trim(),
@@ -156,8 +157,8 @@ app.post('/plaid/exchange_public_token', async (c) => {
     const data = await res.json();
     if (data.access_token) {
       await c.env.DB.prepare(
-        'INSERT INTO store (id, data) VALUES (2, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data'
-      ).bind(data.access_token).run();
+        'INSERT INTO store (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data'
+      ).bind(`plaid_${accountId}`, data.access_token).run();
     }
 
     return c.json({ success: true });
@@ -170,7 +171,10 @@ app.post('/plaid/transactions', async (c) => {
   try {
     const PLAID_URL = getPlaidUrl(c.env.PLAID_ENV);
 
-    const result = await c.env.DB.prepare('SELECT data FROM store WHERE id = 2').first();
+    const { accountId } = await c.req.json();
+    if (!accountId) return c.json({ error: 'accountId is required' }, 400);
+
+    const result = await c.env.DB.prepare('SELECT data FROM store WHERE id = ?').bind(`plaid_${accountId}`).first();
     const access_token = result?.data as string;
 
     if (!access_token) return c.json({ error: 'No access token' }, 400);

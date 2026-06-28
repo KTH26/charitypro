@@ -116,6 +116,25 @@ export interface Account {
   type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
   subType?: 'checking' | 'savings' | 'credit_card' | 'loan' | 'payroll' | 'general' | 'internal';
   linkedFundraiserId?: string;
+  plaidConnected?: boolean;
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  role: string;
+  balanceOwed: number;
+}
+
+export interface T4A {
+  id: string;
+  entityId: string;
+  entityType: 'employee' | 'fundraiser';
+  year: number;
+  box48Amount: number;
+  issuedDate: string;
 }
 
 export interface Bill {
@@ -173,6 +192,9 @@ interface AppState {
   googleSheetSyncUrl: string;
   solaApiKey: string;
   lastSolaSyncDate: string;
+  bankFeeds: Record<string, any[]>;
+  employees: Employee[];
+  t4aSlips: T4A[];
 
   toggleRtl: () => void;
   setCurrency: (currency: 'CAD' | 'USD') => void;
@@ -181,6 +203,7 @@ interface AppState {
   setSolaApiKey: (key: string) => void;
   setLastSolaSyncDate: (date: string) => void;
   setDonorSortBy: (key: DonorSortKey) => void;
+  setBankFeed: (accountId: string, feed: any[]) => void;
 
   addDonor: (donor: Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'> | Omit<Donor, 'id' | 'displayId' | 'name' | 'totalGiven' | 'balanceOwed'>) => void;
   editDonor: (id: string, updates: Partial<Omit<Donor, 'id' | 'name' | 'totalGiven' | 'balanceOwed'>>) => void;
@@ -203,7 +226,11 @@ interface AppState {
   payOutFundraiser: (id: string) => void;
   chargeToFundraiser: (id: string, amount: number) => void;
 
-  addAccount: (acc: Omit<Account, 'id'>) => void;
+  addEmployee: (emp: Omit<Employee, 'id' | 'balanceOwed'>) => void;
+  payPayrollEntity: (entityId: string, type: 'employee' | 'fundraiser', amount: number) => void;
+  addT4A: (t4a: Omit<T4A, 'id' | 'issuedDate'>) => void;
+
+  addAccount: (acc: Omit<Account, 'id'> | Account) => void;
   transferBetweenAccounts: (transfer: Omit<AccountTransfer, 'id'>) => void;
 
   addBill: (bill: Omit<Bill, 'id'>) => void;
@@ -357,6 +384,9 @@ export const useStore = create<AppState>()(
       googleSheetSyncUrl: '',
       solaApiKey: '',
       lastSolaSyncDate: '',
+      bankFeeds: {},
+      employees: [],
+      t4aSlips: [],
 
       toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
       setCurrency: (currency) => set({ currency }),
@@ -365,6 +395,7 @@ export const useStore = create<AppState>()(
       setSolaApiKey: (key) => set({ solaApiKey: key }),
       setLastSolaSyncDate: (date) => set({ lastSolaSyncDate: date }),
       setDonorSortBy: (key) => set({ donorSortBy: key }),
+      setBankFeed: (accountId, feed) => set(state => ({ bankFeeds: { ...state.bankFeeds, [accountId]: feed } })),
 
       addDonor: (donor) => set(state => {
         const nextNum = 1001 + state.donors.length;
@@ -573,8 +604,18 @@ export const useStore = create<AppState>()(
       })),
 
       addAccount: (acc) => set((state) => ({
-        accounts: [...state.accounts, { ...acc, id: uid() }]
+        accounts: [...state.accounts, { ...acc, id: (acc as any).id || uid() }]
       })),
+
+      addEmployee: (emp) => set(state => ({ employees: [...state.employees, { ...emp, id: uid(), balanceOwed: 0 }] })),
+      payPayrollEntity: (entityId, type, amount) => set(state => {
+        if (type === 'employee') {
+          return { employees: state.employees.map(e => e.id === entityId ? { ...e, balanceOwed: Math.max(0, e.balanceOwed - amount) } : e) };
+        } else {
+          return { fundraisers: state.fundraisers.map(f => f.id === entityId ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - amount), internalAccountBalance: (f.internalAccountBalance || 0) - amount } : f) };
+        }
+      }),
+      addT4A: (t4a) => set(state => ({ t4aSlips: [...state.t4aSlips, { ...t4a, id: uid(), issuedDate: new Date().toISOString().split('T')[0] }] })),
 
       transferBetweenAccounts: (transfer) => set((state) => {
       const newTransfer = { ...transfer, id: uid() };

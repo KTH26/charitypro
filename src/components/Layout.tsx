@@ -82,6 +82,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         { path: '/transactions', label: T('nav_transactions'), icon: Wallet },
         { path: '/chart-of-accounts', label: T('nav_chart_accounts'), icon: List },
         { path: '/bank-feed', label: T('nav_bank_feed'), icon: Building },
+        { path: '/payroll', label: 'Payroll & T4A', icon: Users },
         { path: '/reconciliation', label: T('nav_reconciliation'), icon: CheckSquare },
         { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon },
       ]

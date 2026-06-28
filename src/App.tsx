@@ -22,6 +22,7 @@ import { ChartOfAccounts } from './pages/ChartOfAccounts';
 import { BankFeed } from './pages/BankFeed';
 import { Reconciliation } from './pages/Reconciliation';
 import { SolaSync } from './pages/SolaSync';
+import { Payroll } from './pages/Payroll';
 
 function App() {
   return (
@@ -34,6 +35,7 @@ function App() {
         <Route path="/transactions" element={<Layout><Transactions /></Layout>} />
         <Route path="/chart-of-accounts" element={<Layout><ChartOfAccounts /></Layout>} />
         <Route path="/bank-feed" element={<Layout><BankFeed /></Layout>} />
+        <Route path="/payroll" element={<Layout><Payroll /></Layout>} />
         <Route path="/reconciliation" element={<Layout><Reconciliation /></Layout>} />
         <Route path="/accounting" element={<Layout><Accounting /></Layout>} />
         <Route path="/vendors" element={<Layout><Vendors /></Layout>} />
