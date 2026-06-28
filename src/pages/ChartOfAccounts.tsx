@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Plus, X, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Plus, X, ArrowUpRight, ArrowDownRight, Trash2 } from 'lucide-react';
 import { useT } from '../i18n';
 import { AddAccountModal } from '../components/AddAccountModal';
 
 export const ChartOfAccounts: React.FC = () => {
-  const { accounts, transactions, bills, isRtl } = useStore();
+  const { accounts, transactions, bills, isRtl, deleteAccount } = useStore();
   const T = useT(isRtl);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAccount, setShowAddAccount] = useState(false);
@@ -124,6 +124,11 @@ export const ChartOfAccounts: React.FC = () => {
             <h3 style={{ margin: '0 0 16px 0', fontSize: '1.4rem', color: 'var(--navy)', fontFamily: 'Outfit, sans-serif' }}>
               {selectedAccount.name}
             </h3>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => { if(window.confirm('Are you sure you want to delete this account?')) { deleteAccount(selectedAccount.id); setSelectedAccountId(null); } }} style={{ color: 'var(--red)' }}>
+                <Trash2 size={14} /> Delete Account
+              </button>
+            </div>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Current Balance</div>
             <div style={{ fontSize: '2.2rem', fontWeight: 800, color: selectedAccount.balance >= 0 ? 'var(--green)' : 'var(--red)', fontFamily: 'Outfit, sans-serif' }}>
               ${selectedAccount.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}

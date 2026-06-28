@@ -36,7 +36,14 @@ export const BankFeed: React.FC = () => {
         if (data.link_token) {
           setLinkToken(data.link_token);
         } else {
-          setPlaidError(data.error || 'Invalid Plaid API Keys');
+          let errorMsg = data.error || 'Invalid Plaid API Keys';
+          if (data.details) {
+            try {
+              const detailsObj = JSON.parse(data.details);
+              if (detailsObj.error_message) errorMsg = detailsObj.error_message;
+            } catch (e) {}
+          }
+          setPlaidError(errorMsg);
           console.error('Plaid create_link_token error:', data);
         }
       } catch (err) {

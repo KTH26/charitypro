@@ -231,6 +231,8 @@ interface AppState {
   addT4A: (t4a: Omit<T4A, 'id' | 'issuedDate'>) => void;
 
   addAccount: (acc: Omit<Account, 'id'> | Account) => void;
+  editAccount: (id: string, updates: Partial<Omit<Account, 'id'>>) => void;
+  deleteAccount: (id: string) => void;
   transferBetweenAccounts: (transfer: Omit<AccountTransfer, 'id'>) => void;
 
   addBill: (bill: Omit<Bill, 'id'>) => void;
@@ -605,6 +607,12 @@ export const useStore = create<AppState>()(
 
       addAccount: (acc) => set((state) => ({
         accounts: [...state.accounts, { ...acc, id: (acc as any).id || uid() }]
+      })),
+      editAccount: (id, updates) => set((state) => ({
+        accounts: state.accounts.map(a => a.id === id ? { ...a, ...updates } : a)
+      })),
+      deleteAccount: (id) => set(state => ({
+        accounts: state.accounts.filter(a => a.id !== id)
       })),
 
       addEmployee: (emp) => set(state => ({ employees: [...state.employees, { ...emp, id: uid(), balanceOwed: 0 }] })),
