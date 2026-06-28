@@ -4,13 +4,15 @@ import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, D
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
-  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy, googleSheetSyncUrl, setGoogleSheetSyncUrl } = useStore();
+  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy, googleSheetSyncUrl, setGoogleSheetSyncUrl, solaApiKey, setSolaApiKey } = useStore();
   const T = useT(isRtl);
   const [syncing, setSyncing] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
   const [manualRate, setManualRate] = useState(String(exchangeRate));
   const [sheetUrl, setSheetUrl] = useState(googleSheetSyncUrl);
+  const [solaKeyInput, setSolaKeyInput] = useState(solaApiKey);
   const [urlSaved, setUrlSaved] = useState(false);
+  const [solaSaved, setSolaSaved] = useState(false);
 
   // Fetch live exchange rate from a free public API
   const handleSyncRate = async () => {
@@ -306,6 +308,51 @@ export const Settings: React.FC = () => {
           2. Choose your donors sheet tab → select <em>Comma-separated values (.csv)</em><br />
           3. Click <em>Publish</em> → copy the link → paste it above
         </div>
+      </div>
+
+      {/* Payment Gateway (Sola) */}
+      <div className="card" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '20px', gridColumn: '1 / -1' }}>
+        <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)', fontSize: '1.3rem' }}>
+          💳 Payment Gateway (Sola)
+        </h2>
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.88rem', lineHeight: 1.6 }}>
+          Enter your <strong>Sola Production Secret Key</strong> below. This allows the app to securely process credit cards directly.
+        </p>
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, position: 'relative' }}>
+            <DollarSign size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+            <input
+              type="password"
+              placeholder="Paste Sola Secret Key here..."
+              value={solaKeyInput}
+              onChange={e => { setSolaKeyInput(e.target.value); setSolaSaved(false); }}
+              style={{ paddingLeft: '40px', fontFamily: 'monospace', fontSize: '0.9rem' }}
+            />
+          </div>
+          <button
+            className="btn btn-primary"
+            disabled={!solaKeyInput.trim()}
+            onClick={() => {
+              setSolaApiKey(solaKeyInput.trim());
+              setSolaSaved(true);
+              setTimeout(() => setSolaSaved(false), 3000);
+            }}
+            style={{ flexShrink: 0, minWidth: '110px' }}
+          >
+            {solaSaved ? <><Check size={15} style={{ marginRight: '6px' }} />Saved!</> : 'Save Key'}
+          </button>
+        </div>
+
+        {solaApiKey && (
+          <div style={{ padding: '12px 16px', background: 'var(--green-bg, #f0fdf4)', borderRadius: '10px', border: '1px solid var(--green)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '1.2rem' }}>✅</span>
+            <div>
+              <div style={{ fontWeight: 700, color: 'var(--green)', fontSize: '0.88rem' }}>Sola Key is securely saved locally.</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginTop: '2px' }}>Your key is never exposed on the screen.</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Receipts & Legal */}
