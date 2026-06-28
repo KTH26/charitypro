@@ -51,7 +51,7 @@ export const ChartOfAccounts: React.FC = () => {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: selectedAccount ? '1fr 380px' : '1fr', gap: '24px', alignItems: 'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: selectedAccount ? '1fr 1fr' : '1fr', gap: '24px', alignItems: 'start' }}>
       <div style={{ display: 'grid', gap: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'Outfit, sans-serif', fontWeight: 800, color: 'var(--navy)' }}>
