@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Plus, X, ArrowUpRight, ArrowDownRight, Trash2 } from 'lucide-react';
+import { Plus, X, ArrowUpRight, ArrowDownRight, Trash2, ArrowLeft } from 'lucide-react';
 import { useT } from '../i18n';
 import { AddAccountModal } from '../components/AddAccountModal';
 
@@ -51,8 +51,9 @@ export const ChartOfAccounts: React.FC = () => {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: selectedAccount ? '1fr 1fr' : '1fr', gap: '24px', alignItems: 'start' }}>
-      <div style={{ display: 'grid', gap: '24px' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px', alignItems: 'start' }}>
+      {!selectedAccount ? (
+        <div style={{ display: 'grid', gap: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'Outfit, sans-serif', fontWeight: 800, color: 'var(--navy)' }}>
             Chart of Accounts
@@ -108,15 +109,14 @@ export const ChartOfAccounts: React.FC = () => {
           );
         })}
       </div>
-
-      {selectedAccount && (
-        <div className="card slide-in-right" style={{ padding: 0, position: 'sticky', top: '24px' }}>
+      ) : (
+        <div className="card slide-in-right" style={{ padding: 0 }}>
           <div style={{ padding: '24px', borderBottom: '1px solid var(--border)', position: 'relative' }}>
             <button 
               onClick={() => setSelectedAccountId(null)} 
-              style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0 0 16px 0', fontSize: '1rem', fontWeight: 600 }}
             >
-              <X size={20} />
+              <ArrowLeft size={20} /> Back to Accounts
             </button>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>
               {selectedAccount.type} · {selectedAccount.currency}
