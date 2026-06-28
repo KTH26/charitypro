@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useStore, type DonorSortKey, dualStorage } from '../store';
-import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download, AlertTriangle } from 'lucide-react';
+import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download, AlertTriangle, Cloud, Database } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
@@ -249,7 +249,15 @@ export const Settings: React.FC = () => {
             }} style={{ whiteSpace: 'nowrap' }}>
               <Download size={16} /> {isRtl ? 'סעיוו באַקאַפּ' : 'Save Backup File'}
             </button>
-          <div className="card">
+          </div>
+        </div>
+
+        {/* Emergency Data Recovery */}
+        <div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            <Cloud size={16} /> {isRtl ? 'דאַטן רעטונג' : 'Emergency Data Recovery'}
+          </label>
+          <div className="card" style={{ padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
               <div style={{ padding: '10px', background: 'var(--bg-input)', borderRadius: '12px' }}>
                 <Cloud size={24} color="var(--red)" />
@@ -283,6 +291,8 @@ export const Settings: React.FC = () => {
             >
               <Database size={18} /> Restore Missing Data from Cloud
             </button>
+          </div>
+        </div>
           </div>
         </div>
       </div>
