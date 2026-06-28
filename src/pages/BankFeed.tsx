@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
-  const { accounts, addAccount, isRtl, matchedBankTransactions, matchBankTransaction, addBill, addTransaction, bankFeeds, setBankFeed } = useStore();
+  const { accounts, addAccount, isRtl, matchedBankTransactions, matchBankTransaction, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills } = useStore();
   const T = useT(isRtl);
   
   const connectedBanks = accounts.filter(a => a.plaidConnected);
@@ -16,7 +16,7 @@ export const BankFeed: React.FC = () => {
 
   // Match Modal State
   const [matchingTx, setMatchingTx] = useState<any | null>(null);
-  const [matchType, setMatchType] = useState<'expense' | 'deposit'>('expense');
+  const [matchType, setMatchType] = useState<'expense' | 'deposit' | 'transfer'>('expense');
   const [matchCategory, setMatchCategory] = useState('');
   const [matchEntity, setMatchEntity] = useState(''); // Vendor or Donor name
 
@@ -148,15 +148,15 @@ export const BankFeed: React.FC = () => {
       const transferAccount = accounts.find(a => a.id === matchEntity);
       if (!transferAccount) return alert('Transfer account not found');
       
-      const isOutbound = tx.amount < 0;
+      const isOutbound = matchingTx.amount < 0;
       transferBetweenAccounts({
-        fromAccountId: isOutbound ? accountId : transferAccount.id,
-        toAccountId: isOutbound ? transferAccount.id : accountId,
-        amount: Math.abs(tx.amount),
-        date: tx.date,
-        notes: tx.description
+        fromAccountId: isOutbound ? matchingTx.sourceAccountId : transferAccount.id,
+        toAccountId: isOutbound ? transferAccount.id : matchingTx.sourceAccountId,
+        amount: Math.abs(matchingTx.amount),
+        date: matchingTx.date,
+        notes: matchingTx.description
       });
-      matchBankTransaction(tx.transaction_id);
+      matchBankTransaction(matchingTx.id);
       setMatchingTx(null);
       return;
     }
@@ -350,8 +350,8 @@ export const BankFeed: React.FC = () => {
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)} style={{ flex: 1 }}>
                       <option value="">— Select Vendor —</option>
-                      {Array.from(new Set(bills.map(b => b.vendor))).sort().map(vendor => (
-                        <option key={vendor} value={vendor}>{vendor}</option>
+                      {Array.from(new Set(bills.map((b: any) => b.vendor))).sort().map(vendor => (
+                        <option key={vendor as string} value={vendor as string}>{vendor as string}</option>
                       ))}
                     </select>
                     <button className="btn btn-secondary" onClick={() => {
@@ -362,7 +362,7 @@ export const BankFeed: React.FC = () => {
                 ) : matchType === 'transfer' ? (
                   <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)}>
                     <option value="">— Select Account —</option>
-                    {accounts.filter(a => a.id !== accountId).map(a => (
+                    {accounts.filter(a => a.id !== selectedBank).map(a => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </select>

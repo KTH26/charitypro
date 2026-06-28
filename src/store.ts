@@ -319,7 +319,7 @@ const LOCAL_KEY = 'charity-store';
  * and Zustand initialises with the empty default state, which then immediately
  * fires setItem and overwrites the real cloud data with an empty donors array.
  */
-const dualStorage: StateStorage = {
+export const dualStorage: StateStorage = {
   getItem: async (name): Promise<string | null> => {
     // 1. Try IndexedDB first — supports gigabytes of data natively
     const local = await idbGet(name);
