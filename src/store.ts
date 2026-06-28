@@ -348,6 +348,18 @@ export const dualStorage: StateStorage = {
   },
 
   setItem: async (name, value): Promise<void> => {
+    // 🛡️ HYDRATION LOCK: Prevent empty default states from overwriting cloud data
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed?.state?.donors?.length > 0) {
+        localStorage.setItem('has_data_ever', 'true');
+      }
+      if (parsed?.state?.donors?.length === 0 && localStorage.getItem('has_data_ever') === 'true') {
+        console.error("FATAL: Attempted to overwrite database with empty state! Blocked by Hydration Lock.");
+        return; 
+      }
+    } catch (e) {}
+
     // Always write to IndexedDB immediately (supports massive data sizes)
     await idbSet(name, value);
 
