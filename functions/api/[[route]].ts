@@ -160,9 +160,10 @@ app.post('/plaid/exchange_public_token', async (c) => {
 
     const data = await res.json();
     if (data.access_token) {
+      await c.env.DB.prepare(`CREATE TABLE IF NOT EXISTS plaid_tokens (account_id TEXT PRIMARY KEY, access_token TEXT)`).run();
       await c.env.DB.prepare(
-        'INSERT INTO store (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data'
-      ).bind(`plaid_${accountId}`, data.access_token).run();
+        'INSERT INTO plaid_tokens (account_id, access_token) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET access_token = excluded.access_token'
+      ).bind(accountId, data.access_token).run();
     }
 
     return c.json({ success: true });
@@ -178,8 +179,13 @@ app.post('/plaid/transactions', async (c) => {
     const { accountId } = await c.req.json();
     if (!accountId) return c.json({ error: 'accountId is required' }, 400);
 
-    const result = await c.env.DB.prepare('SELECT data FROM store WHERE id = ?').bind(`plaid_${accountId}`).first();
-    const access_token = result?.data as string;
+    let access_token = null;
+    try {
+      const result = await c.env.DB.prepare('SELECT access_token FROM plaid_tokens WHERE account_id = ?').bind(accountId).first();
+      access_token = result?.access_token as string;
+    } catch (e) {
+      // Table might not exist yet if they never exchanged a token successfully
+    }
 
     if (!access_token) return c.json({ error: 'No access token' }, 400);
 
