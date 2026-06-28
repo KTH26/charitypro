@@ -12,6 +12,7 @@ export const BankFeed: React.FC = () => {
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasConnection, setHasConnection] = useState(false);
+  const [plaidError, setPlaidError] = useState('');
 
   // Match Modal State
   const [matchingTx, setMatchingTx] = useState<any | null>(null);
@@ -28,6 +29,7 @@ export const BankFeed: React.FC = () => {
         if (data.link_token) {
           setLinkToken(data.link_token);
         } else {
+          setPlaidError(data.error || 'Invalid Plaid API Keys');
           console.error('Plaid create_link_token error:', data);
         }
       } catch (err) {
@@ -158,10 +160,13 @@ export const BankFeed: React.FC = () => {
                 {loading ? ' Syncing...' : ' Sync Latest'}
               </button>
             ) : (
-              <button className="btn btn-primary" onClick={() => open()} disabled={!ready || loading}>
-                <LinkIcon size={16} /> 
-                {loading ? 'Connecting...' : 'Connect Bank'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {plaidError && <span style={{ color: 'var(--red)', fontSize: '0.85rem', fontWeight: 600 }}>{plaidError}</span>}
+                <button className="btn btn-primary" onClick={() => open()} disabled={!ready || loading}>
+                  <LinkIcon size={16} /> 
+                  {loading ? 'Connecting...' : 'Connect Bank'}
+                </button>
+              </div>
             )}
             
             <select className="filter-select" value={selectedBank} onChange={e => setSelectedBank(e.target.value)} style={{ minWidth: '200px' }}>
