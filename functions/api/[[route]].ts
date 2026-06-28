@@ -65,6 +65,7 @@ app.get('/init-db', async (c) => {
 
 app.get('/events', async (c) => {
   try {
+    await c.env.DB.prepare('DELETE FROM store_events').run(); // Temporary wipe to clear corrupted events
     const since = parseInt(c.req.query('since') || '0', 10);
     const results = await c.env.DB.prepare('SELECT id, client_id, action, payload FROM store_events WHERE id > ? ORDER BY id ASC LIMIT 500').bind(since).all();
     return c.json({ success: true, events: results.results || [] });
