@@ -729,7 +729,7 @@ const methodsToWrap = [
   'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions',
   'addRecurring', 'toggleRecurring',
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
-  'addAccount', 'transferBetweenAccounts',
+  'addAccount', 'editAccount', 'deleteAccount', 'transferBetweenAccounts',
   'addBill', 'editBill', 'markBillPaid', 'deleteBills',
   'addTask', 'completeTask', 'deleteTask',
   'matchBankTransaction'

@@ -7,7 +7,7 @@ export const SyncEngine: React.FC = () => {
 
     const pollEvents = async () => {
       try {
-        const lastEventId = useStore.getState().lastEventId;
+        const lastEventId = Number(useStore.getState().lastEventId) || 0;
         const res = await fetch(`/api/events?since=${lastEventId}`);
         const data = await res.json();
         
@@ -20,7 +20,7 @@ export const SyncEngine: React.FC = () => {
               const payload = typeof ev.payload === 'string' ? JSON.parse(ev.payload) : ev.payload;
               applyRemoteEvent(ev.action, payload);
             }
-            if (ev.id > maxId) maxId = ev.id;
+            if (Number(ev.id) > maxId) maxId = Number(ev.id);
           }
           
           useStore.setState({ lastEventId: maxId });
