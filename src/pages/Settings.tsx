@@ -291,9 +291,6 @@ export const Settings: React.FC = () => {
             >
               <Database size={18} /> Restore Missing Data from Cloud
             </button>
-          </div>
-        </div>
-          </div>
         </div>
       </div>
 
