@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useStore, type DonorSortKey } from '../store';
-import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download } from 'lucide-react';
+import { useStore, type DonorSortKey, dualStorage } from '../store';
+import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download, AlertTriangle } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
@@ -248,6 +248,40 @@ export const Settings: React.FC = () => {
               downloadAnchorNode.remove();
             }} style={{ whiteSpace: 'nowrap' }}>
               <Download size={16} /> {isRtl ? 'סעיוו באַקאַפּ' : 'Save Backup File'}
+            </button>
+          <div className="card">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+              <div style={{ padding: '10px', background: 'var(--bg-input)', borderRadius: '12px' }}>
+                <Cloud size={24} color="var(--red)" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Emergency Data Recovery</h3>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Restore your data from the automatic cloud backup if it was accidentally wiped.</div>
+              </div>
+            </div>
+            
+            <button 
+              className="btn" 
+              style={{ width: '100%', padding: '16px', background: 'var(--red)', color: 'white', border: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}
+              onClick={async () => {
+                if (window.confirm('Are you absolutely sure? This will OVERWRITE your current data with the last known good backup from the cloud!')) {
+                  try {
+                    const res = await fetch('/api/sync-legacy');
+                    if (!res.ok) throw new Error('Network error');
+                    const data = await res.json();
+                    if (data.value) {
+                      await dualStorage.setItem('charity-store', data.value);
+                      window.location.reload();
+                    } else {
+                      alert('No backup found in the cloud. It might already be wiped or blocked by your network.');
+                    }
+                  } catch (e) {
+                    alert('Failed to connect to the backup server. Please check your internet connection.');
+                  }
+                }
+              }}
+            >
+              <Database size={18} /> Restore Missing Data from Cloud
             </button>
           </div>
         </div>

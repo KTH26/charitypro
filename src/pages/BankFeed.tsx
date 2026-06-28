@@ -144,6 +144,23 @@ export const BankFeed: React.FC = () => {
   const submitMatch = () => {
     if (!matchingTx) return;
 
+    if (matchType === 'transfer') {
+      const transferAccount = accounts.find(a => a.id === matchEntity);
+      if (!transferAccount) return alert('Transfer account not found');
+      
+      const isOutbound = tx.amount < 0;
+      transferBetweenAccounts({
+        fromAccountId: isOutbound ? accountId : transferAccount.id,
+        toAccountId: isOutbound ? transferAccount.id : accountId,
+        amount: Math.abs(tx.amount),
+        date: tx.date,
+        notes: tx.description
+      });
+      matchBankTransaction(tx.transaction_id);
+      setMatchingTx(null);
+      return;
+    }
+
     if (matchType === 'expense') {
       addBill({
         vendor: matchEntity,
@@ -321,22 +338,49 @@ export const BankFeed: React.FC = () => {
                 <select value={matchType} onChange={e => setMatchType(e.target.value as any)}>
                   <option value="expense">Expense / Bill</option>
                   <option value="deposit">Deposit / Donation</option>
+                  <option value="transfer">Transfer to/from Account</option>
                 </select>
               </div>
 
               <div className="form-group">
-                <label>{matchType === 'expense' ? 'Vendor Name' : 'Donor / Source Name'}</label>
-                <input type="text" value={matchEntity} onChange={e => setMatchEntity(e.target.value)} />
+                <label>
+                  {matchType === 'expense' ? 'Vendor Name' : matchType === 'transfer' ? 'Transfer Account' : 'Donor / Source Name'}
+                </label>
+                {matchType === 'expense' ? (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)} style={{ flex: 1 }}>
+                      <option value="">— Select Vendor —</option>
+                      {Array.from(new Set(bills.map(b => b.vendor))).sort().map(vendor => (
+                        <option key={vendor} value={vendor}>{vendor}</option>
+                      ))}
+                    </select>
+                    <button className="btn btn-secondary" onClick={() => {
+                      const newVendor = prompt('Enter new vendor name:');
+                      if (newVendor) setMatchEntity(newVendor);
+                    }}>New</button>
+                  </div>
+                ) : matchType === 'transfer' ? (
+                  <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)}>
+                    <option value="">— Select Account —</option>
+                    {accounts.filter(a => a.id !== accountId).map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input type="text" value={matchEntity} onChange={e => setMatchEntity(e.target.value)} />
+                )}
               </div>
 
-              <div className="form-group">
-                <label>Category / Fund</label>
-                <input type="text" placeholder="e.g. Office Supplies, General Fund" value={matchCategory} onChange={e => setMatchCategory(e.target.value)} />
-              </div>
+              {matchType !== 'transfer' && (
+                <div className="form-group">
+                  <label>Category / Fund</label>
+                  <input type="text" placeholder="e.g. Office Supplies, General Fund" value={matchCategory} onChange={e => setMatchCategory(e.target.value)} />
+                </div>
+              )}
             </div>
             <div className="modal-footer" style={{ marginTop: '24px' }}>
               <button className="btn btn-secondary" onClick={() => setMatchingTx(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitMatch}>Record {matchType === 'expense' ? 'Expense' : 'Deposit'}</button>
+              <button className="btn btn-primary" onClick={submitMatch}>Record {matchType === 'expense' ? 'Expense' : matchType === 'transfer' ? 'Transfer' : 'Deposit'}</button>
             </div>
           </div>
         </div>

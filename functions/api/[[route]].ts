@@ -19,6 +19,15 @@ app.get('/sync', async (c) => {
   }
 })
 
+app.get('/sync-legacy', async (c) => {
+  try {
+    const legacy = await c.env.DB.prepare('SELECT data FROM store WHERE id = 1').first()
+    return c.json({ value: legacy?.data || null })
+  } catch (e) {
+    return c.json({ value: null })
+  }
+})
+
 app.post('/sync', async (c) => {
   try {
     const { value } = await c.req.json()
