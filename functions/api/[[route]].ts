@@ -46,6 +46,16 @@ app.post('/sync', async (c) => {
   }
 })
 
+app.get('/debug-store', async (c) => {
+  try {
+    const legacy = await c.env.DB.prepare('SELECT length(data) as len FROM store WHERE id = 1').first();
+    const chunks = await c.env.DB.prepare('SELECT id, length(data) as len FROM store WHERE id >= 1000').all();
+    return c.json({ legacy, chunks: chunks.results });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+})
+
 app.get('/init-db', async (c) => {
   try {
     await c.env.DB.prepare(`
