@@ -91,9 +91,17 @@ export const BankFeed: React.FC = () => {
     setLoading(false);
   }, []);
 
+  const onExit = useCallback((err: any, metadata: any) => {
+    if (err != null) {
+      console.error('Plaid Link exited with error:', err);
+      setPlaidError(err.display_message || err.error_message || 'Plaid connection closed unexpectedly.');
+    }
+  }, []);
+
   const { open, ready } = usePlaidLink({
     token: linkToken!,
     onSuccess,
+    onExit,
   });
 
   const handleSendReview = (id: string) => {
