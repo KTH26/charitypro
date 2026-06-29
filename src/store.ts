@@ -450,17 +450,19 @@ export const useStore = create<AppState>()(
       }),
 
       addTransaction: (tx) => set((state) => {
-        const newTx = { ...tx, id: uid() };
+        const today = new Date().toISOString().split('T')[0];
+        const type = (tx.date > today) ? 'recording' : tx.type;
+        const newTx = { ...tx, type, id: uid() };
         const effectiveAmount = tx.amountCAD ?? tx.amount;
         const updatedDonors = state.donors.map(d => {
           if (d.id !== tx.donorId) return d;
-          if (tx.type === 'approved') return { ...d, totalGiven: d.totalGiven + effectiveAmount };
-          if (tx.type === 'recording') return { ...d, balanceOwed: Math.max(0, d.balanceOwed - effectiveAmount) };
+          if (type === 'approved') return { ...d, totalGiven: d.totalGiven + effectiveAmount };
+          if (type === 'recording') return { ...d, balanceOwed: d.balanceOwed + effectiveAmount };
           return d;
         });
 
         let updatedAccounts = state.accounts;
-        if (tx.type === 'approved') {
+        if (type === 'approved') {
           updatedAccounts = updatedAccounts.map(a => {
             let newBalance = a.balance;
             const amountToAdd = (a.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
@@ -470,7 +472,7 @@ export const useStore = create<AppState>()(
           });
         }
 
-        const updatedFundraisers = tx.fundraiserId && tx.type === 'approved'
+        const updatedFundraisers = tx.fundraiserId && type === 'approved'
           ? state.fundraisers.map(f => f.id === tx.fundraiserId
               ? { ...f, balanceOwed: f.balanceOwed + (tx.amount * f.percentage / 100) }
               : f)
@@ -480,7 +482,11 @@ export const useStore = create<AppState>()(
       }),
 
       bulkAddTransactions: (txs) => set((state) => {
-        const newTxs = txs.map(tx => ({ ...tx, id: uid(), invoiceSaved: false }));
+        const today = new Date().toISOString().split('T')[0];
+        const newTxs = txs.map(tx => {
+          const type = (tx.date > today) ? 'recording' : tx.type;
+          return { ...tx, type, id: uid(), invoiceSaved: false };
+        });
         
         let updatedDonors = [...state.donors];
         let updatedAccounts = [...state.accounts];
@@ -491,13 +497,13 @@ export const useStore = create<AppState>()(
         const accountUpdates = new Map<string, number>();
         const fundraiserUpdates = new Map<string, number>();
 
-        for (const tx of txs) {
+        for (const tx of newTxs) {
           const effectiveAmount = tx.amountCAD ?? tx.amount;
           
           // Accumulate donor updates
           const dUpdate = donorUpdates.get(tx.donorId) || { totalGiven: 0, balanceOwed: 0 };
           if (tx.type === 'approved') dUpdate.totalGiven += effectiveAmount;
-          if (tx.type === 'recording') dUpdate.balanceOwed -= effectiveAmount; // We will adjust the base later
+          if (tx.type === 'recording') dUpdate.balanceOwed += effectiveAmount; 
           donorUpdates.set(tx.donorId, dUpdate);
 
           // Accumulate account updates
@@ -552,7 +558,7 @@ export const useStore = create<AppState>()(
         });
 
         return {
-          transactions: [...newTxs, ...state.transactions],
+          transactions: [...newTxs, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
           donors: updatedDonors,
           accounts: updatedAccounts,
           fundraisers: updatedFundraisers
