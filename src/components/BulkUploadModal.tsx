@@ -85,6 +85,61 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
         }
       });
       return;
+    } else if (dataType === 'donors') {
+      Papa.parse(file, {
+        header: true,
+        encoding: fileEncoding,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const rows = results.data as any[];
+          const donorsToUpsert: any[] = [];
+          rows.forEach(row => {
+            if (row['First Name'] || row['Last Name'] || row['Name']) {
+              const name = row['Name'] || `${row['First Name'] || ''} ${row['Last Name'] || ''}`.trim() || 'Unknown Donor';
+              donorsToUpsert.push({
+                id: Date.now().toString() + Math.random().toString(36).substring(7),
+                displayId: row['Donor ID'] || `D-${Math.floor(Math.random() * 9000) + 1000}`,
+                name,
+                firstName: row['First Name'] || '',
+                lastName: row['Last Name'] || '',
+                email: row['Email'] || '',
+                phone: row['Phone'] || row['Mobile Phone'] || row['Home Phone'] || '',
+                address: row['Address'] || '',
+                notes: row['Notes'] || '',
+                
+                preTitle: row['Pre-Title'] || '',
+                hebFirstName: row['Hebrew First Name'] || '',
+                hebLastName: row['Hebrew Last Name'] || '',
+                title: row['Title'] || '',
+                postTitle: row['Post-Title'] || '',
+                doubleNames: row['Double Names'] || '',
+                
+                hisFather: row['His Father'] || '',
+                herFather: row['Her Father'] || '',
+                householdFullName: row['Household Full Name'] || '',
+                allMaiden: row['Maiden Name'] || '',
+                
+                homePhone: row['Home Phone'] || '',
+                mobilePhone: row['Mobile Phone'] || '',
+                mobilePhone2: row['Mobile Phone 2'] || '',
+                phone3: row['Phone 3'] || '',
+                confidentialMobile: row['Confidential Mobile'] || '',
+                confidentialMobile2: row['Confidential Mobile 2'] || '',
+                
+                addrBuildingNum: row['Building Number'] || '',
+                addrStreet: row['Street'] || '',
+                addrApt: row['Apt'] || '',
+                addrType: row['Address Type'] || '',
+                addrNo: row['Address No'] || '',
+              });
+            }
+          });
+          useStore.getState().bulkUpsertDonors(donorsToUpsert);
+          setStep('success');
+          setTimeout(onClose, 2000);
+        }
+      });
+      return;
     }
 
     // Mock processing delay for other types
@@ -197,8 +252,8 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
       csvContent += "Donor ID,Amount,Date,Currency,Category,Sponsor,Method,Notes\n";
       csvContent += "D-1001,1000,2025-06-25,CAD,General,Moshe Cohen,credit_card,Annual pledge\n";
     } else if (dataType === 'donors') {
-      csvContent += "First Name,Last Name,Email,Phone,Address,Notes\n";
-      csvContent += "John,Doe,john@example.com,514-555-0100,123 Main St,Sample note\n";
+      csvContent += "First Name,Last Name,Name,Email,Phone,Mobile Phone,Home Phone,Mobile Phone 2,Phone 3,Confidential Mobile,Confidential Mobile 2,Address,Building Number,Street,Apt,Address Type,Address No,Notes,Pre-Title,Hebrew First Name,Hebrew Last Name,Title,Post-Title,Double Names,His Father,Her Father,Household Full Name,Maiden Name\n";
+      csvContent += "John,Doe,,john@example.com,514-555-0100,,,,,123 Main St,,,,,,,Sample note,,,,,,,,,,,\n";
     } else if (dataType === 'transactions') {
       csvContent += "Donor ID,Amount,Date,Method,Currency,Category,Asset Account,Revenue Account\n";
       csvContent += "D-1001,100,2025-06-25,credit_card,CAD,General,TD Checking,General Donations\n";
