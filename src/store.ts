@@ -573,10 +573,10 @@ export const useStore = create<AppState>()(
 
       deleteAllTransactions: () => set(state => {
         // Only safely delete transactions, without touching donors or accounts
-        // We'll reset the totalGiven balances on donors to 0 if we wipe the ledger?
-        // Wait, yes, deleting the ledger means totalGiven should be recalculated or reset.
+        // We keep 'recording' (pledges) so they aren't wiped out
+        const pledges = state.transactions.filter(t => t.type === 'recording');
         const resetDonors = state.donors.map(d => ({ ...d, totalGiven: 0 }));
-        return { transactions: [], donors: resetDonors };
+        return { transactions: pledges, donors: resetDonors };
       }),
 
       addRecurring: (rec) => set((state) => ({
