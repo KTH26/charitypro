@@ -13,11 +13,15 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   
-  const [step, setStep] = useState<'upload' | 'review' | 'success'>('upload');
+  const [step, setStep] = useState<'upload' | 'review' | 'account-review' | 'success'>('upload');
   const [fileEncoding, setFileEncoding] = useState<'utf-8' | 'windows-1255'>('utf-8');
   const [matchedRows, setMatchedRows] = useState<any[]>([]);
   const [unmatchedRows, setUnmatchedRows] = useState<any[]>([]);
   
+  const [missingAccounts, setMissingAccounts] = useState<string[]>([]);
+  const [accountResolutions, setAccountResolutions] = useState<Record<string, string>>({});
+  const [resolvedDonors, setResolvedDonors] = useState<{ matchedRows: any[], toProcess: any[] } | null>(null);
+
   // resolution state maps row index in unmatchedRows to resolution object
   const [resolutions, setResolutions] = useState<Record<number, { action: 'match' | 'create' | 'skip', donorId?: string, newFirstName?: string, newLastName?: string }>>({});
 
@@ -41,6 +45,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
           const rows = results.data as any[];
           const matched: any[] = [];
           const unmatched: any[] = [];
+          const missingAccs = new Set<string>();
 
           rows.forEach(row => {
             const donorIdValue = (row['Donor ID'] || '').trim();
@@ -51,16 +56,29 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
             } else if (row['Amount']) {
               unmatched.push(row);
             }
+
+            const assetName = row['Asset Account']?.trim();
+            if (assetName && !accounts.find(a => a.name.toLowerCase() === assetName.toLowerCase())) {
+              missingAccs.add(assetName);
+            }
+            const revName = row['Revenue Account']?.trim();
+            if (revName && !accounts.find(a => a.name.toLowerCase() === revName.toLowerCase())) {
+              missingAccs.add(revName);
+            }
           });
 
           setMatchedRows(matched);
           setUnmatchedRows(unmatched);
+          setMissingAccounts(Array.from(missingAccs));
 
           if (unmatched.length > 0) {
             setStep('review');
             const initRes: Record<number, any> = {};
             unmatched.forEach((_, i) => initRes[i] = { action: 'match', donorId: '' });
             setResolutions(initRes);
+          } else if (missingAccs.size > 0) {
+            setResolvedDonors({ matchedRows: matched, toProcess: [] });
+            setStep('account-review');
           } else {
             finalizeImport(matched, []);
           }
@@ -131,8 +149,8 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               category: item.row['Category'] || 'General',
               sponsor: item.row['Sponsor'] || '',
               notes: item.row['Notes'] || '',
-              sourceAccountId: accounts.find(a => a.name.toLowerCase() === item.row['Asset Account']?.toLowerCase())?.id,
-              offsetAccountId: accounts.find(a => a.name.toLowerCase() === item.row['Revenue Account']?.toLowerCase())?.id
+              sourceAccountId: accountResolutions[item.row['Asset Account']?.trim()] || accounts.find(a => a.name.toLowerCase() === item.row['Asset Account']?.toLowerCase())?.id,
+              offsetAccountId: accountResolutions[item.row['Revenue Account']?.trim()] || accounts.find(a => a.name.toLowerCase() === item.row['Revenue Account']?.toLowerCase())?.id
             });
           }
         }
@@ -159,7 +177,18 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
         return;
       }
     }
-    finalizeImport(matchedRows, toProcess);
+    if (missingAccounts.length > 0) {
+      setResolvedDonors({ matchedRows, toProcess });
+      setStep('account-review');
+    } else {
+      finalizeImport(matchedRows, toProcess);
+    }
+  };
+
+  const handleAccountReviewSubmit = () => {
+    if (resolvedDonors) {
+      finalizeImport(resolvedDonors.matchedRows, resolvedDonors.toProcess);
+    }
   };
 
   const downloadSample = () => {
@@ -189,9 +218,9 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className={`modal ${step === 'review' ? 'modal-lg' : ''}`} onClick={e => e.stopPropagation()}>
+      <div className={`modal ${step === 'review' || step === 'account-review' ? 'modal-lg' : ''}`} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 style={{ margin: 0 }}>{step === 'review' ? 'Review Unmatched Records' : 'Bulk Upload'}</h2>
+          <h2 style={{ margin: 0 }}>{step === 'review' ? 'Review Unmatched Donors' : step === 'account-review' ? 'Review Unmatched Accounts' : 'Bulk Upload'}</h2>
           <button className="modal-close" onClick={onClose}><X size={20} /></button>
         </div>
         
@@ -270,7 +299,47 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               </div>
               <div>
                 <button className="btn btn-secondary" onClick={() => setStep('upload')} style={{ marginRight: '12px' }}>Back</button>
-                <button className="btn btn-primary" onClick={handleReviewSubmit}>Finalize Import</button>
+                <button className="btn btn-primary" onClick={handleReviewSubmit}>{missingAccounts.length > 0 ? 'Next: Map Accounts' : 'Finalize Import'}</button>
+              </div>
+            </div>
+          </>
+        ) : step === 'account-review' ? (
+          <>
+            <div className="modal-body">
+              <div style={{ background: 'var(--yellow-bg)', color: 'var(--yellow)', padding: '16px', borderRadius: '12px', display: 'flex', gap: '12px', marginBottom: '24px' }}>
+                <AlertTriangle size={24} />
+                <div>
+                  <div style={{ fontWeight: 700, marginBottom: '4px' }}>{missingAccounts.length} accounts could not be found.</div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Please map them to an existing account, or skip them (they will remain blank on the transactions).</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: '16px', maxHeight: '50vh', overflowY: 'auto', paddingRight: '8px' }}>
+                {missingAccounts.map((accName, i) => (
+                  <div key={i} style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '16px', background: 'var(--bg-card)' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '12px' }}>Missing Account from CSV: "{accName}"</div>
+                    
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Map to existing account in your Chart of Accounts (or leave blank to ignore)</label>
+                      <select 
+                        value={accountResolutions[accName] || ''} 
+                        onChange={e => setAccountResolutions({...accountResolutions, [accName]: e.target.value})}
+                      >
+                        <option value="">-- Leave Blank (Ignore) --</option>
+                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name} ({a.type})</option>)}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+              <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                <strong>{missingAccounts.length}</strong> accounts to map.
+              </div>
+              <div>
+                <button className="btn btn-secondary" onClick={() => unmatchedRows.length > 0 ? setStep('review') : setStep('upload')} style={{ marginRight: '12px' }}>Back</button>
+                <button className="btn btn-primary" onClick={handleAccountReviewSubmit}>Finalize Import</button>
               </div>
             </div>
           </>
