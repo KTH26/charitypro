@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
-  const { accounts, addAccount, isRtl, matchedBankTransactions, matchBankTransaction, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills } = useStore();
+  const { accounts, addAccount, isRtl, matchedBankTransactions, matchBankTransaction, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity } = useStore();
   const T = useT(isRtl);
   
   const connectedBanks = accounts.filter(a => a.plaidConnected);
@@ -16,9 +16,10 @@ export const BankFeed: React.FC = () => {
 
   // Match Modal State
   const [matchingTx, setMatchingTx] = useState<any | null>(null);
-  const [matchType, setMatchType] = useState<'expense' | 'deposit' | 'transfer'>('expense');
+  const [matchType, setMatchType] = useState<'expense' | 'deposit' | 'transfer' | 'payroll'>('expense');
   const [matchCategory, setMatchCategory] = useState('');
   const [matchEntity, setMatchEntity] = useState(''); // Vendor or Donor name
+  const [newVendorFund, setNewVendorFund] = useState('Canadian WFW'); // Tracking fund for new vendors
 
   // Ensure selectedBank is valid
   useEffect(() => {
@@ -161,7 +162,31 @@ export const BankFeed: React.FC = () => {
       return;
     }
 
+    if (matchType === 'payroll') {
+      const employee = employees.find(e => e.id === matchEntity);
+      if (!employee) return alert('Employee not found');
+      
+      payPayrollEntity(employee.id, 'employee', Math.abs(matchingTx.amount));
+      addBill({
+        vendor: `Payroll: ${employee.name}`,
+        amount: Math.abs(matchingTx.amount),
+        dueDate: matchingTx.date,
+        status: 'paid',
+        category: 'Payroll Expense',
+        paidDate: matchingTx.date,
+        sourceAccountId: matchingTx.sourceAccountId,
+      });
+      matchBankTransaction(matchingTx.id);
+      setMatchingTx(null);
+      return;
+    }
+
     if (matchType === 'expense') {
+      // Create vendor if new
+      const existingVendor = vendors.find(v => v.name.toLowerCase() === matchEntity.toLowerCase());
+      if (!existingVendor && matchEntity) {
+        addVendor({ name: matchEntity, fund: newVendorFund });
+      }
       addBill({
         vendor: matchEntity,
         amount: Math.abs(matchingTx.amount),
@@ -339,25 +364,41 @@ export const BankFeed: React.FC = () => {
                   <option value="expense">Expense / Bill</option>
                   <option value="deposit">Deposit / Donation</option>
                   <option value="transfer">Transfer to/from Account</option>
+                  <option value="payroll">Employee Payroll</option>
                 </select>
               </div>
 
               <div className="form-group">
                 <label>
-                  {matchType === 'expense' ? 'Vendor Name' : matchType === 'transfer' ? 'Transfer Account' : 'Donor / Source Name'}
+                  {matchType === 'expense' ? 'Vendor Name' : matchType === 'transfer' ? 'Transfer Account' : matchType === 'payroll' ? 'Employee' : 'Donor / Source Name'}
                 </label>
                 {matchType === 'expense' ? (
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)} style={{ flex: 1 }}>
-                      <option value="">— Select Vendor —</option>
-                      {Array.from(new Set(bills.map((b: any) => b.vendor))).sort().map(vendor => (
-                        <option key={vendor as string} value={vendor as string}>{vendor as string}</option>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input 
+                      list="vendors-list" 
+                      type="text" 
+                      value={matchEntity} 
+                      onChange={e => setMatchEntity(e.target.value)} 
+                      placeholder="Type to search or add vendor..."
+                      style={{ width: '100%' }}
+                    />
+                    <datalist id="vendors-list">
+                      {vendors.map(v => (
+                        <option key={v.id} value={v.name} />
                       ))}
-                    </select>
-                    <button className="btn btn-secondary" onClick={() => {
-                      const newVendor = prompt('Enter new vendor name:');
-                      if (newVendor) setMatchEntity(newVendor);
-                    }}>New</button>
+                    </datalist>
+                    {/* Show Fund selector if this is a new vendor */}
+                    {matchEntity && !vendors.find(v => v.name.toLowerCase() === matchEntity.toLowerCase()) && (
+                      <div className="form-group" style={{ marginTop: '8px', padding: '8px', background: 'var(--bg-card)', borderRadius: '4px', border: '1px dashed var(--border)' }}>
+                        <label style={{ fontSize: '12px' }}>New Vendor Detected. Select Fund:</label>
+                        <select value={newVendorFund} onChange={e => setNewVendorFund(e.target.value)}>
+                          <option value="Canadian WFW">Canadian WFW</option>
+                          <option value="US Fund">US Fund</option>
+                          <option value="Israel Fund">Israel Fund</option>
+                          <option value="General">General</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
                 ) : matchType === 'transfer' ? (
                   <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)}>
@@ -366,12 +407,19 @@ export const BankFeed: React.FC = () => {
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </select>
+                ) : matchType === 'payroll' ? (
+                  <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)}>
+                    <option value="">— Select Employee —</option>
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>{e.name} (Owes: ${e.balanceOwed.toFixed(2)})</option>
+                    ))}
+                  </select>
                 ) : (
                   <input type="text" value={matchEntity} onChange={e => setMatchEntity(e.target.value)} />
                 )}
               </div>
 
-              {matchType !== 'transfer' && (
+              {matchType !== 'transfer' && matchType !== 'payroll' && (
                 <div className="form-group">
                   <label>Category / Fund</label>
                   <input type="text" placeholder="e.g. Office Supplies, General Fund" value={matchCategory} onChange={e => setMatchCategory(e.target.value)} />

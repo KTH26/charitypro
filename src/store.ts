@@ -137,6 +137,12 @@ export interface T4A {
   issuedDate: string;
 }
 
+export interface Vendor {
+  id: string;
+  name: string;
+  fund?: string;
+}
+
 export interface Bill {
   id: string;
   vendor: string;
@@ -195,6 +201,7 @@ interface AppState {
   bankFeeds: Record<string, any[]>;
   employees: Employee[];
   t4aSlips: T4A[];
+  vendors: Vendor[];
 
   toggleRtl: () => void;
   setCurrency: (currency: 'CAD' | 'USD') => void;
@@ -239,6 +246,7 @@ interface AppState {
   editBill: (id: string, updates: Partial<Omit<Bill, 'id'>>) => void;
   markBillPaid: (id: string, sourceAccountId?: string, offsetAccountId?: string) => void;
   deleteBills: (ids: string[]) => void;
+  addVendor: (vendor: Omit<Vendor, 'id'>) => void;
 
   addTask: (task: Omit<Task, 'id' | 'createdAt'>) => void;
   completeTask: (id: string) => void;
@@ -401,6 +409,7 @@ export const useStore = create<AppState>()(
       bankFeeds: {},
       employees: [],
       t4aSlips: [],
+      vendors: [],
 
       toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
       setCurrency: (currency) => set({ currency }),
@@ -659,6 +668,10 @@ export const useStore = create<AppState>()(
 
       deleteBills: (ids) => set(state => ({
         bills: state.bills.filter(b => !ids.includes(b.id))
+      })),
+
+      addVendor: (vendor) => set((state) => ({
+        vendors: [...state.vendors, { ...vendor, id: uid() }]
       })),
 
       markBillPaid: (id, sourceAccountId, offsetAccountId) => set((state) => {
