@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
-  const { accounts, addAccount, isRtl, matchedBankTransactions, matchBankTransaction, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity } = useStore();
+  const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity } = useStore();
   const T = useT(isRtl);
   
   const connectedBanks = accounts.filter(a => a.plaidConnected);
@@ -20,6 +20,7 @@ export const BankFeed: React.FC = () => {
   const [matchCategory, setMatchCategory] = useState('');
   const [matchEntity, setMatchEntity] = useState(''); // Vendor or Donor name
   const [newVendorFund, setNewVendorFund] = useState('Canadian WFW'); // Tracking fund for new vendors
+  const [selectedTab, setSelectedTab] = useState<'unmatched' | 'review' | 'matched'>('unmatched');
 
   // Ensure selectedBank is valid
   useEffect(() => {
@@ -132,7 +133,7 @@ export const BankFeed: React.FC = () => {
   });
 
   const handleSendReview = (id: string) => {
-    alert('Transaction sent to "Needs Review" tab for the other user.');
+    markBankTransactionForReview(id);
   };
 
   const openMatchModal = (tx: any) => {
@@ -214,8 +215,16 @@ export const BankFeed: React.FC = () => {
     setMatchingTx(null);
   };
 
-  // Only show unmatched transactions
-  const currentFeed = (bankFeeds[selectedBank] || []).filter((t: any) => !matchedBankTransactions.includes(t.id));
+  const currentBankFeeds = bankFeeds[selectedBank] || [];
+  
+  const currentFeed = currentBankFeeds.filter((t: any) => {
+    const isMatched = matchedBankTransactions.includes(t.id);
+    const isReview = needsReviewBankTransactions.includes(t.id);
+    if (selectedTab === 'unmatched') return !isMatched && !isReview;
+    if (selectedTab === 'review') return isReview && !isMatched;
+    if (selectedTab === 'matched') return isMatched;
+    return false;
+  });
 
   return (
     <div style={{ display: 'grid', gap: '24px' }}>
@@ -298,6 +307,37 @@ export const BankFeed: React.FC = () => {
                 </button>
               </div>
 
+              {/* Sub Tabs */}
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', borderBottom: '1px solid var(--border)' }}>
+                {(['unmatched', 'review', 'matched'] as const).map(tab => {
+                  let count = 0;
+                  if (tab === 'unmatched') count = currentBankFeeds.filter((t: any) => !matchedBankTransactions.includes(t.id) && !needsReviewBankTransactions.includes(t.id)).length;
+                  if (tab === 'review') count = currentBankFeeds.filter((t: any) => needsReviewBankTransactions.includes(t.id) && !matchedBankTransactions.includes(t.id)).length;
+                  
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => setSelectedTab(tab)}
+                      style={{
+                        padding: '12px 16px',
+                        background: 'transparent',
+                        border: 'none',
+                        borderBottom: selectedTab === tab ? '2px solid var(--navy)' : '2px solid transparent',
+                        color: selectedTab === tab ? 'var(--navy)' : 'var(--text-muted)',
+                        fontWeight: selectedTab === tab ? 700 : 500,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      {tab === 'unmatched' ? 'Unmatched' : tab === 'review' ? 'Needs Review' : 'Matched'}
+                      {count > 0 && <span className={`badge ${tab === 'review' ? 'badge-urgent' : 'badge-primary'}`}>{count}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+
               <div className="table-container">
                 <table>
                   <thead>
@@ -318,12 +358,24 @@ export const BankFeed: React.FC = () => {
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <button className="btn btn-secondary btn-sm" onClick={() => openMatchModal(t)} title="Categorize and Record">
-                              <Check size={14} /> Match
-                            </button>
-                            <button className="btn btn-ghost btn-sm" onClick={() => handleSendReview(t.id)} title="Send for Review">
-                              <Send size={14} style={{ color: 'var(--gold)' }} />
-                            </button>
+                            {selectedTab !== 'matched' && (
+                              <button className="btn btn-secondary btn-sm" onClick={() => openMatchModal(t)} title="Categorize and Record">
+                                <Check size={14} /> Match
+                              </button>
+                            )}
+                            {selectedTab === 'unmatched' && (
+                              <button className="btn btn-ghost btn-sm" onClick={() => handleSendReview(t.id)} title="Send for Review">
+                                <Send size={14} style={{ color: 'var(--gold)' }} /> Review
+                              </button>
+                            )}
+                            {selectedTab === 'review' && (
+                              <button className="btn btn-ghost btn-sm" onClick={() => unmarkBankTransactionForReview(t.id)} title="Remove from Review">
+                                <X size={14} style={{ color: 'var(--text-muted)' }} /> Unmark
+                              </button>
+                            )}
+                            {selectedTab === 'matched' && (
+                              <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.85rem' }}>Matched</span>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -332,7 +384,7 @@ export const BankFeed: React.FC = () => {
                       <tr>
                         <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 20px' }}>
                           <Check size={40} style={{ color: 'var(--green)', opacity: 0.5, marginBottom: '12px' }} />
-                          <div>No pending transactions in your queue.</div>
+                          <div>No transactions in this view.</div>
                           <div style={{ fontSize: '0.85rem', marginTop: '4px' }}>Click "Sync Latest" to pull any new transactions from your bank.</div>
                         </td>
                       </tr>

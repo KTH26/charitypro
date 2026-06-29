@@ -117,6 +117,8 @@ export interface Account {
   type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
   subType?: 'checking' | 'savings' | 'credit_card' | 'loan' | 'payroll' | 'general' | 'internal';
   linkedFundraiserId?: string;
+  routingNumber?: string;
+  accountNumber?: string;
   plaidConnected?: boolean;
 }
 
@@ -158,6 +160,9 @@ export interface Bill {
   isScheduled?: boolean;
   paidDate?: string;
   invoiceSaved?: boolean;
+  checkNumber?: string;
+  memo?: string;
+  printStatus?: 'queued' | 'printed';
 }
 
 export interface Task {
@@ -199,6 +204,7 @@ interface AppState {
   tasks: Task[];
   accountTransfers: AccountTransfer[];
   matchedBankTransactions: string[];
+  needsReviewBankTransactions: string[];
   googleSheetSyncUrl: string;
   solaApiKey: string;
   lastSolaSyncDate: string;
@@ -258,55 +264,10 @@ interface AppState {
   deleteTask: (id: string) => void;
 
   matchBankTransaction: (id: string) => void;
+  unmatchBankTransaction: (id: string) => void;
+  markBankTransactionForReview: (id: string) => void;
+  unmarkBankTransactionForReview: (id: string) => void;
 }
-
-const mockDonors: Donor[] = [
-  { id: '1', displayId: 'D-1001', firstName: 'Yitzchok', lastName: 'Cohen', name: 'Yitzchok Cohen', phone: '514-555-0101', email: 'yitzchok@example.com', address: '123 Outremont Ave, Montreal, QC', totalGiven: 12500, balanceOwed: 0, 
-    notes: 'Prefers to be contacted on Sundays.',
-    cards: [{ id: 'c1', last4: '4242', brand: 'Visa', expiry: '12/26', isDefault: true }]
-  },
-  { id: '2', displayId: 'D-1002', firstName: 'Avraham', lastName: 'Schwartz', name: 'Avraham Schwartz', phone: '514-555-0202', email: 'avraham.s@example.com', address: '456 Parc Ave, Montreal, QC', totalGiven: 3200, balanceOwed: 500, notes: '', fundraiserId: 'f1',
-    cards: [{ id: 'c2', last4: '1111', brand: 'Mastercard', expiry: '09/25', isDefault: true }]
-  },
-  { id: '3', displayId: 'D-1003', firstName: 'Chaim', lastName: 'Levy', name: 'Chaim Levy', phone: '514-555-0303', email: 'clevy@example.com', address: '789 Bernard St, Montreal, QC', totalGiven: 850, balanceOwed: 0, notes: 'Met at the 2025 Gala.' },
-  { id: '4', displayId: 'D-1004', firstName: 'David', lastName: 'Rosen', name: 'David Rosen', phone: '514-555-0404', email: 'drosen@example.com', address: '321 Van Horne Ave, Montreal, QC', totalGiven: 15000, balanceOwed: 2500, notes: '', fundraiserId: 'f2' },
-  { id: '5', displayId: 'D-1005', firstName: 'Eli', lastName: 'Friedman', name: 'Eli Friedman', phone: '514-555-0505', email: 'eli@example.com', address: '654 Vimy Ave, Montreal, QC', totalGiven: 450, balanceOwed: 0, notes: '' },
-];
-
-const mockAccounts: Account[] = [
-  { id: 'a1', name: 'BMO Canadian Account', currency: 'CAD', balance: 124500, type: 'asset', subType: 'checking' },
-  { id: 'a2', name: 'Chase USD Account', currency: 'USD', balance: 45200, type: 'asset', subType: 'checking' },
-  { id: 'a3', name: 'Fundraiser Payroll – Moshe Weiss', currency: 'CAD', balance: 1200, type: 'expense', subType: 'payroll', linkedFundraiserId: 'f1' },
-  { id: 'a4', name: 'Fundraiser Payroll – David Klein', currency: 'CAD', balance: 500, type: 'expense', subType: 'payroll', linkedFundraiserId: 'f2' },
-  { id: 'a5', name: 'General Donations', currency: 'CAD', balance: 250000, type: 'revenue', subType: 'general' },
-  { id: 'a6', name: 'Building Fund', currency: 'CAD', balance: 150000, type: 'revenue', subType: 'general' },
-  { id: 'a7', name: 'Ambulance Operations Expense', currency: 'CAD', balance: 45000, type: 'expense', subType: 'general' },
-  { id: 'a8', name: 'Office Rent Expense', currency: 'CAD', balance: 24000, type: 'expense', subType: 'general' },
-];
-
-const mockTransactions: Transaction[] = [
-  { id: 't1', donorId: '1', amount: 1000, date: '2025-06-20', type: 'approved', method: 'credit_card', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a5', fundraiserId: 'f1', category: 'General' },
-  { id: 't2', donorId: '2', amount: 500, date: '2025-06-21', type: 'pending', method: 'check', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a5', fundraiserId: 'f2', category: 'General' },
-  { id: 't3', donorId: '3', amount: 100, date: '2025-06-22', type: 'recording', method: 'credit_card', currency: 'USD', amountCAD: 135, sourceAccountId: 'a2', offsetAccountId: 'a6', category: 'Campaign' },
-  { id: 't4', donorId: '1', amount: 500, date: '2025-05-20', type: 'approved', method: 'credit_card', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a5', category: 'General' },
-  { id: 't6', donorId: '4', amount: 2000, date: '2025-04-05', type: 'approved', method: 'e_transfer', currency: 'CAD', sourceAccountId: 'a1', offsetAccountId: 'a6', category: 'Building Fund' },
-];
-
-const mockRecurring: RecurringPayment[] = [
-  { id: 'r1', donorId: '1', amount: 500, frequency: 'monthly', nextDate: '2025-07-20', method: 'credit_card', currency: 'CAD', active: true },
-  { id: 'r2', donorId: '3', amount: 100, frequency: 'monthly', nextDate: '2025-07-22', method: 'credit_card', currency: 'USD', active: true },
-];
-
-const mockFundraisers: Fundraiser[] = [
-  { id: 'f1', name: 'Moshe Weiss', email: 'moshe@example.com', phone: '416-555-0300', percentage: 10, balanceOwed: 450, internalAccountBalance: 1200 },
-  { id: 'f2', name: 'David Klein', email: 'david@example.com', phone: '416-555-0301', percentage: 15, balanceOwed: 1200, internalAccountBalance: 500 },
-];
-
-const mockBills: Bill[] = [
-  { id: 'b1', vendor: 'Hatzolah Maintenance', amount: 1250.00, dueDate: '2025-07-01', status: 'pending', category: 'Ambulance Operations', sourceAccountId: 'a1', offsetAccountId: 'a7' },
-  { id: 'b2', vendor: 'Fuel Supplier', amount: 3400.00, dueDate: '2025-06-25', status: 'urgent', category: 'Ambulance Operations', sourceAccountId: 'a1', offsetAccountId: 'a7' },
-  { id: 'b3', vendor: 'Office Rent', amount: 2000.00, dueDate: '2025-07-05', status: 'pending', category: 'Administration', sourceAccountId: 'a1', offsetAccountId: 'a8' },
-];
 
 const mockTasks: Task[] = [
   { id: 'task1', donorId: '2', title: 'Follow up on pending check', notes: 'Check #1042 from Yitzchok Cohen has not cleared yet.', dueDate: '2025-06-28', priority: 'high', type: 'call', completed: false, createdAt: '2025-06-22' },
@@ -408,6 +369,7 @@ export const useStore = create<AppState>()(
       tasks: mockTasks,
       accountTransfers: [],
       matchedBankTransactions: [],
+      needsReviewBankTransactions: [],
       googleSheetSyncUrl: '',
       solaApiKey: '',
       lastSolaSyncDate: '',
@@ -733,7 +695,19 @@ export const useStore = create<AppState>()(
       })),
 
       matchBankTransaction: (id) => set((state) => ({
-        matchedBankTransactions: [...state.matchedBankTransactions, id]
+        matchedBankTransactions: [...new Set([...state.matchedBankTransactions, id])]
+      })),
+
+      unmatchBankTransaction: (id) => set(state => ({
+        matchedBankTransactions: state.matchedBankTransactions.filter(tid => tid !== id)
+      })),
+
+      markBankTransactionForReview: (id) => set(state => ({
+        needsReviewBankTransactions: [...new Set([...state.needsReviewBankTransactions, id])]
+      })),
+
+      unmarkBankTransactionForReview: (id) => set(state => ({
+        needsReviewBankTransactions: state.needsReviewBankTransactions.filter(tid => tid !== id)
       })),
     }),
     {
@@ -773,8 +747,10 @@ const methodsToWrap = [
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
   'addAccount', 'editAccount', 'deleteAccount', 'transferBetweenAccounts',
   'addBill', 'editBill', 'markBillPaid', 'deleteBills',
-  'addTask', 'completeTask', 'deleteTask',
-  'matchBankTransaction'
+  'setBankFeed', 'matchBankTransaction', 'unmatchBankTransaction', 'markBankTransactionForReview', 'unmarkBankTransactionForReview',
+  'setGoogleSheetSyncUrl', 'setSolaApiKey', 'setLastSolaSyncDate',
+  'addVendor', 'payPayrollEntity',
+  'addTask', 'completeTask', 'deleteTask'
 ];
 
 const storeState = useStore.getState() as any;

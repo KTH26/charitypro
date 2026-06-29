@@ -16,6 +16,7 @@ import { Pledges } from './pages/Pledges';
 import { Payments } from './pages/Payments';
 import { Schedules } from './pages/Schedules';
 import { Vendors } from './pages/Vendors';
+import { WriteChecks } from './pages/WriteChecks';
 import { PrintCheckLayout } from './pages/PrintCheckLayout';
 import { Transactions } from './pages/Transactions';
 import { ChartOfAccounts } from './pages/ChartOfAccounts';
@@ -49,6 +50,7 @@ function App() {
         <Route path="/fundraisers" element={<Layout><Fundraisers /></Layout>} />
         <Route path="/transactions" element={<Layout><Transactions /></Layout>} />
         <Route path="/chart-of-accounts" element={<Layout><ChartOfAccounts /></Layout>} />
+        <Route path="/write-checks" element={<Layout><WriteChecks /></Layout>} />
         <Route path="/bank-feed" element={<Layout><BankFeed /></Layout>} />
         <Route path="/payroll" element={<Layout><Payroll /></Layout>} />
         <Route path="/reconciliation" element={<Layout><Reconciliation /></Layout>} />
@@ -63,6 +65,7 @@ function App() {
         <Route path="/calendar" element={<Layout><CalendarPage /></Layout>} />
         <Route path="/tasks" element={<Layout><Tasks /></Layout>} />
         <Route path="/settings" element={<Layout><Settings /></Layout>} />
+        <Route path="/print-checks" element={<Layout><PrintCheckLayout /></Layout>} />
         <Route path="/coming-soon" element={<Layout><ComingSoon /></Layout>} />
         <Route path="/sola-sync" element={<Layout><SolaSync /></Layout>} />
         <Route path="*" element={<Navigate to="/" />} />

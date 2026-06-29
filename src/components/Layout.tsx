@@ -74,6 +74,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       items: [
         { path: '/vendors', label: T('nav_vendors'), icon: Store },
         { path: '/expenses', label: T('nav_bills'), icon: FileText },
+        { path: '/write-checks', label: 'Write Checks', icon: Printer },
       ]
     },
     {
