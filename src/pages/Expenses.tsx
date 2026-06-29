@@ -4,8 +4,7 @@ import { Calendar, Plus, X, AlertTriangle, Edit2, ArrowRight, Printer } from 'lu
 import type { Bill } from '../store';
 import { useLocation, Link } from 'react-router-dom';
 import { useT } from '../i18n';
-
-const CATEGORIES = ['Ambulance Operations', 'Administration', 'Fundraising', 'Events', 'Equipment', 'Other'];
+import { BILL_CATEGORIES } from '../utils/categories';
 
 export const Expenses: React.FC = () => {
   const { isRtl, bills, addBill, markBillPaid, accounts, editBill, deleteBills } = useStore();
@@ -15,7 +14,10 @@ export const Expenses: React.FC = () => {
   const [paySourceId, setPaySourceId] = useState<string>('');
   const [payOffsetId, setPayOffsetId] = useState<string>('');
   const [editBillData, setEditBillData] = useState<Bill | null>(null);
-  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: 'Ambulance Operations', status: 'pending' as 'pending' | 'urgent' });
+  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending' as 'pending' | 'urgent', currency: 'CAD' as 'CAD'|'USD', exchangeRate: '' });
+  const [payImmediately, setPayImmediately] = useState(false);
+  const [addSourceId, setAddSourceId] = useState('');
+  const [addOffsetId, setAddOffsetId] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const location = useLocation();
 
@@ -30,8 +32,14 @@ export const Expenses: React.FC = () => {
 
   const handleAdd = () => {
     if (!form.vendor || !form.amount || !form.dueDate) return;
-    addBill({ vendor: form.vendor, amount: parseFloat(form.amount), dueDate: form.dueDate, status: form.status, category: form.category });
-    setForm({ vendor: '', amount: '', dueDate: '', category: 'Ambulance Operations', status: 'pending' });
+    const billId = addBill({ vendor: form.vendor, amount: parseFloat(form.amount), currency: form.currency, exchangeRate: form.currency === 'USD' ? parseFloat(form.exchangeRate) || undefined : undefined, dueDate: form.dueDate, status: payImmediately ? 'paid' : form.status, category: form.category });
+    if (payImmediately && addSourceId && addOffsetId) {
+      markBillPaid(billId, addSourceId, addOffsetId);
+    }
+    setForm({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending', currency: 'CAD', exchangeRate: '' });
+    setPayImmediately(false);
+    setAddSourceId('');
+    setAddOffsetId('');
     setShowAdd(false);
   };
 
@@ -219,33 +227,75 @@ export const Expenses: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Amount *</label>
-                    <input type="number" placeholder="0.00" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <select value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value as 'CAD'|'USD' }))} style={{ width: '80px', flexShrink: 0 }}>
+                        <option value="CAD">CAD</option>
+                        <option value="USD">USD</option>
+                      </select>
+                      <input type="number" placeholder="0.00" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} style={{ flex: 1 }} />
+                    </div>
                   </div>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Due Date *</label>
                     <input type="date" value={form.dueDate} onChange={e => setForm(f => ({ ...f, dueDate: e.target.value }))} />
                   </div>
                 </div>
+                {form.currency === 'USD' && (
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Exchange Rate (USD to CAD)</label>
+                    <input type="number" placeholder="e.g. 1.35" value={form.exchangeRate} onChange={e => setForm(f => ({ ...f, exchangeRate: e.target.value }))} />
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Category</label>
                     <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                      {BILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Priority</label>
-                    <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value as any }))}>
+                    <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value as any }))} disabled={payImmediately}>
                       <option value="pending">Normal</option>
                       <option value="urgent">Urgent / Overdue</option>
                     </select>
                   </div>
                 </div>
+                
+                <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', margin: 0, fontWeight: 700 }}>
+                    <input type="checkbox" checked={payImmediately} onChange={e => setPayImmediately(e.target.checked)} style={{ width: 16, height: 16 }} />
+                    Mark as Paid Immediately
+                  </label>
+                  
+                  {payImmediately && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '0.85rem' }}>Paid From (Asset) *</label>
+                        <select value={addSourceId} onChange={e => setAddSourceId(e.target.value)}>
+                          <option value="">— Select Account —</option>
+                          {accounts.filter(a => a.type === 'asset' || a.type === 'liability').map(a => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '0.85rem' }}>Allocated To (Expense) *</label>
+                        <select value={addOffsetId} onChange={e => setAddOffsetId(e.target.value)}>
+                          <option value="">— Select Account —</option>
+                          {accounts.filter(a => a.type === 'expense').map(a => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleAdd} disabled={!form.vendor || !form.amount || !form.dueDate}>+ Add Bill</button>
+              <button className="btn btn-primary" onClick={handleAdd} disabled={!form.vendor || !form.amount || !form.dueDate || (payImmediately && (!addSourceId || !addOffsetId))}>+ Add Bill</button>
             </div>
           </div>
         </div>
@@ -325,7 +375,7 @@ export const Expenses: React.FC = () => {
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Category</label>
                     <select value={editBillData.category} onChange={e => setEditBillData({ ...editBillData, category: e.target.value })}>
-                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                      {BILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="form-group" style={{ margin: 0 }}>

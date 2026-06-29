@@ -85,6 +85,7 @@ export interface Transaction {
   category?: string; // Keeping for legacy string tags
   sponsor?: string;
   notes?: string;
+  invoiceSaved?: boolean;
 }
 
 export interface RecurringPayment {
@@ -147,6 +148,8 @@ export interface Bill {
   id: string;
   vendor: string;
   amount: number;
+  currency?: 'CAD' | 'USD';
+  exchangeRate?: number;
   dueDate: string;
   status: 'pending' | 'urgent' | 'paid' | 'scheduled';
   category: string;
@@ -154,6 +157,7 @@ export interface Bill {
   offsetAccountId?: string; // What expense it's allocated to
   isScheduled?: boolean;
   paidDate?: string;
+  invoiceSaved?: boolean;
 }
 
 export interface Task {
@@ -225,6 +229,7 @@ interface AppState {
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
   editTransaction: (id: string, updates: Partial<Omit<Transaction, 'id'>>) => void;
   deleteTransactions: (ids: string[]) => void;
+  deleteAllTransactions: () => void;
 
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
   toggleRecurring: (id: string) => void;
@@ -242,7 +247,7 @@ interface AppState {
   deleteAccount: (id: string) => void;
   transferBetweenAccounts: (transfer: Omit<AccountTransfer, 'id'>) => void;
 
-  addBill: (bill: Omit<Bill, 'id'>) => void;
+  addBill: (bill: Omit<Bill, 'id'>) => string;
   editBill: (id: string, updates: Partial<Omit<Bill, 'id'>>) => void;
   markBillPaid: (id: string, sourceAccountId?: string, offsetAccountId?: string) => void;
   deleteBills: (ids: string[]) => void;
@@ -513,7 +518,7 @@ export const useStore = create<AppState>()(
       }),
 
       bulkAddTransactions: (txs) => set((state) => {
-        const newTxs = txs.map(tx => ({ ...tx, id: uid() }));
+        const newTxs = txs.map(tx => ({ ...tx, id: uid(), invoiceSaved: false }));
         
         let updatedDonors = [...state.donors];
         let updatedAccounts = [...state.accounts];
@@ -604,6 +609,14 @@ export const useStore = create<AppState>()(
         transactions: state.transactions.filter(t => !ids.includes(t.id))
       })),
 
+      deleteAllTransactions: () => set(state => {
+        // Only safely delete transactions, without touching donors or accounts
+        // We'll reset the totalGiven balances on donors to 0 if we wipe the ledger?
+        // Wait, yes, deleting the ledger means totalGiven should be recalculated or reset.
+        const resetDonors = state.donors.map(d => ({ ...d, totalGiven: 0 }));
+        return { transactions: [], donors: resetDonors };
+      }),
+
       addRecurring: (rec) => set((state) => ({
         recurringPayments: [...state.recurringPayments, { ...rec, id: uid() }]
       })),
@@ -656,9 +669,13 @@ export const useStore = create<AppState>()(
         return { accounts: updatedAccounts, accountTransfers: [newTransfer, ...state.accountTransfers] };
       }),
 
-      addBill: (bill) => set((state) => ({
-        bills: [...state.bills, { ...bill, id: uid() }]
-      })),
+      addBill: (bill) => {
+        const id = uid();
+        set((state) => ({
+          bills: [...state.bills, { ...bill, id }]
+        }));
+        return id;
+      },
 
 
 
@@ -689,15 +706,15 @@ export const useStore = create<AppState>()(
         });
 
         let updatedFundraisers = state.fundraisers;
-        const offsetAcc = state.accounts.find(a => a.id === finalOffset);
+        const offsetAcc = state.accounts.find(a => a.id === offsetAccountId);
         if (offsetAcc && offsetAcc.linkedFundraiserId) {
           updatedFundraisers = state.fundraisers.map(f => f.id === offsetAcc.linkedFundraiserId
-            ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount), internalAccountBalance: (f.internalAccountBalance || 0) + bill.amount }
+            ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - (bill?.amount || 0)), internalAccountBalance: (f.internalAccountBalance || 0) + (bill?.amount || 0) }
             : f);
         }
 
         return {
-          bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId: finalSource, offsetAccountId: finalOffset } : b),
+          bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId, offsetAccountId } : b),
           accounts: updatedAccounts,
           fundraisers: updatedFundraisers
         };
@@ -751,7 +768,7 @@ export const applyRemoteEvent = (action: string, args: any[]) => {
 const methodsToWrap = [
   'addDonor', 'editDonor', 'updateDonorNotes', 'addSponsorshipDay', 'removeSponsorshipDay', 'deleteDonors',
   'bulkUpsertDonors',
-  'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions',
+  'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions', 'deleteAllTransactions',
   'addRecurring', 'toggleRecurring',
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
   'addAccount', 'editAccount', 'deleteAccount', 'transferBetweenAccounts',

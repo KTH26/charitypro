@@ -13,13 +13,17 @@ export const Settings: React.FC = () => {
   const [solaKeyInput, setSolaKeyInput] = useState(solaApiKey);
   const [urlSaved, setUrlSaved] = useState(false);
   const [solaSaved, setSolaSaved] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Fetch live exchange rate from a free public API
   const handleSyncRate = async () => {
     setSyncing(true);
     setSyncDone(false);
     try {
-      const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=CAD');
+      let res = await fetch('https://api.frankfurter.app/latest?base=USD&symbols=CAD');
+      if (!res.ok) {
+        res = await fetch('https://open.er-api.com/v6/latest/USD');
+      }
       const data = await res.json();
       const rate = data?.rates?.CAD;
       if (rate) {
@@ -27,6 +31,8 @@ export const Settings: React.FC = () => {
         setManualRate(rate.toFixed(4));
         setSyncDone(true);
         setTimeout(() => setSyncDone(false), 3000);
+      } else {
+        throw new Error('No rate found');
       }
     } catch {
       // Fallback: use a static recent rate
@@ -252,11 +258,26 @@ export const Settings: React.FC = () => {
           </div>
         </div>
 
-        {/* Emergency Data Recovery */}
-        <div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
-            <Cloud size={16} /> {isRtl ? 'דאַטן רעטונג' : 'Emergency Data Recovery'}
-          </label>
+        {/* Advanced Settings & Emergency Data Recovery */}
+        <div style={{ marginTop: '20px' }}>
+          <button 
+            className="btn btn-secondary" 
+            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            <span style={{ fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px', fontSize: '0.85rem' }}>
+              Advanced Settings & Data Recovery
+            </span>
+            <span>{showAdvanced ? '▲' : '▼'}</span>
+          </button>
+          
+          {showAdvanced && (
+            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  <Cloud size={16} /> {isRtl ? 'דאַטן רעטונג' : 'Emergency Data Recovery'}
+                </label>
           <div className="card" style={{ padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
               <div style={{ padding: '10px', background: 'var(--bg-input)', borderRadius: '12px' }}>
@@ -292,6 +313,40 @@ export const Settings: React.FC = () => {
               <Database size={18} /> Restore Missing Data from Cloud
             </button>
           </div>
+        </div>
+
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  <AlertTriangle size={16} /> Danger Zone
+                </label>
+                <div className="card" style={{ padding: '24px', border: '1px solid rgba(239,68,68,0.3)', background: 'var(--red-bg)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                    <div style={{ padding: '10px', background: 'var(--red)', borderRadius: '12px', color: 'white' }}>
+                      <AlertTriangle size={24} />
+                    </div>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontFamily: 'Outfit, sans-serif', color: 'var(--red)' }}>Wipe All Transactions</h3>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Permanently delete all transactions. Use this before re-uploading a bulk import to avoid duplicates. Donors will be kept, but their totals will be reset to 0.</div>
+                    </div>
+                  </div>
+                  <button 
+                    className="btn" 
+                    style={{ width: '100%', padding: '12px', background: 'var(--red)', color: 'white', border: 'none', fontWeight: 600 }}
+                    onClick={() => {
+                      if (window.confirm('Are you ABSOLUTELY SURE you want to DELETE ALL TRANSACTIONS? This cannot be undone.')) {
+                        useStore.getState().deleteAllTransactions();
+                        alert('All transactions have been deleted and donor totals reset to 0.');
+                        window.location.reload();
+                      }
+                    }}
+                  >
+                    Delete All Transactions
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
-import { Search } from 'lucide-react';
+import { ArrowUpRight, Search, FileText } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Transactions: React.FC = () => {
-  const { transactions, accounts, isRtl, deleteTransactions } = useStore();
+  const { transactions, accounts, isRtl, deleteTransactions, editTransaction } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
@@ -114,6 +114,7 @@ export const Transactions: React.FC = () => {
                 <th>Category / Notes</th>
                 <th>Source Account (Dr)</th>
                 <th>Offset Account (Cr)</th>
+                <th style={{ textAlign: 'center' }}>Invoice</th>
                 <th style={{ textAlign: 'right' }}>Amount</th>
               </tr>
             </thead>
@@ -134,6 +135,16 @@ export const Transactions: React.FC = () => {
                   </td>
                   <td>
                     <span style={{ color: 'var(--text-secondary)' }}>{accounts.find(a => a.id === t.offsetAccountId)?.name || '—'}</span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <button 
+                      className={`btn btn-sm ${t.invoiceSaved ? 'btn-primary' : 'btn-ghost'}`} 
+                      onClick={() => editTransaction(t.id, { invoiceSaved: !t.invoiceSaved })}
+                      title={t.invoiceSaved ? 'Invoice saved' : 'Mark invoice as saved'}
+                      style={{ padding: '6px' }}
+                    >
+                      <FileText size={16} />
+                    </button>
                   </td>
                   <td style={{ fontWeight: 700, textAlign: 'right' }}>${t.amount.toLocaleString()} {t.currency}</td>
                 </tr>

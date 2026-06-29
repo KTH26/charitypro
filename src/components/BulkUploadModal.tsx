@@ -8,7 +8,7 @@ interface Props {
 }
 
 export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
-  const { donors, bulkAddTransactions, addDonor } = useStore();
+  const { donors, bulkAddTransactions, addDonor, accounts } = useStore();
   const [dataType, setDataType] = useState<'donors' | 'transactions' | 'expenses' | 'pledges'>('donors');
   const [isDragging, setIsDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -130,7 +130,9 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               currency: (item.row['Currency']?.toUpperCase() || 'CAD') as any,
               category: item.row['Category'] || 'General',
               sponsor: item.row['Sponsor'] || '',
-              notes: item.row['Notes'] || ''
+              notes: item.row['Notes'] || '',
+              sourceAccountId: accounts.find(a => a.name.toLowerCase() === item.row['Asset Account']?.toLowerCase())?.id,
+              offsetAccountId: accounts.find(a => a.name.toLowerCase() === item.row['Revenue Account']?.toLowerCase())?.id
             });
           }
         }
@@ -169,8 +171,8 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
       csvContent += "First Name,Last Name,Email,Phone,Address,Notes\n";
       csvContent += "John,Doe,john@example.com,514-555-0100,123 Main St,Sample note\n";
     } else if (dataType === 'transactions') {
-      csvContent += "Donor ID,Amount,Date,Method,Currency,Category\n";
-      csvContent += "D-1001,100,2025-06-25,credit_card,CAD,General\n";
+      csvContent += "Donor ID,Amount,Date,Method,Currency,Category,Asset Account,Revenue Account\n";
+      csvContent += "D-1001,100,2025-06-25,credit_card,CAD,General,TD Checking,General Donations\n";
     } else if (dataType === 'expenses') {
       csvContent += "Vendor,Amount,Due Date,Category\n";
       csvContent += "Office Supplies Co,150,2025-07-01,Administration\n";
