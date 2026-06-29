@@ -20,8 +20,14 @@ export const Settings: React.FC = () => {
     setSyncing(true);
     setSyncDone(false);
     try {
-      let res = await fetch('https://api.frankfurter.app/latest?base=USD&symbols=CAD');
-      if (!res.ok) {
+      let res: Response | null = null;
+      try {
+        res = await fetch('https://api.frankfurter.app/latest?base=USD&symbols=CAD');
+      } catch (e) {
+        // Ignore SSL or network errors from primary API
+      }
+      
+      if (!res || !res.ok) {
         res = await fetch('https://open.er-api.com/v6/latest/USD');
       }
       const data = await res.json();

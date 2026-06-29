@@ -29,8 +29,8 @@ export const Payments: React.FC = () => {
     if (filterMethod && p.method !== filterMethod) return false;
 
     const donor = donors.find(d => d.id === p.donorId);
-    if (!donor) return false;
-    return donor.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.amount.toString().includes(searchTerm) || p.method.includes(searchTerm);
+    const donorName = donor ? donor.name : 'Unknown Donor';
+    return donorName.toLowerCase().includes(searchTerm.toLowerCase()) || p.amount.toString().includes(searchTerm) || p.method.includes(searchTerm);
   });
 
   const totalPages = Math.ceil(filteredPayments.length / PAGE_SIZE);
