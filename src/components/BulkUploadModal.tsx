@@ -252,8 +252,8 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
       csvContent += "Donor ID,Amount,Date,Currency,Category,Sponsor,Method,Notes\n";
       csvContent += "D-1001,1000,2025-06-25,CAD,General,Moshe Cohen,credit_card,Annual pledge\n";
     } else if (dataType === 'donors') {
-      csvContent += "First Name,Last Name,Name,Email,Phone,Mobile Phone,Home Phone,Mobile Phone 2,Phone 3,Confidential Mobile,Confidential Mobile 2,Address,Building Number,Street,Apt,Address Type,Address No,Notes,Pre-Title,Hebrew First Name,Hebrew Last Name,Title,Post-Title,Double Names,His Father,Her Father,Household Full Name,Maiden Name\n";
-      csvContent += "John,Doe,,john@example.com,514-555-0100,,,,,123 Main St,,,,,,,Sample note,,,,,,,,,,,\n";
+      csvContent += "Donor ID,First Name,Last Name,Name,Email,Phone,Mobile Phone,Home Phone,Mobile Phone 2,Phone 3,Confidential Mobile,Confidential Mobile 2,Address,Building Number,Street,Apt,Address Type,Address No,Notes,Pre-Title,Hebrew First Name,Hebrew Last Name,Title,Post-Title,Double Names,His Father,Her Father,Household Full Name,Maiden Name\n";
+      csvContent += "D-1001,John,Doe,,john@example.com,514-555-0100,,,,,123 Main St,,,,,,,Sample note,,,,,,,,,,,\n";
     } else if (dataType === 'transactions') {
       csvContent += "Donor ID,Amount,Date,Method,Currency,Category,Asset Account,Revenue Account\n";
       csvContent += "D-1001,100,2025-06-25,credit_card,CAD,General,TD Checking,General Donations\n";
