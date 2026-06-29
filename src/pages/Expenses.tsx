@@ -7,14 +7,14 @@ import { useT } from '../i18n';
 import { BILL_CATEGORIES } from '../utils/categories';
 
 export const Expenses: React.FC = () => {
-  const { isRtl, bills, addBill, markBillPaid, accounts, editBill, deleteBills } = useStore();
+  const { bills, addBill, editBill, deleteBills, markBillPaid, accounts, exchangeRate, isRtl } = useStore();
   const T = useT(isRtl);
   const [showAdd, setShowAdd] = useState(false);
   const [confirmPay, setConfirmPay] = useState<string | null>(null);
   const [paySourceId, setPaySourceId] = useState<string>('');
   const [payOffsetId, setPayOffsetId] = useState<string>('');
   const [editBillData, setEditBillData] = useState<Bill | null>(null);
-  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending' as 'pending' | 'urgent', currency: 'CAD' as 'CAD'|'USD', exchangeRate: '' });
+  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending' as 'pending' | 'urgent', currency: 'CAD' as 'CAD'|'USD', exchangeRate: exchangeRate?.toString() || '1.35' });
   const [payImmediately, setPayImmediately] = useState(false);
   const [addSourceId, setAddSourceId] = useState('');
   const [addOffsetId, setAddOffsetId] = useState('');
@@ -33,10 +33,11 @@ export const Expenses: React.FC = () => {
   const handleAdd = () => {
     if (!form.vendor || !form.amount || !form.dueDate) return;
     const billId = addBill({ vendor: form.vendor, amount: parseFloat(form.amount), currency: form.currency, exchangeRate: form.currency === 'USD' ? parseFloat(form.exchangeRate) || undefined : undefined, dueDate: form.dueDate, status: payImmediately ? 'paid' : form.status, category: form.category });
+    
     if (payImmediately && addSourceId && addOffsetId) {
       markBillPaid(billId, addSourceId, addOffsetId);
     }
-    setForm({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending', currency: 'CAD', exchangeRate: '' });
+    setForm({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending', currency: 'CAD', exchangeRate: exchangeRate?.toString() || '1.35' });
     setPayImmediately(false);
     setAddSourceId('');
     setAddOffsetId('');

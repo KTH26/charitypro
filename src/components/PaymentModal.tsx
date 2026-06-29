@@ -51,6 +51,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [recMethod, setRecMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other'>('credit_card');
   const [recCurrency, setRecCurrency] = useState<'CAD' | 'USD'>(currency);
   const [recInstallments, setRecInstallments] = useState('12');
+  const [localExchangeRate, setLocalExchangeRate] = useState(exchangeRate);
 
   if (!donor) return null;
 
@@ -58,7 +59,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
     if (!amt || isNaN(+amt)) return 0;
     const num = parseFloat(amt);
     if (txCurrency === 'CAD') return num;
-    return num * exchangeRate; // If rate is 1.35 (USD -> CAD), then USD -> CAD is * 1.35
+    return num * localExchangeRate; // If rate is 1.35 (USD -> CAD), then USD -> CAD is * 1.35
   };
 
   const handleOneTime = async () => {
@@ -304,11 +305,19 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
 
                   {txCurrency === 'USD' && (
                     <div style={{ background: 'var(--yellow-bg)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '16px', borderRadius: '12px' }}>
-                      <div style={{ fontWeight: 700, color: 'var(--yellow)', marginBottom: '4px' }}>USD Exchange Rate</div>
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                        Using System Rate: 1 USD = {exchangeRate} CAD
+                      <div style={{ fontWeight: 700, color: 'var(--yellow)', marginBottom: '8px' }}>USD Exchange Rate</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>1 USD = </span>
+                        <input 
+                          type="number" 
+                          step="0.0001"
+                          value={localExchangeRate}
+                          onChange={(e) => setLocalExchangeRate(parseFloat(e.target.value) || 1)}
+                          style={{ width: '80px', padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border)', textAlign: 'center' }}
+                        />
+                        <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}> CAD</span>
                       </div>
-                      <div style={{ marginTop: '8px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                         Equivalent: <strong style={{ color: 'var(--navy)' }}>${getAmountCAD(amount).toFixed(2)} CAD</strong> added to donor balance.
                       </div>
                     </div>
