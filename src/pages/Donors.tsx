@@ -21,7 +21,7 @@ export const Donors: React.FC = () => {
     donors, transactions, recurringPayments,
     updateDonorNotes, toggleRecurring, fundraisers, isRtl,
     googleSheetSyncUrl, setGoogleSheetSyncUrl, addDonor, editDonor,
-    donorSortBy, setDonorSortBy, deleteDonors
+    donorSortBy, setDonorSortBy, deleteDonors, accounts
   } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
@@ -553,12 +553,18 @@ export const Donors: React.FC = () => {
           {donorTab === 'transactions' && (
             <div className="table-container">
               <table>
-                <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Status</th><th></th></tr></thead>
+                <thead><tr><th>Date</th><th>Amount</th><th>Accounts</th><th>Method</th><th>Status</th><th></th></tr></thead>
                 <tbody>
                   {donorTransactions.filter(t => t.type !== 'declined').map(t => (
                     <tr key={t.id}>
                       <td>{t.date}</td>
                       <td style={{ fontWeight: 700 }}>${t.amount.toLocaleString()} {t.currency}</td>
+                      <td>
+                        <div style={{ fontSize: '0.85rem', lineHeight: '1.4' }}>
+                          <div style={{ color: 'var(--text-secondary)' }}>Asset: {accounts.find(a => a.id === t.sourceAccountId)?.name || 'Unknown'}</div>
+                          <div style={{ color: 'var(--text-secondary)' }}>Rev: {accounts.find(a => a.id === t.offsetAccountId)?.name || 'Unknown'}</div>
+                        </div>
+                      </td>
                       <td>{methodLabel[t.method]}</td>
                       <td>{statusBadge(t.type)}</td>
                       <td>
@@ -567,7 +573,7 @@ export const Donors: React.FC = () => {
                     </tr>
                   ))}
                   {donorTransactions.filter(t => t.type !== 'declined').length === 0 && (
-                    <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>{T('no_donors')}</td></tr>
+                    <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>{T('no_donors')}</td></tr>
                   )}
                 </tbody>
               </table>

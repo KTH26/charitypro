@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { AddAccountModal } from '../components/AddAccountModal';
 
 export const ChartOfAccounts: React.FC = () => {
-  const { accounts, transactions, bills, isRtl, deleteAccount } = useStore();
+  const { accounts, transactions, bills, isRtl, deleteAccount, donors } = useStore();
   const T = useT(isRtl);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAccount, setShowAddAccount] = useState(false);
@@ -25,10 +25,19 @@ export const ChartOfAccounts: React.FC = () => {
   if (selectedAccount) {
     transactions.forEach(t => {
       if (t.sourceAccountId === selectedAccount.id || t.offsetAccountId === selectedAccount.id) {
+        let desc = t.notes || 'Donation / Income';
+        if (t.donorId) {
+          const donor = donors.find(d => d.id === t.donorId);
+          if (donor) {
+            const hebNameParts = [donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title, donor.postTitle].filter(Boolean);
+            const hebName = hebNameParts.join(' ');
+            desc = `${donor.name}${donor.phone ? ` (${donor.phone})` : ''}${hebName ? ` - ${hebName}` : ''}${t.notes ? ` - ${t.notes}` : ''}`;
+          }
+        }
         accountHistory.push({
           id: t.id,
           date: t.date,
-          description: t.notes || 'Donation / Income',
+          description: desc,
           amount: t.amount,
           type: 'tx',
           isCredit: t.offsetAccountId === selectedAccount.id
