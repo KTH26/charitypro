@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useStore, type Transaction, type Bill } from '../store';
-import { Plus, X, ArrowUpRight, ArrowDownRight, Trash2, ArrowLeft, Filter, Edit2, Calendar } from 'lucide-react';
+import { Plus, X, ArrowUpRight, ArrowDownRight, Trash2, ArrowLeft, Filter, Edit2, Calendar, User } from 'lucide-react';
 import { useT } from '../i18n';
 import { AddAccountModal } from '../components/AddAccountModal';
 
@@ -16,6 +16,7 @@ export const ChartOfAccounts: React.FC = () => {
 
   // Edit Modals
   const [editTx, setEditTx] = useState<Transaction | null>(null);
+  const [viewTx, setViewTx] = useState<Transaction | null>(null);
   const [editBillState, setEditBillState] = useState<Bill | null>(null);
 
   const groupedAccounts = accounts.reduce((acc, account) => {
@@ -265,7 +266,7 @@ export const ChartOfAccounts: React.FC = () => {
                     <div 
                       key={item.id + i} 
                       onClick={() => {
-                        if (item.type === 'tx') setEditTx(item.rawItem);
+                        if (item.type === 'tx') setViewTx(item.rawItem);
                         else setEditBillState(item.rawItem);
                       }}
                       style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
@@ -292,6 +293,64 @@ export const ChartOfAccounts: React.FC = () => {
       )}
 
       {showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} />}
+      
+      {/* View Transaction Modal */}
+      {viewTx && (
+        <div className="modal-overlay" onClick={() => setViewTx(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ margin: 0 }}>Transaction Details</h2>
+              <button className="modal-close" onClick={() => setViewTx(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              {(() => {
+                const txDonor = donors.find(d => d.id === viewTx.donorId);
+                return (
+                  <div style={{ display: 'grid', gap: '20px' }}>
+                    {txDonor ? (
+                      <div className="card" style={{ background: 'var(--bg-input)' }}>
+                        <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <User size={18} color="var(--navy)" /> Donor Information
+                        </h3>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.9rem' }}>
+                          <div><strong>Name:</strong> {txDonor.name}</div>
+                          <div><strong>Phone:</strong> {txDonor.phone || '-'}</div>
+                          <div><strong>Hebrew Name:</strong> {[txDonor.preTitle, txDonor.hebFirstName, txDonor.hebLastName, txDonor.title, txDonor.postTitle].filter(Boolean).join(' ') || '-'}</div>
+                          <div><strong>Email:</strong> {txDonor.email || '-'}</div>
+                          <div style={{ gridColumn: '1 / -1' }}><strong>Address:</strong> {txDonor.address || '-'}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="card" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+                        No donor associated with this transaction.
+                      </div>
+                    )}
+                    
+                    <div>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem' }}>Payment Details</h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.9rem' }}>
+                        <div><strong>Amount:</strong> ${viewTx.amount} {viewTx.currency}</div>
+                        <div><strong>Date:</strong> {viewTx.date}</div>
+                        <div><strong>Method:</strong> {viewTx.method}</div>
+                        <div><strong>Status:</strong> {viewTx.type}</div>
+                        <div><strong>Asset Account:</strong> {accounts.find(a => a.id === viewTx.sourceAccountId)?.name || '-'}</div>
+                        <div><strong>Revenue Account:</strong> {accounts.find(a => a.id === viewTx.offsetAccountId)?.name || '-'}</div>
+                        <div style={{ gridColumn: '1 / -1' }}><strong>Notes:</strong> {viewTx.notes || '-'}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button className="btn btn-secondary" onClick={() => setViewTx(null)}>Close</button>
+              <button className="btn btn-primary" onClick={() => { setEditTx(viewTx); setViewTx(null); }}>
+                <Edit2 size={16} style={{ marginRight: '6px' }} /> Edit Transaction
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Edit Transaction Modal */}
       {editTx && (
