@@ -46,7 +46,7 @@ export const BatchDetailsModal: React.FC<Props> = ({ batchId, onClose }) => {
                   <tr key={t.id}>
                     <td>{t.date}</td>
                     <td style={{ fontWeight: 600 }}>{donor?.name || 'Unknown'}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>${(t.amountCAD ?? t.amount).toLocaleString()}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>${Number(t.amountCAD ?? t.amount).toLocaleString()}</td>
                   </tr>
                 );
               })}

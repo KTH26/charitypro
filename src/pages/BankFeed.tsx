@@ -178,7 +178,7 @@ export const BankFeed: React.FC = () => {
 
     if (matchType === 'match_multiple') {
       const selectedTxs = transactions.filter(t => batchSelectedIds.includes(t.id));
-      const totalSelected = selectedTxs.reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+      const totalSelected = selectedTxs.reduce((sum, t) => sum + Number(t.amountCAD ?? t.amount), 0);
       
       addBatchDeposit(
         matchingTx.id,
@@ -530,7 +530,7 @@ export const BankFeed: React.FC = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--navy)' }}>Select Internal Transactions</h3>
                     <div style={{ background: 'var(--bg-input)', padding: '4px 12px', borderRadius: '20px', fontSize: '0.9rem', fontWeight: 700 }}>
-                      Selected: <span style={{ color: 'var(--green)' }}>${transactions.filter(t => batchSelectedIds.includes(t.id)).reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0).toFixed(2)}</span> 
+                      Selected: <span style={{ color: 'var(--green)' }}>${transactions.filter(t => batchSelectedIds.includes(t.id)).reduce((sum, t) => sum + Number(t.amountCAD ?? t.amount), 0).toFixed(2)}</span> 
                       <span style={{ color: 'var(--text-muted)', margin: '0 8px' }}>/</span> 
                       <span>${Math.abs(matchingTx.amount).toFixed(2)}</span>
                     </div>
@@ -591,7 +591,7 @@ export const BankFeed: React.FC = () => {
                                 </td>
                                 <td style={{ padding: '8px' }}>{t.date}</td>
                                 <td style={{ padding: '8px' }}>{donor?.name || 'Unknown'}</td>
-                                <td style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>${(t.amountCAD ?? t.amount).toFixed(2)}</td>
+                                <td style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>${Number(t.amountCAD ?? t.amount).toFixed(2)}</td>
                               </tr>
                             );
                           })}
