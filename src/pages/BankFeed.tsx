@@ -24,6 +24,7 @@ export const BankFeed: React.FC = () => {
   const [batchSearchTerm, setBatchSearchTerm] = useState('');
   const [batchDateFrom, setBatchDateFrom] = useState('');
   const [batchDateTo, setBatchDateTo] = useState('');
+  const [batchMethodFilter, setBatchMethodFilter] = useState('credit_card');
 
   // Ensure selectedBank is valid
   useEffect(() => {
@@ -557,6 +558,18 @@ export const BankFeed: React.FC = () => {
                       title="To Date"
                       style={{ width: '130px' }}
                     />
+                    <select
+                      value={batchMethodFilter}
+                      onChange={e => setBatchMethodFilter(e.target.value)}
+                      style={{ width: '130px' }}
+                    >
+                      <option value="">All Methods</option>
+                      <option value="credit_card">Credit Card</option>
+                      <option value="check">Check</option>
+                      <option value="cash">Cash</option>
+                      <option value="e_transfer">E-Transfer</option>
+                      <option value="other">Other</option>
+                    </select>
                   </div>
                   <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '8px' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -564,6 +577,7 @@ export const BankFeed: React.FC = () => {
                         <tr>
                           <th style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}></th>
                           <th style={{ padding: '8px', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>Date</th>
+                          <th style={{ padding: '8px', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>Method</th>
                           <th style={{ padding: '8px', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>Donor</th>
                           <th style={{ padding: '8px', borderBottom: '1px solid var(--border)', textAlign: 'right' }}>Amount</th>
                         </tr>
@@ -572,6 +586,7 @@ export const BankFeed: React.FC = () => {
                         {transactions
                           .filter(t => !t.isBatch && !t.batchTransactionId && (t.type === 'approved' || t.type === 'pending'))
                           .filter(t => {
+                            if (batchMethodFilter && t.method !== batchMethodFilter) return false;
                             if (batchDateFrom && t.date < batchDateFrom) return false;
                             if (batchDateTo && t.date > batchDateTo) return false;
                             if (!batchSearchTerm) return true;
@@ -590,6 +605,11 @@ export const BankFeed: React.FC = () => {
                                   <input type="checkbox" checked={batchSelectedIds.includes(t.id)} readOnly />
                                 </td>
                                 <td style={{ padding: '8px' }}>{t.date}</td>
+                                <td style={{ padding: '8px' }}>
+                                  <span style={{ fontSize: '0.75rem', background: 'var(--bg)', padding: '2px 6px', borderRadius: '4px' }}>
+                                    {t.method.replace('_', ' ')}
+                                  </span>
+                                </td>
                                 <td style={{ padding: '8px' }}>{donor?.name || 'Unknown'}</td>
                                 <td style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>${Number(t.amountCAD ?? t.amount).toFixed(2)}</td>
                               </tr>

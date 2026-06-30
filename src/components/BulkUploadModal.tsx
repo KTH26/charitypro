@@ -194,12 +194,22 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
                 parsedDate = d.toISOString().split('T')[0];
               }
             }
+            const methodRaw = item.row['Method'] || item.row['Payment Method'] || item.row['method'];
+            let parsedMethod = methodRaw?.toLowerCase().trim() || 'check';
+            if (parsedMethod.includes('credit') || parsedMethod.includes('card')) parsedMethod = 'credit_card';
+            else if (parsedMethod.includes('transfer') || parsedMethod.includes('wire')) parsedMethod = 'e_transfer';
+            else if (parsedMethod.includes('cash')) parsedMethod = 'cash';
+            else if (parsedMethod.includes('voucher')) parsedMethod = 'vouchers';
+            else if (parsedMethod.includes('eizer')) parsedMethod = 'eizer';
+            else if (parsedMethod.includes('bnei') || parsedMethod.includes('leivy')) parsedMethod = 'bnei_leivy';
+            else if (parsedMethod !== 'check') parsedMethod = 'other'; // fallback if we don't know it
+
             transactionsToAdd.push({
               donorId: finalDonorId,
               amount: amount,
               date: parsedDate,
               type: dataType === 'pledges' ? 'recording' : 'approved',
-              method: (item.row['Method']?.toLowerCase() || 'check') as any,
+              method: parsedMethod as any,
               currency: (item.row['Currency']?.toUpperCase() || 'CAD') as any,
               category: item.row['Category'] || 'General',
               sponsor: item.row['Sponsor'] || '',
