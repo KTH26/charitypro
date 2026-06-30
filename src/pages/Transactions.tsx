@@ -104,7 +104,7 @@ export const Transactions: React.FC = () => {
                 }
               }}>Delete Selected</button>
 
-              {filteredTransactions.length > selectedIds.length && filteredTransactions.length > 50 && (
+              {filteredTransactions.length > selectedIds.length && (
                 <button className="btn btn-sm" style={{ background: 'white', color: 'var(--red)', border: '1px solid var(--red)' }} onClick={() => {
                   if (window.confirm(`WARNING: Are you sure you want to permanently delete ALL ${filteredTransactions.length} transactions that match your current filter? This cannot be undone.`)) {
                     deleteTransactions(filteredTransactions.map(t => t.id));
