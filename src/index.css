@@ -683,3 +683,9 @@ tbody tr:hover td { background: var(--navy-bg); }
   .grid-cols-5      { grid-template-columns: 1fr; }
 }
 
+
+.hover-row:hover { background: var(--bg-input); }
+
+
+.hover-underline:hover { text-decoration: underline; }
+

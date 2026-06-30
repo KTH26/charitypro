@@ -5,6 +5,7 @@ import { Search, Wallet, Upload } from 'lucide-react';
 import { PaymentModal } from '../components/PaymentModal';
 import { BulkUploadModal } from '../components/BulkUploadModal';
 import { useT } from '../i18n';
+import { DonorProfileModal } from '../components/DonorProfileModal';
 
 export const Payments: React.FC = () => {
   const { transactions, donors, isRtl } = useStore();
@@ -14,6 +15,7 @@ export const Payments: React.FC = () => {
   const [showPayment, setShowPayment] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
+  const [showDonorProfile, setShowDonorProfile] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -144,7 +146,7 @@ export const Payments: React.FC = () => {
               {paginatedPayments.map(payment => {
                 const donor = donors.find(d => d.id === payment.donorId);
                 return (
-                  <tr key={payment.id} onClick={() => navigate(`/donors?donorId=${payment.donorId}`)} style={{ cursor: 'pointer' }} className="hover-bg">
+                  <tr key={payment.id} onClick={() => setShowDonorProfile(payment.donorId)} style={{ cursor: 'pointer' }} className="hover-bg">
                     <td onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={selectedIds.includes(payment.id)} onChange={() => handleSelect(payment.id)} />
                     </td>
@@ -175,6 +177,9 @@ export const Payments: React.FC = () => {
 
       {showPayment && selectedDonorId && (
         <PaymentModal donorId={selectedDonorId} onClose={() => setShowPayment(false)} />
+      )}
+      {showDonorProfile && (
+        <DonorProfileModal donorId={showDonorProfile} onClose={() => setShowDonorProfile(null)} />
       )}
       {showBulkUpload && (
         <BulkUploadModal onClose={() => setShowBulkUpload(false)} />

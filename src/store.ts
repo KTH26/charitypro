@@ -86,6 +86,8 @@ export interface Transaction {
   sponsor?: string;
   notes?: string;
   invoiceSaved?: boolean;
+  batchTransactionId?: string; // Links individual tx to a master batch tx
+  isBatch?: boolean; // True if this is the master batch tx
 }
 
 export interface RecurringPayment {
@@ -115,6 +117,7 @@ export interface Account {
   currency: 'CAD' | 'USD';
   balance: number;
   type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+  parentId?: string;
   subType?: 'checking' | 'savings' | 'credit_card' | 'loan' | 'payroll' | 'general' | 'internal';
   linkedFundraiserId?: string;
   routingNumber?: string;
@@ -267,6 +270,7 @@ interface AppState {
   unmatchBankTransaction: (id: string) => void;
   markBankTransactionForReview: (id: string) => void;
   unmarkBankTransactionForReview: (id: string) => void;
+  addBatchDeposit: (bankFeedId: string, internalTxIds: string[], accountId: string, totalAmount: number, date: string, desc: string) => void;
 }
 
 const mockTasks: Task[] = [
@@ -707,6 +711,63 @@ export const useStore = create<AppState>()(
       unmatchBankTransaction: (id) => set(state => ({
         matchedBankTransactions: state.matchedBankTransactions.filter(tid => tid !== id)
       })),
+
+      addBatchDeposit: (bankFeedId, internalTxIds, accountId, totalAmount, date, desc) => set(state => {
+        const batchId = uid();
+        
+        // 1. Create the master batch transaction
+        const masterTx: Transaction = {
+          id: batchId,
+          donorId: 'batch', // generic ID for batches
+          amount: totalAmount,
+          date,
+          type: 'approved',
+          method: 'other',
+          currency: 'CAD',
+          sourceAccountId: accountId,
+          notes: desc,
+          isBatch: true,
+        };
+
+        // 2. Update individual transactions
+        const updatedTxs = state.transactions.map(tx => {
+          if (internalTxIds.includes(tx.id)) {
+            return {
+              ...tx,
+              sourceAccountId: undefined, // Remove from bank ledger
+              batchTransactionId: batchId
+            };
+          }
+          return tx;
+        });
+
+        // 3. Update account balances (we subtract the original sourceAccountId and add to the new one)
+        // Note: For a robust system we should completely recalculate balances, but here we just add the totalAmount to the accountId
+        const updatedAccounts = state.accounts.map(a => {
+          if (a.id === accountId) {
+            return { ...a, balance: a.balance + totalAmount };
+          }
+          // We also ideally should deduct from whatever sourceAccountId the individual txs had, if any.
+          // For simplicity and speed, we will assume they were mostly undeposited/cleared.
+          let balanceDeduction = 0;
+          internalTxIds.forEach(id => {
+             const t = state.transactions.find(x => x.id === id);
+             if (t && t.sourceAccountId === a.id) {
+               balanceDeduction += t.amount;
+             }
+          });
+          if (balanceDeduction > 0) {
+            return { ...a, balance: a.balance - balanceDeduction };
+          }
+          return a;
+        });
+
+        return {
+          transactions: [...updatedTxs, masterTx],
+          accounts: updatedAccounts,
+          matchedBankTransactions: [...new Set([...state.matchedBankTransactions, bankFeedId])]
+        };
+      }),
 
       markBankTransactionForReview: (id) => set(state => ({
         needsReviewBankTransactions: [...new Set([...state.needsReviewBankTransactions, id])]

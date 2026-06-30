@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { useStore } from '../store';
 import { Store, Search } from 'lucide-react';
 import { useT } from '../i18n';
+import { VendorModal } from '../components/VendorModal';
 
 export const Vendors: React.FC = () => {
   const { bills, isRtl } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
 
   // Extract unique vendors and their stats
   const vendorMap = new Map<string, { name: string, totalBilled: number, balanceOwed: number, billCount: number }>();
@@ -55,8 +57,8 @@ export const Vendors: React.FC = () => {
             </thead>
             <tbody>
               {filteredVendors.map(v => (
-                <tr key={v.name}>
-                  <td style={{ fontWeight: 600 }}>{v.name}</td>
+                <tr key={v.name} onClick={() => setSelectedVendor(v.name)} style={{ cursor: 'pointer' }} className="hover-row">
+                  <td style={{ fontWeight: 600, color: 'var(--navy)' }}>{v.name}</td>
                   <td style={{ fontWeight: 700 }}>${v.totalBilled.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                   <td style={{ fontWeight: 700, color: v.balanceOwed > 0 ? 'var(--red)' : 'var(--text-muted)' }}>
                     ${v.balanceOwed.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -71,6 +73,13 @@ export const Vendors: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {selectedVendor && (
+        <VendorModal 
+          vendorName={selectedVendor} 
+          onClose={() => setSelectedVendor(null)} 
+        />
+      )}
     </div>
   );
 };

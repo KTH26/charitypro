@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
-import { ArrowUpRight, Search, FileText } from 'lucide-react';
+import { ArrowUpRight, Search, FileText, Layers } from 'lucide-react';
 import { useT } from '../i18n';
+import { BatchDetailsModal } from '../components/BatchDetailsModal';
 
 export const Transactions: React.FC = () => {
   const { transactions, accounts, isRtl, deleteTransactions, editTransaction } = useStore();
@@ -14,9 +15,11 @@ export const Transactions: React.FC = () => {
   const [filterMethod, setFilterMethod] = useState('');
   const [filterType, setFilterType] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [showBatchDetails, setShowBatchDetails] = useState<string | null>(null);
   const PAGE_SIZE = 50;
 
   const filteredTransactions = transactions.filter(t => {
+    if (t.batchTransactionId) return false; // Hide individual transactions that are part of a batch
     if (fromDate && t.date < fromDate) return false;
     if (toDate && t.date > toDate) return false;
     if (filterMethod && t.method !== filterMethod) return false;
@@ -120,14 +123,22 @@ export const Transactions: React.FC = () => {
             </thead>
             <tbody>
               {paginatedTransactions.map(t => (
-                <tr key={t.id}>
-                  <td>
+                <tr key={t.id} onClick={() => { if (t.isBatch) setShowBatchDetails(t.id); }} style={{ cursor: t.isBatch ? 'pointer' : 'default', background: t.isBatch ? 'var(--blue-bg)' : '' }}>
+                  <td onClick={e => e.stopPropagation()}>
                     <input type="checkbox" checked={selectedIds.includes(t.id)} onChange={() => handleSelect(t.id)} />
                   </td>
                   <td>{t.date}</td>
-                  <td><span className={`badge ${t.type === 'approved' ? 'badge-success' : 'badge-gray'}`}>{t.type}</span></td>
                   <td>
-                    <div style={{ fontWeight: 600 }}>{t.category || 'General'}</div>
+                    {t.isBatch ? (
+                      <span className="badge badge-info" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <Layers size={12} /> Batch
+                      </span>
+                    ) : (
+                      <span className={`badge ${t.type === 'approved' ? 'badge-success' : 'badge-gray'}`}>{t.type}</span>
+                    )}
+                  </td>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{t.category || (t.isBatch ? 'Batch Deposit' : 'General')}</div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.notes}</div>
                   </td>
                   <td>
@@ -164,6 +175,10 @@ export const Transactions: React.FC = () => {
           </div>
         )}
       </div>
+
+      {showBatchDetails && (
+        <BatchDetailsModal batchId={showBatchDetails} onClose={() => setShowBatchDetails(null)} />
+      )}
     </div>
   );
 };

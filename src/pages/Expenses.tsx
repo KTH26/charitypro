@@ -5,21 +5,46 @@ import type { Bill } from '../store';
 import { useLocation, Link } from 'react-router-dom';
 import { useT } from '../i18n';
 import { BILL_CATEGORIES } from '../utils/categories';
+import { AddAccountModal } from '../components/AddAccountModal';
+import { VendorModal } from '../components/VendorModal';
 
 export const Expenses: React.FC = () => {
-  const { bills, addBill, editBill, deleteBills, markBillPaid, accounts, exchangeRate, isRtl } = useStore();
+  const { bills, addBill, editBill, deleteBills, markBillPaid, accounts, addAccount, exchangeRate, isRtl } = useStore();
   const T = useT(isRtl);
   const [showAdd, setShowAdd] = useState(false);
   const [confirmPay, setConfirmPay] = useState<string | null>(null);
   const [paySourceId, setPaySourceId] = useState<string>('');
   const [payOffsetId, setPayOffsetId] = useState<string>('');
   const [editBillData, setEditBillData] = useState<Bill | null>(null);
-  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending' as 'pending' | 'urgent', currency: 'CAD' as 'CAD'|'USD', exchangeRate: exchangeRate?.toString() || '1.35' });
+  const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
+  
+  const expenseAccounts = accounts.filter(a => a.type === 'expense');
+  const defaultCategory = expenseAccounts.find(a => !a.parentId)?.id || '';
+
+  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: defaultCategory, status: 'pending' as 'pending' | 'urgent', currency: 'CAD' as 'CAD'|'USD', exchangeRate: exchangeRate?.toString() || '1.35' });
+  const [showAddCategory, setShowAddCategory] = useState(false);
   const [payImmediately, setPayImmediately] = useState(false);
   const [addSourceId, setAddSourceId] = useState('');
   const [addOffsetId, setAddOffsetId] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const location = useLocation();
+
+  React.useEffect(() => {
+    // Migration: ensure all legacy BILL_CATEGORIES exist as expense accounts
+    const existingNames = new Set(expenseAccounts.map(a => a.name));
+    let added = false;
+    BILL_CATEGORIES.forEach(cat => {
+      if (!existingNames.has(cat)) {
+        addAccount({ name: cat, type: 'expense', currency: 'CAD', balance: 0, subType: 'general' });
+        added = true;
+      }
+    });
+    // Set default category if not set
+    if (!form.category && added) {
+       const firstRoot = accounts.find(a => a.type === 'expense' && !a.parentId);
+       if (firstRoot) setForm(f => ({ ...f, category: firstRoot.id }));
+    }
+  }, [accounts.length]);
 
   React.useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -37,7 +62,7 @@ export const Expenses: React.FC = () => {
     if (payImmediately && addSourceId && addOffsetId) {
       markBillPaid(billId, addSourceId, addOffsetId);
     }
-    setForm({ vendor: '', amount: '', dueDate: '', category: BILL_CATEGORIES[0], status: 'pending', currency: 'CAD', exchangeRate: exchangeRate?.toString() || '1.35' });
+    setForm({ vendor: '', amount: '', dueDate: '', category: defaultCategory, status: 'pending', currency: 'CAD', exchangeRate: exchangeRate?.toString() || '1.35' });
     setPayImmediately(false);
     setAddSourceId('');
     setAddOffsetId('');
@@ -62,15 +87,69 @@ export const Expenses: React.FC = () => {
 
   const totalDue = activeBills.reduce((sum, b) => sum + b.amount, 0);
 
-  // Expense category summaries (mock YTD)
-  const expenseCategories = [
-    { category: 'Ambulance Operations', subcategory: 'Fuel', ytd: 24500 },
-    { category: 'Ambulance Operations', subcategory: 'Maintenance', ytd: 12300 },
-    { category: 'Administration', subcategory: 'Rent', ytd: 14000 },
-    { category: 'Fundraising', subcategory: 'Events', ytd: 5400 },
-    { category: 'Equipment', subcategory: 'Supplies', ytd: 3200 },
-  ];
-  const totalYTD = expenseCategories.reduce((s, e) => s + e.ytd, 0);
+  // Helper to render nested account options
+  const renderAccountOptions = (parentId?: string, depth = 0) => {
+    return expenseAccounts
+      .filter(a => a.parentId === parentId)
+      .map(a => (
+        <React.Fragment key={a.id}>
+          <option value={a.id}>
+            {'\u00A0'.repeat(depth * 4)}
+            {depth > 0 ? '↳ ' : ''}
+            {a.name}
+          </option>
+          {renderAccountOptions(a.id, depth + 1)}
+        </React.Fragment>
+      ));
+  };
+
+  // Helper to calculate YTD for an account (including all children)
+  const calculateYTD = (accountId: string): number => {
+    const children = expenseAccounts.filter(a => a.parentId === accountId);
+    let total = bills.filter(b => b.category === accountId).reduce((s, b) => s + b.amount, 0);
+    for (const child of children) {
+      total += calculateYTD(child.id);
+    }
+    return total;
+  };
+
+  const getCategoryName = (catIdOrName: string) => {
+    const acc = expenseAccounts.find(a => a.id === catIdOrName || a.name === catIdOrName);
+    return acc ? acc.name : catIdOrName;
+  };
+
+  const totalYTD = expenseAccounts.filter(a => !a.parentId).reduce((s, a) => s + calculateYTD(a.id), 0) || 1; // avoid division by zero
+
+  const renderExpenseRows = (parentId?: string, depth = 0) => {
+    return expenseAccounts
+      .filter(a => a.parentId === parentId)
+      .map(a => {
+        const ytd = calculateYTD(a.id);
+        const hasChildren = expenseAccounts.some(child => child.parentId === a.id);
+        if (ytd === 0 && depth > 0 && !hasChildren) return null; // hide empty subcategories
+
+        return (
+          <React.Fragment key={a.id}>
+            <tr>
+              <td style={{ fontSize: '0.9rem', paddingLeft: `${depth * 20 + 16}px` }}>
+                {depth > 0 ? '↳ ' : ''}
+                <span style={{ fontWeight: depth === 0 ? 600 : 400 }}>{a.name}</span>
+              </td>
+              <td style={{ fontWeight: 700 }}>${ytd.toLocaleString()}</td>
+              <td>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ flex: 1, height: '6px', background: 'var(--border)', borderRadius: '999px', overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.min(100, (ytd / totalYTD * 100)).toFixed(0)}%`, height: '100%', background: 'linear-gradient(90deg, var(--navy-light), var(--navy))', borderRadius: '999px' }} />
+                  </div>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', minWidth: '30px' }}>{((ytd / totalYTD) * 100).toFixed(0)}%</span>
+                </div>
+              </td>
+            </tr>
+            {renderExpenseRows(a.id, depth + 1)}
+          </React.Fragment>
+        );
+      });
+  };
 
   return (
     <div>
@@ -128,9 +207,13 @@ export const Expenses: React.FC = () => {
                   <input type="checkbox" checked={selectedIds.includes(bill.id)} onChange={() => handleSelect(bill.id)} />
                   <Calendar size={18} style={{ color: bill.status === 'urgent' ? 'var(--red)' : 'var(--navy-muted)', flexShrink: 0 }} />
                   <div>
-                    <div style={{ fontWeight: 700 }}>{bill.vendor}</div>
+                    <div 
+                      style={{ fontWeight: 700, cursor: 'pointer', color: 'var(--navy)' }}
+                      onClick={() => setSelectedVendor(bill.vendor)}
+                      className="hover-underline"
+                    >{bill.vendor}</div>
                     <div style={{ fontSize: '0.8rem', color: bill.status === 'urgent' ? 'var(--red)' : 'var(--text-muted)' }}>
-                      Due: {bill.dueDate} · {bill.category}
+                      Due: {bill.dueDate} · {getCategoryName(bill.category)}
                     </div>
                   </div>
                 </div>
@@ -142,7 +225,11 @@ export const Expenses: React.FC = () => {
                   <Link to={`/print-check?billId=${bill.id}`} className="btn btn-secondary btn-sm" style={{ padding: '6px' }} title="Print Check">
                     <Printer size={16} />
                   </Link>
-                  <button className="btn btn-secondary btn-sm" onClick={() => { setConfirmPay(bill.id); setPaySourceId(''); setPayOffsetId(''); }}>Pay</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => { 
+                    setConfirmPay(bill.id); 
+                    setPaySourceId(''); 
+                    setPayOffsetId(expenseAccounts.find(a => a.id === bill.category) ? bill.category : ''); 
+                  }}>Pay</button>
                 </div>
               </div>
             ))}
@@ -158,7 +245,11 @@ export const Expenses: React.FC = () => {
                 <div key={bill.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-light)', opacity: 0.6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <input type="checkbox" checked={selectedIds.includes(bill.id)} onChange={() => handleSelect(bill.id)} />
-                    <div style={{ fontWeight: 600 }}>{bill.vendor}</div>
+                    <div 
+                      style={{ fontWeight: 600, cursor: 'pointer', color: 'var(--navy)' }}
+                      onClick={() => setSelectedVendor(bill.vendor)}
+                      className="hover-underline"
+                    >{bill.vendor}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <span style={{ fontWeight: 700 }}>${bill.amount.toFixed(2)}</span>
@@ -180,27 +271,12 @@ export const Expenses: React.FC = () => {
               <thead>
                 <tr>
                   <th>Category</th>
-                  <th>Sub-Category</th>
                   <th>YTD Spent</th>
                   <th>% of Total</th>
                 </tr>
               </thead>
               <tbody>
-                {expenseCategories.map(e => (
-                  <tr key={e.subcategory}>
-                    <td style={{ fontSize: '0.9rem' }}>{e.category}</td>
-                    <td style={{ fontSize: '0.9rem' }}>{e.subcategory}</td>
-                    <td style={{ fontWeight: 700 }}>${e.ytd.toLocaleString()}</td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ flex: 1, height: '6px', background: 'var(--border)', borderRadius: '999px', overflow: 'hidden' }}>
-                          <div style={{ width: `${(e.ytd / totalYTD * 100).toFixed(0)}%`, height: '100%', background: 'linear-gradient(90deg, var(--navy-light), var(--navy))', borderRadius: '999px' }} />
-                        </div>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', minWidth: '30px' }}>{(e.ytd / totalYTD * 100).toFixed(0)}%</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {renderExpenseRows(undefined, 0)}
               </tbody>
             </table>
           </div>
@@ -250,9 +326,12 @@ export const Expenses: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Category</label>
-                    <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-                      {BILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={{ flex: 1 }}>
+                        {renderAccountOptions(undefined, 0)}
+                      </select>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setShowAddCategory(true)} title="Add Category"><Plus size={16}/></button>
+                    </div>
                   </div>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Priority</label>
@@ -296,7 +375,7 @@ export const Expenses: React.FC = () => {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleAdd} disabled={!form.vendor || !form.amount || !form.dueDate || (payImmediately && (!addSourceId || !addOffsetId))}>+ Add Bill</button>
+              <button className="btn btn-primary" onClick={handleAdd} disabled={!form.vendor || !form.amount || !form.dueDate || !form.category || (payImmediately && (!addSourceId || !addOffsetId))}>+ Add Bill</button>
             </div>
           </div>
         </div>
@@ -376,7 +455,7 @@ export const Expenses: React.FC = () => {
                   <div className="form-group" style={{ margin: 0 }}>
                     <label>Category</label>
                     <select value={editBillData.category} onChange={e => setEditBillData({ ...editBillData, category: e.target.value })}>
-                      {BILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      {renderAccountOptions(undefined, 0)}
                     </select>
                   </div>
                   <div className="form-group" style={{ margin: 0 }}>
@@ -396,6 +475,9 @@ export const Expenses: React.FC = () => {
           </div>
         </div>
       )}
+
+      {selectedVendor && <VendorModal vendorName={selectedVendor} onClose={() => setSelectedVendor(null)} />}
+      {showAddCategory && <AddAccountModal onClose={() => setShowAddCategory(false)} />}
     </div>
   );
 };

@@ -8,7 +8,7 @@ interface Props {
 }
 
 export const AddAccountModal: React.FC<Props> = ({ onClose }) => {
-  const { addAccount, isRtl } = useStore();
+  const { addAccount, accounts, isRtl } = useStore();
   const T = useT(isRtl);
   
   const [name, setName] = useState('');
@@ -16,6 +16,7 @@ export const AddAccountModal: React.FC<Props> = ({ onClose }) => {
   const [subType, setSubType] = useState<'checking' | 'savings' | 'credit_card' | 'loan' | 'payroll' | 'general' | 'internal'>('checking');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [balance, setBalance] = useState('');
+  const [parentId, setParentId] = useState<string>('');
 
   const [error, setError] = useState('');
 
@@ -30,7 +31,8 @@ export const AddAccountModal: React.FC<Props> = ({ onClose }) => {
       type,
       subType,
       currency,
-      balance: parseFloat(balance) || 0
+      balance: parseFloat(balance) || 0,
+      parentId: parentId || undefined
     });
     
     onClose();
@@ -76,6 +78,18 @@ export const AddAccountModal: React.FC<Props> = ({ onClose }) => {
                 </select>
               </div>
             </div>
+
+            {type === 'expense' && (
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Parent Category (Optional)</label>
+                <select value={parentId} onChange={e => setParentId(e.target.value)}>
+                  <option value="">— None (Main Category) —</option>
+                  {accounts.filter(a => a.type === 'expense').map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div className="form-group" style={{ margin: 0 }}>

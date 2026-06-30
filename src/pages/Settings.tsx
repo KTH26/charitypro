@@ -190,43 +190,6 @@ export const Settings: React.FC = () => {
           </div>
         </div>
 
-        {/* Force Cloud Sync */}
-        <div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
-            <Globe size={16} /> {isRtl ? 'וואָלקן סינק (איינמאָל)' : 'Force Cloud Sync (One-Time)'}
-          </label>
-          <div style={{ background: 'var(--bg-input)', borderRadius: '12px', padding: '16px', display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem', flex: 1, lineHeight: 1.5 }}>
-              {isRtl ? 'ניצן דאָס בלויז איין מאָל צו דאַונלאָודן די פולע דאַטנבאַזע פֿון וואָלקן. דאָס וועט איבערשרײַבן דײַן לאָקאַלע דאַטן.' : 'Use this to manually download the full snapshot from the cloud. This will overwrite your local data!'}
-            </p>
-            <button className="btn btn-secondary" onClick={async () => {
-              const totalLocal = useStore.getState().donors.length + useStore.getState().transactions.length;
-              if (totalLocal > 5) {
-                const check = window.prompt(isRtl ? "ווארענונג: איר האט שוין לאקאלע דאטן. טייפט 'OVERWRITE' צו מעקן אייערע דאטן און נעמען פונעם קלאוד." : "WARNING: You already have local data! Pulling from the cloud will DELETE your local data and replace it with the cloud backup. If you are absolutely sure, type 'OVERWRITE' to proceed:");
-                if (check !== 'OVERWRITE') return;
-              } else {
-                if (!window.confirm(isRtl ? 'דאָס וועט איבערשרײַבן דײַן לאָקאַלע דאַטן. ביסטו זיכער?' : 'Overwrite local data with cloud snapshot?')) return;
-              }
-              
-              try {
-                const res = await fetch('/api/sync');
-                  if (!res.ok) throw new Error();
-                  const data = await res.json();
-                  if (data.value) {
-                    localStorage.setItem('charity-store', data.value);
-                    window.location.reload();
-                  } else {
-                    alert('No cloud data found.');
-                  }
-              } catch {
-                alert('Sync failed.');
-              }
-            }} style={{ whiteSpace: 'nowrap', borderColor: '#ef4444', color: '#ef4444' }}>
-              <RefreshCw size={16} /> {isRtl ? 'ציען פֿון וואָלקן' : 'Pull from Cloud'}
-            </button>
-          </div>
-        </div>
-
         {/* Download Local Backup */}
         <div>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
@@ -280,47 +243,6 @@ export const Settings: React.FC = () => {
           {showAdvanced && (
             <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
               
-              <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                  <Cloud size={16} /> {isRtl ? 'דאַטן רעטונג' : 'Emergency Data Recovery'}
-                </label>
-          <div className="card" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-              <div style={{ padding: '10px', background: 'var(--bg-input)', borderRadius: '12px' }}>
-                <Cloud size={24} color="var(--red)" />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.2rem', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>Emergency Data Recovery</h3>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Restore your data from the automatic cloud backup if it was accidentally wiped.</div>
-              </div>
-            </div>
-            
-            <button 
-              className="btn" 
-              style={{ width: '100%', padding: '16px', background: 'var(--red)', color: 'white', border: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}
-              onClick={async () => {
-                if (window.confirm('Are you absolutely sure? This will OVERWRITE your current data with the last known good backup from the cloud!')) {
-                  try {
-                    const res = await fetch('/api/sync-legacy');
-                    if (!res.ok) throw new Error('Network error');
-                    const data = await res.json();
-                    if (data.value) {
-                      await dualStorage.setItem('charity-store', data.value);
-                      window.location.reload();
-                    } else {
-                      alert('No backup found in the cloud. It might already be wiped or blocked by your network.');
-                    }
-                  } catch (e) {
-                    alert('Failed to connect to the backup server. Please check your internet connection.');
-                  }
-                }
-              }}
-            >
-              <Database size={18} /> Restore Missing Data from Cloud
-            </button>
-          </div>
-        </div>
-
               <div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
                   <AlertTriangle size={16} /> Danger Zone

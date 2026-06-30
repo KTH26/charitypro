@@ -5,6 +5,7 @@ import { HeartHandshake, Plus, Search, ChevronRight, Edit2, Upload } from 'lucid
 import { PaymentModal } from '../components/PaymentModal';
 import { BulkUploadModal } from '../components/BulkUploadModal';
 import { useT } from '../i18n';
+import { DonorProfileModal } from '../components/DonorProfileModal';
 
 export const Pledges: React.FC = () => {
   const { transactions, donors, isRtl, deleteTransactions } = useStore();
@@ -14,6 +15,7 @@ export const Pledges: React.FC = () => {
   const [showPayment, setShowPayment] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
+  const [showDonorProfile, setShowDonorProfile] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [filterYear, setFilterYear] = useState('All');
   const [filterOpen, setFilterOpen] = useState('All');
@@ -157,7 +159,7 @@ export const Pledges: React.FC = () => {
               {paginatedPledges.map(pledge => {
                 const donor = donors.find(d => d.id === pledge.donorId);
                 return (
-                  <tr key={pledge.id} onClick={() => navigate(`/donors?donorId=${pledge.donorId}`)} style={{ cursor: 'pointer' }} className="hover-bg">
+                  <tr key={pledge.id} onClick={() => setShowDonorProfile(pledge.donorId)} style={{ cursor: 'pointer' }} className="hover-bg">
                     <td onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={selectedIds.includes(pledge.id)} onChange={() => handleSelect(pledge.id)} />
                     </td>
@@ -199,6 +201,9 @@ export const Pledges: React.FC = () => {
 
       {showPayment && selectedDonorId && (
         <PaymentModal donorId={selectedDonorId} onClose={() => setShowPayment(false)} />
+      )}
+      {showDonorProfile && (
+        <DonorProfileModal donorId={showDonorProfile} onClose={() => setShowDonorProfile(null)} />
       )}
       {showBulkUpload && (
         <BulkUploadModal onClose={() => setShowBulkUpload(false)} />

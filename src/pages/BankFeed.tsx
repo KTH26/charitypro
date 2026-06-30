@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
-  const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity } = useStore();
+  const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity, transactions, addBatchDeposit, donors } = useStore();
   const T = useT(isRtl);
   
   const connectedBanks = accounts.filter(a => a.plaidConnected);
@@ -14,13 +14,16 @@ export const BankFeed: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [plaidError, setPlaidError] = useState('');
 
-  // Match Modal State
   const [matchingTx, setMatchingTx] = useState<any | null>(null);
-  const [matchType, setMatchType] = useState<'expense' | 'deposit' | 'transfer' | 'payroll'>('expense');
+  const [matchType, setMatchType] = useState<'expense' | 'deposit' | 'transfer' | 'payroll' | 'match_multiple'>('expense');
   const [matchCategory, setMatchCategory] = useState('');
   const [matchEntity, setMatchEntity] = useState(''); // Vendor or Donor name
   const [newVendorFund, setNewVendorFund] = useState('Canadian WFW'); // Tracking fund for new vendors
   const [selectedTab, setSelectedTab] = useState<'unmatched' | 'review' | 'matched'>('unmatched');
+  const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
+  const [batchSearchTerm, setBatchSearchTerm] = useState('');
+  const [batchDateFrom, setBatchDateFrom] = useState('');
+  const [batchDateTo, setBatchDateTo] = useState('');
 
   // Ensure selectedBank is valid
   useEffect(() => {
@@ -141,12 +144,55 @@ export const BankFeed: React.FC = () => {
     setMatchType(tx.amount < 0 ? 'expense' : 'deposit');
     setMatchEntity(tx.description);
     setMatchCategory('');
+    setBatchSelectedIds([]);
+    setBatchSearchTerm('');
+
+    // Smart Date Filtering
+    if (tx.date) {
+      const d = new Date(tx.date);
+      // We use local timezone offset adjustment to ensure day is correct based on string
+      const dayOfWeek = new Date(d.getTime() + d.getTimezoneOffset() * 60000).getDay(); // 0 = Sun, 1 = Mon
+      if (dayOfWeek === 1) {
+        // Monday -> Fri to Sun
+        const from = new Date(d.getTime() + d.getTimezoneOffset() * 60000);
+        from.setDate(from.getDate() - 3);
+        const to = new Date(d.getTime() + d.getTimezoneOffset() * 60000);
+        to.setDate(to.getDate() - 1);
+        setBatchDateFrom(from.toISOString().split('T')[0]);
+        setBatchDateTo(to.toISOString().split('T')[0]);
+      } else {
+        // 1 day before
+        const prev = new Date(d.getTime() + d.getTimezoneOffset() * 60000);
+        prev.setDate(prev.getDate() - 1);
+        setBatchDateFrom(prev.toISOString().split('T')[0]);
+        setBatchDateTo(prev.toISOString().split('T')[0]);
+      }
+    } else {
+      setBatchDateFrom('');
+      setBatchDateTo('');
+    }
   };
 
   const submitMatch = () => {
     if (!matchingTx) return;
 
-    if (matchType === 'transfer') {
+    if (matchType === 'match_multiple') {
+      const selectedTxs = transactions.filter(t => batchSelectedIds.includes(t.id));
+      const totalSelected = selectedTxs.reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+      
+      addBatchDeposit(
+        matchingTx.id,
+        batchSelectedIds,
+        selectedBank, // Link the batch deposit to this bank account
+        totalSelected, // The batch amount
+        matchingTx.date, // The date of the bank feed tx
+        matchingTx.description || 'Deposit Batch'
+      );
+      setMatchingTx(null);
+      return;
+    }
+
+    if (!matchEntity && matchType !== 'deposit') {
       const transferAccount = accounts.find(a => a.id === matchEntity);
       if (!transferAccount) return alert('Transfer account not found');
       
@@ -417,6 +463,7 @@ export const BankFeed: React.FC = () => {
                   <option value="deposit">Deposit / Donation</option>
                   <option value="transfer">Transfer to/from Account</option>
                   <option value="payroll">Employee Payroll</option>
+                  <option value="match_multiple">Match to Existing Transactions (Batch)</option>
                 </select>
               </div>
 
@@ -471,16 +518,94 @@ export const BankFeed: React.FC = () => {
                 )}
               </div>
 
-              {matchType !== 'transfer' && matchType !== 'payroll' && (
+              {matchType !== 'transfer' && matchType !== 'payroll' && matchType !== 'match_multiple' && (
                 <div className="form-group">
                   <label>Category / Fund</label>
                   <input type="text" placeholder="e.g. Office Supplies, General Fund" value={matchCategory} onChange={e => setMatchCategory(e.target.value)} />
                 </div>
               )}
+
+              {matchType === 'match_multiple' && (
+                <div style={{ marginTop: '16px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--navy)' }}>Select Internal Transactions</h3>
+                    <div style={{ background: 'var(--bg-input)', padding: '4px 12px', borderRadius: '20px', fontSize: '0.9rem', fontWeight: 700 }}>
+                      Selected: <span style={{ color: 'var(--green)' }}>${transactions.filter(t => batchSelectedIds.includes(t.id)).reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0).toFixed(2)}</span> 
+                      <span style={{ color: 'var(--text-muted)', margin: '0 8px' }}>/</span> 
+                      <span>${Math.abs(matchingTx.amount).toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Search by donor name..." 
+                      value={batchSearchTerm}
+                      onChange={e => setBatchSearchTerm(e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    <input 
+                      type="date" 
+                      value={batchDateFrom}
+                      onChange={e => setBatchDateFrom(e.target.value)}
+                      title="From Date"
+                      style={{ width: '130px' }}
+                    />
+                    <input 
+                      type="date" 
+                      value={batchDateTo}
+                      onChange={e => setBatchDateTo(e.target.value)}
+                      title="To Date"
+                      style={{ width: '130px' }}
+                    />
+                  </div>
+                  <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                      <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-card)', zIndex: 1 }}>
+                        <tr>
+                          <th style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}></th>
+                          <th style={{ padding: '8px', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>Date</th>
+                          <th style={{ padding: '8px', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>Donor</th>
+                          <th style={{ padding: '8px', borderBottom: '1px solid var(--border)', textAlign: 'right' }}>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {transactions
+                          .filter(t => !t.isBatch && !t.batchTransactionId && (t.type === 'approved' || t.type === 'pending'))
+                          .filter(t => {
+                            if (batchDateFrom && t.date < batchDateFrom) return false;
+                            if (batchDateTo && t.date > batchDateTo) return false;
+                            if (!batchSearchTerm) return true;
+                            const donor = donors.find(d => d.id === t.donorId);
+                            return donor?.name.toLowerCase().includes(batchSearchTerm.toLowerCase());
+                          })
+                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                          .slice(0, 50)
+                          .map(t => {
+                            const donor = donors.find(d => d.id === t.donorId);
+                            return (
+                              <tr key={t.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: batchSelectedIds.includes(t.id) ? 'var(--blue-bg)' : 'transparent' }} onClick={() => {
+                                setBatchSelectedIds(prev => prev.includes(t.id) ? prev.filter(id => id !== t.id) : [...prev, t.id]);
+                              }}>
+                                <td style={{ padding: '8px', textAlign: 'center' }}>
+                                  <input type="checkbox" checked={batchSelectedIds.includes(t.id)} readOnly />
+                                </td>
+                                <td style={{ padding: '8px' }}>{t.date}</td>
+                                <td style={{ padding: '8px' }}>{donor?.name || 'Unknown'}</td>
+                                <td style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>${(t.amountCAD ?? t.amount).toFixed(2)}</td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal-footer" style={{ marginTop: '24px' }}>
               <button className="btn btn-secondary" onClick={() => setMatchingTx(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitMatch}>Record {matchType === 'expense' ? 'Expense' : matchType === 'transfer' ? 'Transfer' : 'Deposit'}</button>
+              <button className="btn btn-primary" onClick={submitMatch} disabled={matchType === 'match_multiple' && batchSelectedIds.length === 0}>
+                Record {matchType === 'expense' ? 'Expense' : matchType === 'transfer' ? 'Transfer' : matchType === 'match_multiple' ? 'Batch Match' : 'Deposit'}
+              </button>
             </div>
           </div>
         </div>
