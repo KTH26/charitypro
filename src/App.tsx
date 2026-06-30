@@ -31,8 +31,14 @@ function App() {
   useEffect(() => {
     // Zustand persist exports .persist object on the store hook
     import('./store').then(({ useStore }) => {
-      const unsub = useStore.persist.onFinishHydration(() => setHasHydrated(true));
-      setHasHydrated(useStore.persist.hasHydrated());
+      const unsub = useStore.persist.onFinishHydration(() => {
+        setHasHydrated(true);
+        useStore.getState().processRecurringExpenses();
+      });
+      if (useStore.persist.hasHydrated()) {
+        setHasHydrated(true);
+        useStore.getState().processRecurringExpenses();
+      }
       return unsub;
     });
   }, []);

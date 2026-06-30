@@ -18,7 +18,7 @@ const FREQUENCIES = [
 type TabType = 'one_time' | 'recurring' | 'pledge';
 
 export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
-  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate, accounts, solaApiKey } = useStore();
+  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate, accounts, solaApiKey, projects } = useStore();
   const donor = donors.find(d => d.id === donorId);
   const [tab, setTab] = useState<TabType>('one_time');
   const [success, setSuccess] = useState(false);
@@ -38,6 +38,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [offsetAccountId, setOffsetAccountId] = useState('');
   const [fundraiserId, setFundraiserId] = useState('');
   const [sponsor, setSponsor] = useState('');
+  const [projectId, setProjectId] = useState('');
   const [notes, setNotes] = useState('');
   const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
   
@@ -119,6 +120,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       offsetAccountId,
       fundraiserId: fundraiserId || undefined,
       sponsor: sponsor || undefined,
+      projectId: projectId || undefined,
       notes: finalNotes,
     });
     setSuccess(true);
@@ -139,6 +141,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       offsetAccountId,
       fundraiserId: fundraiserId || undefined,
       sponsor: sponsor || undefined,
+      projectId: projectId || undefined,
       notes,
     });
     setSuccess(true);
@@ -395,10 +398,19 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                     </div>
                   </div>
 
-                  {/* Sponsor */}
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label><User size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Sponsor (optional)</label>
-                    <input type="text" value={sponsor} onChange={e => setSponsor(e.target.value)} placeholder="e.g. In memory of..." />
+                  {/* Sponsor and Project */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label><User size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Sponsor (optional)</label>
+                      <input type="text" value={sponsor} onChange={e => setSponsor(e.target.value)} placeholder="e.g. In memory of..." />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Project Tag (optional)</label>
+                      <select value={projectId} onChange={e => setProjectId(e.target.value)}>
+                        <option value="">— No Project —</option>
+                        {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
                   </div>
 
                   {/* Notes */}

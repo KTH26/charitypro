@@ -4,7 +4,7 @@ import { TrendingUp, Users, AlertCircle, Calendar, DollarSign, CheckSquare, Arro
 import { useT } from '../i18n';
 
 export const Dashboard: React.FC = () => {
-  const { isRtl, transactions, donors, accounts, tasks, bills, editTransaction, solaApiKey, setSolaApiKey } = useStore();
+  const { isRtl, transactions, donors, accounts, tasks, bills, editTransaction, solaApiKey, setSolaApiKey, projects } = useStore();
   const T = useT(isRtl);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
 
@@ -173,24 +173,7 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Settings Row */}
-      <div className="card" style={{ padding: '24px' }}>
-        <h3 style={{ margin: '0 0 16px', fontFamily: 'Outfit, sans-serif', color: 'var(--navy)' }}>System Settings & Integrations</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-          {/* Sola Payments API Key */}
-          <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px' }}>
-            <h4 style={{ margin: '0 0 8px', color: 'var(--navy)' }}>Sola Payments API</h4>
-            <p style={{ margin: '0 0 12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>Enter your Sola Reporting API key to enable live synchronization.</p>
-            <input 
-              type="password" 
-              placeholder="e.g. sk_live_..." 
-              value={solaApiKey} 
-              onChange={e => setSolaApiKey(e.target.value)} 
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', fontFamily: 'monospace' }}
-            />
-          </div>
-        </div>
-      </div>
+
 
       {/* Edit Transaction Modal */}
       {editTx && (
@@ -230,9 +213,18 @@ export const Dashboard: React.FC = () => {
                       </select>
                   </div>
                 </div>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label>Date</label>
-                  <input type="date" value={editTx.date} onChange={e => setEditTx({ ...editTx, date: e.target.value })} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Date</label>
+                    <input type="date" value={editTx.date} onChange={e => setEditTx({ ...editTx, date: e.target.value })} />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Project Tag</label>
+                    <select value={editTx.projectId || ''} onChange={e => setEditTx({ ...editTx, projectId: e.target.value })}>
+                      <option value="">— No Project —</option>
+                      {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>

@@ -79,17 +79,15 @@ export const AddAccountModal: React.FC<Props> = ({ onClose }) => {
               </div>
             </div>
 
-            {type === 'expense' && (
-              <div className="form-group" style={{ margin: 0 }}>
-                <label>Parent Category (Optional)</label>
-                <select value={parentId} onChange={e => setParentId(e.target.value)}>
-                  <option value="">— None (Main Category) —</option>
-                  {accounts.filter(a => a.type === 'expense').map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>Parent Account (Optional)</label>
+              <select value={parentId} onChange={e => setParentId(e.target.value)}>
+                <option value="">— None (Top Level) —</option>
+                {accounts.filter(a => a.type === type).map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div className="form-group" style={{ margin: 0 }}>

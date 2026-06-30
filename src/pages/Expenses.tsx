@@ -9,7 +9,7 @@ import { AddAccountModal } from '../components/AddAccountModal';
 import { VendorModal } from '../components/VendorModal';
 
 export const Expenses: React.FC = () => {
-  const { bills, addBill, editBill, deleteBills, markBillPaid, accounts, addAccount, exchangeRate, isRtl } = useStore();
+  const { bills, addBill, editBill, deleteBills, markBillPaid, accounts, addAccount, exchangeRate, isRtl, projects, addRecurringExpense } = useStore();
   const T = useT(isRtl);
   const [showAdd, setShowAdd] = useState(false);
   const [confirmPay, setConfirmPay] = useState<string | null>(null);
@@ -21,12 +21,13 @@ export const Expenses: React.FC = () => {
   const expenseAccounts = accounts.filter(a => a.type === 'expense');
   const defaultCategory = expenseAccounts.find(a => !a.parentId)?.id || '';
 
-  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: defaultCategory, status: 'pending' as 'pending' | 'urgent', currency: 'CAD' as 'CAD'|'USD', exchangeRate: exchangeRate?.toString() || '1.35' });
+  const [form, setForm] = useState({ vendor: '', amount: '', dueDate: '', category: defaultCategory, status: 'pending' as 'pending' | 'urgent', currency: 'CAD' as 'CAD'|'USD', exchangeRate: exchangeRate?.toString() || '1.35', projectId: '', creditAccountId: '', isRecurring: false, recurringFrequency: 'monthly' as 'weekly'|'monthly'|'yearly' });
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [payImmediately, setPayImmediately] = useState(false);
   const [addSourceId, setAddSourceId] = useState('');
   const [addOffsetId, setAddOffsetId] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'bills' | 'categories'>('bills');
   const location = useLocation();
 
   React.useEffect(() => {
@@ -57,12 +58,28 @@ export const Expenses: React.FC = () => {
 
   const handleAdd = () => {
     if (!form.vendor || !form.amount || !form.dueDate) return;
-    const billId = addBill({ vendor: form.vendor, amount: parseFloat(form.amount), currency: form.currency, exchangeRate: form.currency === 'USD' ? parseFloat(form.exchangeRate) || undefined : undefined, dueDate: form.dueDate, status: payImmediately ? 'paid' : form.status, category: form.category });
+
+    if (form.isRecurring) {
+      addRecurringExpense({
+        vendor: form.vendor,
+        amount: parseFloat(form.amount),
+        currency: form.currency,
+        category: form.category,
+        projectId: form.projectId || undefined,
+        creditAccountId: form.creditAccountId || undefined,
+        frequency: form.recurringFrequency,
+        nextDate: form.dueDate,
+        active: true
+      });
+      // also create the first bill immediately
+    }
+    
+    const billId = addBill({ vendor: form.vendor, amount: parseFloat(form.amount), currency: form.currency, exchangeRate: form.currency === 'USD' ? parseFloat(form.exchangeRate) || undefined : undefined, dueDate: form.dueDate, status: payImmediately ? 'paid' : form.status, category: form.category, projectId: form.projectId || undefined, creditAccountId: form.creditAccountId || undefined });
     
     if (payImmediately && addSourceId && addOffsetId) {
       markBillPaid(billId, addSourceId, addOffsetId);
     }
-    setForm({ vendor: '', amount: '', dueDate: '', category: defaultCategory, status: 'pending', currency: 'CAD', exchangeRate: exchangeRate?.toString() || '1.35' });
+    setForm({ vendor: '', amount: '', dueDate: '', category: defaultCategory, status: 'pending', currency: 'CAD', exchangeRate: exchangeRate?.toString() || '1.35', projectId: '', creditAccountId: '', isRecurring: false, recurringFrequency: 'monthly' });
     setPayImmediately(false);
     setAddSourceId('');
     setAddOffsetId('');
@@ -165,7 +182,13 @@ export const Expenses: React.FC = () => {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
+        <button className={`btn ${activeTab === 'bills' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setActiveTab('bills')}>Bills & Expenses</button>
+        <button className={`btn ${activeTab === 'categories' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setActiveTab('categories')}>Expense Categories</button>
+      </div>
+
+      {activeTab === 'bills' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
         {/* Bills */}
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -261,11 +284,16 @@ export const Expenses: React.FC = () => {
           )}
         </div>
 
-        {/* Expense Categories */}
+          </div>
+        </div>
+      ) : (
         <div className="card">
-          <h2 style={{ margin: '0 0 20px', fontSize: '1.15rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
-            {T('expense_categories')}
-          </h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h2 style={{ margin: 0, fontSize: '1.15rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>
+              {T('expense_categories')}
+            </h2>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowAddCategory(true)}><Plus size={14}/> Add Category</button>
+          </div>
           <div className="table-container" style={{ marginBottom: '20px' }}>
             <table>
               <thead>
@@ -285,7 +313,7 @@ export const Expenses: React.FC = () => {
             <span>${totalYTD.toLocaleString()}</span>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Add Bill Modal */}
       {showAdd && (
@@ -368,6 +396,40 @@ export const Expenses: React.FC = () => {
                           ))}
                         </select>
                       </div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Project Tag (Optional)</label>
+                    <select value={form.projectId} onChange={e => setForm(f => ({ ...f, projectId: e.target.value }))}>
+                      <option value="">— No Project —</option>
+                      {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Credit to Account (Optional)</label>
+                    <select value={form.creditAccountId} onChange={e => setForm(f => ({ ...f, creditAccountId: e.target.value }))}>
+                      <option value="">— No Credit —</option>
+                      {accounts.filter(a => a.type === 'liability' || a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', margin: 0, fontWeight: 700 }}>
+                    <input type="checkbox" checked={form.isRecurring} onChange={e => setForm(f => ({ ...f, isRecurring: e.target.checked }))} style={{ width: 16, height: 16 }} />
+                    Make this a recurring expense
+                  </label>
+                  {form.isRecurring && (
+                    <div className="form-group" style={{ margin: '12px 0 0 0' }}>
+                      <label style={{ fontSize: '0.85rem' }}>Frequency</label>
+                      <select value={form.recurringFrequency} onChange={e => setForm(f => ({ ...f, recurringFrequency: e.target.value as any }))}>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                      </select>
                     </div>
                   )}
                 </div>
@@ -463,6 +525,22 @@ export const Expenses: React.FC = () => {
                     <select value={editBillData.status} onChange={e => setEditBillData({ ...editBillData, status: e.target.value as any })}>
                       <option value="pending">Normal</option>
                       <option value="urgent">Urgent</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Project Tag</label>
+                    <select value={editBillData.projectId || ''} onChange={e => setEditBillData({ ...editBillData, projectId: e.target.value })}>
+                      <option value="">— No Project —</option>
+                      {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Credit Account</label>
+                    <select value={editBillData.creditAccountId || ''} onChange={e => setEditBillData({ ...editBillData, creditAccountId: e.target.value })}>
+                      <option value="">— No Credit —</option>
+                      {accounts.filter(a => a.type === 'liability' || a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                     </select>
                   </div>
                 </div>

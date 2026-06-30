@@ -56,14 +56,14 @@ export const ChartOfAccounts: React.FC = () => {
       }
     });
     bills.forEach(b => {
-      if (b.status === 'paid' && (b.sourceAccountId === selectedAccount.id || b.offsetAccountId === selectedAccount.id)) {
+      if (b.status === 'paid' && (b.sourceAccountId === selectedAccount.id || b.offsetAccountId === selectedAccount.id || b.creditAccountId === selectedAccount.id)) {
         accountHistory.push({
           id: b.id,
-          date: b.dueDate,
-          description: b.vendor + ' - ' + (b.category || 'Bill Payment'),
+          date: b.paidDate || b.dueDate,
+          description: b.vendor + ' - ' + (b.category || 'Bill Payment') + (b.creditAccountId === selectedAccount.id ? ' (Credited)' : ''),
           amount: b.amount,
           type: 'bill',
-          isCredit: b.sourceAccountId === selectedAccount.id,
+          isCredit: b.sourceAccountId === selectedAccount.id, // Paid from asset means it's a credit to asset
           rawItem: b
         });
       }
@@ -98,7 +98,7 @@ export const ChartOfAccounts: React.FC = () => {
     (selectedAccount ? [...transactions, ...bills] : [])
       .filter(x => {
         if ('sourceAccountId' in x) {
-          return x.sourceAccountId === selectedAccount?.id || x.offsetAccountId === selectedAccount?.id;
+          return x.sourceAccountId === selectedAccount?.id || x.offsetAccountId === selectedAccount?.id || (x as any).creditAccountId === selectedAccount?.id;
         }
         return false;
       })
@@ -144,20 +144,31 @@ export const ChartOfAccounts: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {typeAccounts.map(account => (
-                      <tr 
-                        key={account.id} 
-                        onClick={() => { setSelectedAccountId(account.id); setFilterType('all'); setFilterMonth('all'); }}
-                        style={{ cursor: 'pointer', background: selectedAccountId === account.id ? 'var(--bg-input)' : 'transparent' }}
-                      >
-                        <td style={{ fontWeight: 600 }}>{account.name}</td>
-                        <td style={{ textTransform: 'capitalize', color: 'var(--text-secondary)' }}>{account.subType || 'General'}</td>
-                        <td style={{ fontWeight: 700, color: 'var(--text-muted)' }}>{account.currency}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 800, color: account.balance >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                          ${account.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      const renderAccountRows = (parentId: string | undefined, depth: number): React.ReactNode => {
+                        return typeAccounts
+                          .filter(a => (parentId ? a.parentId === parentId : !a.parentId))
+                          .map(account => (
+                            <React.Fragment key={account.id}>
+                              <tr 
+                                onClick={() => { setSelectedAccountId(account.id); setFilterType('all'); setFilterMonth('all'); }}
+                                style={{ cursor: 'pointer', background: selectedAccountId === account.id ? 'var(--bg-input)' : 'transparent' }}
+                              >
+                                <td style={{ fontWeight: depth === 0 ? 600 : 400, paddingLeft: `${depth * 20 + 16}px` }}>
+                                  {depth > 0 ? '↳ ' : ''}{account.name}
+                                </td>
+                                <td style={{ textTransform: 'capitalize', color: 'var(--text-secondary)' }}>{account.subType || 'General'}</td>
+                                <td style={{ fontWeight: 700, color: 'var(--text-muted)' }}>{account.currency}</td>
+                                <td style={{ textAlign: 'right', fontWeight: 800, color: account.balance >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                                  ${account.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                              {renderAccountRows(account.id, depth + 1)}
+                            </React.Fragment>
+                          ));
+                      };
+                      return renderAccountRows(undefined, 0);
+                    })()}
                   </tbody>
                 </table>
               </div>

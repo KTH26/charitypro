@@ -88,6 +88,7 @@ export interface Transaction {
   invoiceSaved?: boolean;
   batchTransactionId?: string; // Links individual tx to a master batch tx
   isBatch?: boolean; // True if this is the master batch tx
+  projectId?: string;
 }
 
 export interface RecurringPayment {
@@ -166,6 +167,8 @@ export interface Bill {
   checkNumber?: string;
   memo?: string;
   printStatus?: 'queued' | 'printed';
+  projectId?: string;
+  creditAccountId?: string;
 }
 
 export interface Task {
@@ -191,6 +194,24 @@ export interface AccountTransfer {
 
 export type DonorSortKey = 'lastName' | 'firstName' | 'hebLastName' | 'hebFirstName';
 
+export interface Project {
+  id: string;
+  name: string;
+}
+
+export interface RecurringExpense {
+  id: string;
+  vendor: string;
+  amount: number;
+  currency?: 'CAD' | 'USD';
+  category: string;
+  projectId?: string;
+  creditAccountId?: string;
+  frequency: 'weekly' | 'monthly' | 'yearly';
+  nextDate: string;
+  active: boolean;
+}
+
 interface AppState {
   clientId: string;
   lastEventId: number;
@@ -215,6 +236,8 @@ interface AppState {
   employees: Employee[];
   t4aSlips: T4A[];
   vendors: Vendor[];
+  projects: Project[];
+  recurringExpenses: RecurringExpense[];
 
   toggleRtl: () => void;
   setCurrency: (currency: 'CAD' | 'USD') => void;
@@ -249,6 +272,7 @@ interface AppState {
 
   addEmployee: (emp: Omit<Employee, 'id' | 'balanceOwed'>) => void;
   payPayrollEntity: (entityId: string, type: 'employee' | 'fundraiser', amount: number) => void;
+  accruePayroll: (entityId: string, type: 'employee' | 'fundraiser', amount: number) => void;
   addT4A: (t4a: Omit<T4A, 'id' | 'issuedDate'>) => void;
 
   addAccount: (acc: Omit<Account, 'id'> | Account) => void;
@@ -261,6 +285,14 @@ interface AppState {
   markBillPaid: (id: string, sourceAccountId?: string, offsetAccountId?: string) => void;
   deleteBills: (ids: string[]) => void;
   addVendor: (vendor: Omit<Vendor, 'id'>) => void;
+
+  addProject: (proj: Omit<Project, 'id'>) => void;
+  editProject: (id: string, updates: Partial<Omit<Project, 'id'>>) => void;
+  deleteProject: (id: string) => void;
+
+  addRecurringExpense: (rec: Omit<RecurringExpense, 'id'>) => void;
+  toggleRecurringExpense: (id: string) => void;
+  processRecurringExpenses: () => void;
 
   addTask: (task: Omit<Task, 'id' | 'createdAt'>) => void;
   completeTask: (id: string) => void;
@@ -629,6 +661,33 @@ export const useStore = create<AppState>()(
           return { fundraisers: state.fundraisers.map(f => f.id === entityId ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - amount), internalAccountBalance: (f.internalAccountBalance || 0) - amount } : f) };
         }
       }),
+      accruePayroll: (entityId, type, amount) => set(state => {
+        let name = '';
+        let newState = { ...state };
+        if (type === 'employee') {
+          const emp = state.employees.find(e => e.id === entityId);
+          if (emp) name = emp.name;
+          newState.employees = state.employees.map(e => e.id === entityId ? { ...e, balanceOwed: e.balanceOwed + amount } : e);
+        } else {
+          const fund = state.fundraisers.find(f => f.id === entityId);
+          if (fund) name = fund.name;
+          newState.fundraisers = state.fundraisers.map(f => f.id === entityId ? { ...f, balanceOwed: f.balanceOwed + amount, internalAccountBalance: (f.internalAccountBalance || 0) + amount } : f);
+        }
+
+        // Create an unpaid Bill to act as the accrual for the ledger
+        const newBill: Bill = {
+          id: uid(),
+          vendor: `Payroll: ${name}`,
+          amount: amount,
+          currency: 'CAD',
+          dueDate: new Date().toISOString().split('T')[0],
+          status: 'pending',
+          category: 'Payroll Expense'
+        };
+        newState.bills = [newBill, ...state.bills];
+
+        return newState;
+      }),
       addT4A: (t4a) => set(state => ({ t4aSlips: [...state.t4aSlips, { ...t4a, id: uid(), issuedDate: new Date().toISOString().split('T')[0] }] })),
 
       transferBetweenAccounts: (transfer) => set((state) => {
@@ -663,6 +722,52 @@ export const useStore = create<AppState>()(
         vendors: [...state.vendors, { ...vendor, id: uid() }]
       })),
 
+      addProject: (proj) => set(state => ({ projects: [...state.projects, { ...proj, id: uid() }] })),
+      editProject: (id, updates) => set(state => ({ projects: state.projects.map(p => p.id === id ? { ...p, ...updates } : p) })),
+      deleteProject: (id) => set(state => ({ projects: state.projects.filter(p => p.id !== id) })),
+
+      addRecurringExpense: (rec) => set(state => ({ recurringExpenses: [...state.recurringExpenses, { ...rec, id: uid() }] })),
+      toggleRecurringExpense: (id) => set(state => ({ recurringExpenses: state.recurringExpenses.map(r => r.id === id ? { ...r, active: !r.active } : r) })),
+      processRecurringExpenses: () => set(state => {
+        const today = new Date().toISOString().split('T')[0];
+        let updatedExpenses = [...state.recurringExpenses];
+        let newBills = [...state.bills];
+        let hasChanges = false;
+
+        updatedExpenses = updatedExpenses.map(rec => {
+          if (!rec.active) return rec;
+          let currentNextDate = rec.nextDate;
+          let generatedCount = 0;
+
+          while (currentNextDate <= today && generatedCount < 12) {
+            newBills.push({
+              id: uid(),
+              vendor: rec.vendor,
+              amount: rec.amount,
+              currency: rec.currency || 'CAD',
+              dueDate: currentNextDate,
+              status: 'pending',
+              category: rec.category,
+              projectId: rec.projectId,
+              creditAccountId: rec.creditAccountId
+            });
+
+            const d = new Date(currentNextDate);
+            if (rec.frequency === 'weekly') d.setDate(d.getDate() + 7);
+            else if (rec.frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+            else if (rec.frequency === 'yearly') d.setFullYear(d.getFullYear() + 1);
+            currentNextDate = d.toISOString().split('T')[0];
+            generatedCount++;
+            hasChanges = true;
+          }
+
+          return { ...rec, nextDate: currentNextDate };
+        });
+
+        if (hasChanges) return { bills: newBills, recurringExpenses: updatedExpenses };
+        return state;
+      }),
+
       markBillPaid: (id, sourceAccountId, offsetAccountId) => set((state) => {
         const bill = state.bills.find(b => b.id === id);
         if (!bill) return state;
@@ -674,6 +779,7 @@ export const useStore = create<AppState>()(
           let newBalance = a.balance;
           if (a.id === finalSource) newBalance -= bill.amount;
           if (a.id === finalOffset) newBalance += bill.amount;
+          if (a.id === bill.creditAccountId) newBalance -= bill.amount;
           return { ...a, balance: newBalance };
         });
 
@@ -686,7 +792,7 @@ export const useStore = create<AppState>()(
         }
 
         return {
-          bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId, offsetAccountId } : b),
+          bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId: finalSource, offsetAccountId: finalOffset } : b),
           accounts: updatedAccounts,
           fundraisers: updatedFundraisers
         };
@@ -816,7 +922,9 @@ const methodsToWrap = [
   'addBill', 'editBill', 'markBillPaid', 'deleteBills',
   'setBankFeed', 'matchBankTransaction', 'unmatchBankTransaction', 'markBankTransactionForReview', 'unmarkBankTransactionForReview',
   'setGoogleSheetSyncUrl', 'setSolaApiKey', 'setLastSolaSyncDate',
-  'addVendor', 'payPayrollEntity',
+  'addVendor', 'payPayrollEntity', 'accruePayroll',
+  'addProject', 'editProject', 'deleteProject',
+  'addRecurringExpense', 'toggleRecurringExpense',
   'addTask', 'completeTask', 'deleteTask'
 ];
 

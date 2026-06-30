@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { Users, User, FileText, Download, Plus, Check } from 'lucide-react';
 
 export const Payroll: React.FC = () => {
-  const { employees, fundraisers, t4aSlips, addEmployee, payPayrollEntity, addT4A } = useStore();
+  const { employees, fundraisers, t4aSlips, addEmployee, payPayrollEntity, addT4A, accruePayroll, bills } = useStore();
   const [activeTab, setActiveTab] = useState<'employees' | 'fundraisers' | 't4a'>('employees');
 
   const [showAddEmp, setShowAddEmp] = useState(false);
@@ -17,6 +17,12 @@ export const Payroll: React.FC = () => {
   const [t4aTarget, setT4ATarget] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
   const [t4aYear, setT4AYear] = useState(new Date().getFullYear());
   const [t4aBox48, setT4ABox48] = useState('');
+
+  const [showAccrue, setShowAccrue] = useState(false);
+  const [accrueTarget, setAccrueTarget] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
+  const [accrueAmount, setAccrueAmount] = useState('');
+
+  const [showLedger, setShowLedger] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
 
   const handleAddEmployee = (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +38,15 @@ export const Payroll: React.FC = () => {
     setShowPay(false);
     setPayTarget(null);
     setPayAmount('');
+  };
+
+  const handleAccrue = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accrueTarget || !accrueAmount) return;
+    accruePayroll(accrueTarget.id, accrueTarget.type, parseFloat(accrueAmount));
+    setShowAccrue(false);
+    setAccrueTarget(null);
+    setAccrueAmount('');
   };
 
   const handleGenerateT4A = (e: React.FormEvent) => {
@@ -117,6 +132,8 @@ export const Payroll: React.FC = () => {
                         <td style={{ fontWeight: 700, color: 'var(--red)' }}>${e.balanceOwed.toFixed(2)}</td>
                         <td>
                           <div style={{ display: 'flex', gap: '8px' }}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setShowLedger({ id: e.id, type: 'employee', name: e.name })}>View Ledger</button>
+                            <button className="btn btn-primary btn-sm" onClick={() => { setAccrueTarget({ id: e.id, type: 'employee', name: e.name }); setShowAccrue(true); }}>Add Earnings</button>
                             <button className="btn btn-secondary btn-sm" onClick={() => { setPayTarget({ id: e.id, type: 'employee', name: e.name, balance: e.balanceOwed }); setShowPay(true); }}>Record Payment</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => { setT4ATarget({ id: e.id, type: 'employee', name: e.name }); setShowT4A(true); }}>Generate T4A</button>
                           </div>
@@ -155,6 +172,8 @@ export const Payroll: React.FC = () => {
                         <td style={{ fontWeight: 700, color: 'var(--red)' }}>${f.balanceOwed.toFixed(2)}</td>
                         <td>
                           <div style={{ display: 'flex', gap: '8px' }}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setShowLedger({ id: f.id, type: 'fundraiser', name: f.name })}>View Ledger</button>
+                            <button className="btn btn-primary btn-sm" onClick={() => { setAccrueTarget({ id: f.id, type: 'fundraiser', name: f.name }); setShowAccrue(true); }}>Add Earnings</button>
                             <button className="btn btn-secondary btn-sm" onClick={() => { setPayTarget({ id: f.id, type: 'fundraiser', name: f.name, balance: f.balanceOwed }); setShowPay(true); }}>Record Payment</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => { setT4ATarget({ id: f.id, type: 'fundraiser', name: f.name }); setShowT4A(true); }}>Generate T4A</button>
                           </div>
@@ -254,6 +273,76 @@ export const Payroll: React.FC = () => {
                 <button type="submit" className="btn btn-primary">Record Payment</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Earnings Modal */}
+      {showAccrue && accrueTarget && (
+        <div className="modal-overlay" onClick={() => setShowAccrue(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Add Earnings for {accrueTarget.name}</h2>
+              <button className="modal-close" onClick={() => setShowAccrue(false)}>✕</button>
+            </div>
+            <form onSubmit={handleAccrue} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ background: 'var(--blue-bg)', padding: '16px', borderRadius: '8px', border: '1px solid var(--blue)' }}>
+                <div style={{ color: 'var(--navy)' }}>This will add to the balance owed to this {accrueTarget.type}.</div>
+              </div>
+              <div className="form-group">
+                <label>Earnings Amount ($)</label>
+                <input type="number" step="0.01" required value={accrueAmount} onChange={e => setAccrueAmount(e.target.value)} />
+              </div>
+              <div className="modal-footer" style={{ marginTop: '24px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAccrue(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Add Earnings</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Ledger Modal */}
+      {showLedger && (
+        <div className="modal-overlay" onClick={() => setShowLedger(null)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Ledger for {showLedger.name}</h2>
+              <button className="modal-close" onClick={() => setShowLedger(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Description</th>
+                      <th>Type</th>
+                      <th style={{ textAlign: 'right' }}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bills.filter(b => b.vendor === `Payroll: ${showLedger.name}`).sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime()).map(b => (
+                      <tr key={b.id}>
+                        <td>{b.status === 'paid' && b.paidDate ? b.paidDate : b.dueDate}</td>
+                        <td>{b.status === 'paid' ? 'Payment (Bank)' : 'Earnings Added'}</td>
+                        <td>
+                          <span className={`badge ${b.status === 'paid' ? 'badge-green' : 'badge-purple'}`}>
+                            {b.status === 'paid' ? 'Payment' : 'Earnings'}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, color: b.status === 'paid' ? 'var(--green)' : 'var(--navy)' }}>
+                          {b.status === 'paid' ? '-' : '+'}${b.amount.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                    {bills.filter(b => b.vendor === `Payroll: ${showLedger.name}`).length === 0 && (
+                      <tr><td colSpan={4} style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>No history available.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       )}

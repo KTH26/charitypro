@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useStore, type DonorSortKey, dualStorage } from '../store';
-import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download, AlertTriangle, Cloud, Database } from 'lucide-react';
+import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download, AlertTriangle, Cloud, Database, FolderDot, Edit2, Trash2, Plus } from 'lucide-react';
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
-  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy, googleSheetSyncUrl, setGoogleSheetSyncUrl, solaApiKey, setSolaApiKey } = useStore();
+  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy, googleSheetSyncUrl, setGoogleSheetSyncUrl, solaApiKey, setSolaApiKey, projects, addProject, editProject, deleteProject } = useStore();
   const T = useT(isRtl);
   const [syncing, setSyncing] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
@@ -14,6 +14,9 @@ export const Settings: React.FC = () => {
   const [urlSaved, setUrlSaved] = useState(false);
   const [solaSaved, setSolaSaved] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [editProjectId, setEditProjectId] = useState<string | null>(null);
+  const [editProjectName, setEditProjectName] = useState('');
 
   // Fetch live exchange rate from a free public API
   const handleSyncRate = async () => {
@@ -376,6 +379,79 @@ export const Settings: React.FC = () => {
               <div style={{ fontWeight: 700, color: 'var(--green)', fontSize: '0.88rem' }}>Sola Key is securely saved locally.</div>
               <div style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginTop: '2px' }}>Your key is never exposed on the screen.</div>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Projects Management */}
+      <div className="card" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '20px', gridColumn: '1 / -1' }}>
+        <h2 style={{ margin: 0, fontFamily: 'Outfit, sans-serif', color: 'var(--navy)', fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <FolderDot size={20} /> Projects
+        </h2>
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.88rem', lineHeight: 1.6 }}>
+          Manage projects to tag income and expenses for detailed reporting.
+        </p>
+
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <input
+            type="text"
+            placeholder="New Project Name..."
+            value={newProjectName}
+            onChange={e => setNewProjectName(e.target.value)}
+            style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border)' }}
+          />
+          <button
+            className="btn btn-primary"
+            disabled={!newProjectName.trim()}
+            onClick={() => { addProject({ name: newProjectName.trim() }); setNewProjectName(''); }}
+          >
+            <Plus size={16} /> Add Project
+          </button>
+        </div>
+
+        {projects.length > 0 && (
+          <div className="table-container" style={{ marginTop: '10px' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Project Name</th>
+                  <th style={{ width: '120px' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projects.map(p => (
+                  <tr key={p.id}>
+                    <td>
+                      {editProjectId === p.id ? (
+                        <input
+                          type="text"
+                          value={editProjectName}
+                          onChange={e => setEditProjectName(e.target.value)}
+                          style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid var(--border)' }}
+                        />
+                      ) : (
+                        <span style={{ fontWeight: 600 }}>{p.name}</span>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {editProjectId === p.id ? (
+                          <>
+                            <button className="btn btn-primary btn-sm" onClick={() => { editProject(p.id, { name: editProjectName }); setEditProjectId(null); }}>Save</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => setEditProjectId(null)}>Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn btn-secondary btn-sm" onClick={() => { setEditProjectId(p.id); setEditProjectName(p.name); }}><Edit2 size={14} /></button>
+                            <button className="btn btn-danger btn-sm" onClick={() => { if (window.confirm('Delete project?')) deleteProject(p.id); }}><Trash2 size={14} /></button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

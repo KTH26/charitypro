@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
-  const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity, transactions, addBatchDeposit, donors } = useStore();
+  const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, markBillPaid, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity, transactions, addBatchDeposit, donors } = useStore();
   const T = useT(isRtl);
   
   const connectedBanks = accounts.filter(a => a.plaidConnected);
@@ -215,15 +215,14 @@ export const BankFeed: React.FC = () => {
       if (!employee) return alert('Employee not found');
       
       payPayrollEntity(employee.id, 'employee', Math.abs(matchingTx.amount));
-      addBill({
+      const billId = addBill({
         vendor: `Payroll: ${employee.name}`,
         amount: Math.abs(matchingTx.amount),
         dueDate: matchingTx.date,
-        status: 'paid',
+        status: 'pending',
         category: 'Payroll Expense',
-        paidDate: matchingTx.date,
-        sourceAccountId: matchingTx.sourceAccountId,
       });
+      markBillPaid(billId, matchingTx.sourceAccountId, 'Payroll Expense');
       matchBankTransaction(matchingTx.id);
       setMatchingTx(null);
       return;
@@ -235,15 +234,14 @@ export const BankFeed: React.FC = () => {
       if (!existingVendor && matchEntity) {
         addVendor({ name: matchEntity, fund: newVendorFund });
       }
-      addBill({
+      const billId = addBill({
         vendor: matchEntity,
         amount: Math.abs(matchingTx.amount),
         dueDate: matchingTx.date,
-        status: 'paid',
+        status: 'pending',
         category: matchCategory || 'Uncategorized Expense',
-        paidDate: matchingTx.date,
-        sourceAccountId: matchingTx.sourceAccountId,
       });
+      markBillPaid(billId, matchingTx.sourceAccountId, matchCategory || 'Uncategorized Expense');
     } else {
       addTransaction({
         donorId: 'unknown',
