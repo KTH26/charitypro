@@ -391,7 +391,7 @@ export const Payroll: React.FC = () => {
               </div>
               <div className="form-group">
                 <label>Amount Paid ($)</label>
-                <input type="number" step="0.01" required value={payAmount} onChange={e => setPayAmount(e.target.value)} max={payTarget.balance > 0 ? payTarget.balance : undefined} />
+                <input type="number" step="0.01" required value={payAmount} onChange={e => setPayAmount(e.target.value)} />
               </div>
               <div className="modal-footer" style={{ marginTop: '24px' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowPay(false)}>Cancel</button>

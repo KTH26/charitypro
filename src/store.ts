@@ -680,9 +680,9 @@ export const useStore = create<AppState>()(
       addEmployee: (emp) => set(state => ({ employees: [...state.employees, { ...emp, id: uid(), balanceOwed: 0 }] })),
       payPayrollEntity: (entityId, type, amount) => set(state => {
         if (type === 'employee') {
-          return { employees: state.employees.map(e => e.id === entityId ? { ...e, balanceOwed: Math.max(0, e.balanceOwed - amount) } : e) };
+          return { employees: state.employees.map(e => e.id === entityId ? { ...e, balanceOwed: e.balanceOwed - amount } : e) };
         } else {
-          return { fundraisers: state.fundraisers.map(f => f.id === entityId ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - amount), internalAccountBalance: (f.internalAccountBalance || 0) - amount } : f) };
+          return { fundraisers: state.fundraisers.map(f => f.id === entityId ? { ...f, balanceOwed: f.balanceOwed - amount, internalAccountBalance: (f.internalAccountBalance || 0) - amount } : f) };
         }
       }),
       accruePayroll: (entityId, type, amount, earningType, t4aEligible) => set(state => {
@@ -751,8 +751,8 @@ export const useStore = create<AppState>()(
           const factor = bill.status === 'paid' ? -1 : 1;
           const adjustedDiff = diff * factor;
 
-          newState.employees = newState.employees.map(e => e.name === name ? { ...e, balanceOwed: Math.max(0, e.balanceOwed + adjustedDiff) } : e);
-          newState.fundraisers = newState.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: Math.max(0, f.balanceOwed + adjustedDiff) } : f);
+          newState.employees = newState.employees.map(e => e.name === name ? { ...e, balanceOwed: e.balanceOwed + adjustedDiff } : e);
+          newState.fundraisers = newState.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: f.balanceOwed + adjustedDiff } : f);
         }
 
         newState.bills = newState.bills.map(b => b.id === id ? { ...b, ...updates } : b);
@@ -770,8 +770,8 @@ export const useStore = create<AppState>()(
             // Deleting paid payment = add back to balanceOwed
             const factor = bill.status === 'paid' ? 1 : -1;
             
-            newState.employees = newState.employees.map(e => e.name === name ? { ...e, balanceOwed: Math.max(0, e.balanceOwed + (bill.amount * factor)) } : e);
-            newState.fundraisers = newState.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: Math.max(0, f.balanceOwed + (bill.amount * factor)) } : f);
+            newState.employees = newState.employees.map(e => e.name === name ? { ...e, balanceOwed: e.balanceOwed + (bill.amount * factor) } : e);
+            newState.fundraisers = newState.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: f.balanceOwed + (bill.amount * factor) } : f);
           }
           
           // Refund bank account if it was paid
@@ -909,14 +909,14 @@ export const useStore = create<AppState>()(
 
         if (bill.vendor.startsWith('Payroll: ')) {
           const name = bill.vendor.replace('Payroll: ', '');
-          updatedEmployees = state.employees.map(e => e.name === name ? { ...e, balanceOwed: Math.max(0, e.balanceOwed - bill.amount) } : e);
-          updatedFundraisers = state.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount) } : f);
+          updatedEmployees = state.employees.map(e => e.name === name ? { ...e, balanceOwed: e.balanceOwed - bill.amount } : e);
+          updatedFundraisers = state.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: f.balanceOwed - bill.amount } : f);
         }
 
         const offsetAcc = state.accounts.find(a => a.id === offsetAccountId);
         if (offsetAcc && offsetAcc.linkedFundraiserId) {
           updatedFundraisers = updatedFundraisers.map(f => f.id === offsetAcc.linkedFundraiserId
-            ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - (bill?.amount || 0)), internalAccountBalance: (f.internalAccountBalance || 0) + (bill?.amount || 0) }
+            ? { ...f, balanceOwed: f.balanceOwed - (bill?.amount || 0), internalAccountBalance: (f.internalAccountBalance || 0) + (bill?.amount || 0) }
             : f);
         }
 

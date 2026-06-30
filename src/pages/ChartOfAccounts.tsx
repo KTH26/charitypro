@@ -25,7 +25,7 @@ export const ChartOfAccounts: React.FC = () => {
     return acc;
   }, {} as Record<string, typeof accounts>);
 
-  const types = ['asset', 'liability', 'equity', 'revenue', 'expense'];
+  const types = ['asset', 'liability', 'equity', 'revenue'];
 
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
 
