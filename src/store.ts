@@ -306,11 +306,11 @@ interface AppState {
   deleteProject: (id: string) => void;
 
   addRecurringExpense: (expense: Omit<RecurringExpense, 'id'>) => void;
-  deleteRecurringExpense: (id: string) => void;
+  toggleRecurringExpense: (id: string) => void;
   processRecurringExpenses: () => void;
 
   addRecurringPayroll: (payroll: Omit<RecurringPayroll, 'id'>) => void;
-  deleteRecurringPayroll: (id: string) => void;
+  toggleRecurringPayroll: (id: string) => void;
   processRecurringPayroll: () => void;
 
   addTask: (task: Omit<Task, 'id' | 'createdAt'>) => void;
@@ -791,6 +791,60 @@ export const useStore = create<AppState>()(
         if (hasChanges) return { bills: newBills, recurringExpenses: updatedExpenses };
         return state;
       }),
+
+      addRecurringPayroll: (payroll) => set(state => ({ recurringPayroll: [{ ...payroll, id: uid() }, ...state.recurringPayroll] })),
+      toggleRecurringPayroll: (id) => set(state => ({ recurringPayroll: state.recurringPayroll.map(r => r.id === id ? { ...r, active: !r.active } : r) })),
+      processRecurringPayroll: () => {
+        const state = get();
+        const today = new Date().toISOString().split('T')[0];
+        
+        const duePayroll = state.recurringPayroll.filter(p => p.active && p.nextDate <= today);
+        if (duePayroll.length > 0) {
+          set(draft => {
+            const newState = { ...draft };
+            duePayroll.forEach(p => {
+              let name = '';
+              if (p.type === 'employee') {
+                const emp = newState.employees.find(e => e.id === p.entityId);
+                if (emp) {
+                  name = emp.name;
+                  newState.employees = newState.employees.map(e => e.id === p.entityId ? { ...e, balanceOwed: e.balanceOwed + p.amount } : e);
+                }
+              } else {
+                const fund = newState.fundraisers.find(f => f.id === p.entityId);
+                if (fund) {
+                  name = fund.name;
+                  newState.fundraisers = newState.fundraisers.map(f => f.id === p.entityId ? { ...f, balanceOwed: f.balanceOwed + p.amount, internalAccountBalance: (f.internalAccountBalance || 0) + p.amount } : f);
+                }
+              }
+
+              if (name) {
+                const newBill: Bill = {
+                  id: uid(),
+                  vendor: `Payroll: ${name}`,
+                  amount: p.amount,
+                  currency: 'CAD',
+                  dueDate: today,
+                  status: 'pending',
+                  category: 'Payroll Expense',
+                  earningType: p.earningType,
+                  t4aEligible: p.t4aEligible
+                };
+                newState.bills = [newBill, ...newState.bills];
+              }
+
+              const d = new Date(p.nextDate);
+              if (p.frequency === 'weekly') d.setDate(d.getDate() + 7);
+              else if (p.frequency === 'biweekly') d.setDate(d.getDate() + 14);
+              else if (p.frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+              
+              const updatedP = { ...p, nextDate: d.toISOString().split('T')[0] };
+              newState.recurringPayroll = newState.recurringPayroll.map(r => r.id === p.id ? updatedP : r);
+            });
+            return newState;
+          });
+        }
+      },
 
       markBillPaid: (id, sourceAccountId, offsetAccountId) => set((state) => {
         const bill = state.bills.find(b => b.id === id);
