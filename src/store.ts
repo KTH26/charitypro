@@ -413,6 +413,8 @@ export const useStore = create<AppState>()(
       employees: [],
       t4aSlips: [],
       vendors: [],
+      projects: [],
+      recurringExpenses: [],
 
       toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
       setCurrency: (currency) => set({ currency }),
