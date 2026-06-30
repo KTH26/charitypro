@@ -118,12 +118,24 @@ export const Payments: React.FC = () => {
         {selectedIds.length > 0 && (
           <div style={{ background: 'var(--red-bg)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '12px 16px', borderRadius: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: 'var(--red)', fontWeight: 600 }}>{selectedIds.length} payments selected</span>
-            <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
-              if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} payments?`)) {
-                deleteTransactions(selectedIds);
-                setSelectedIds([]);
-              }
-            }}>Delete Selected</button>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
+                if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} payments?`)) {
+                  deleteTransactions(selectedIds);
+                  setSelectedIds([]);
+                }
+              }}>Delete Selected</button>
+
+              {filteredPayments.length > selectedIds.length && (
+                <button className="btn btn-sm" style={{ background: 'white', color: 'var(--red)', border: '1px solid var(--red)' }} onClick={() => {
+                  if (window.confirm(`WARNING: Are you sure you want to permanently delete ALL ${filteredPayments.length} payments that match your current filter? This cannot be undone.`)) {
+                    deleteTransactions(filteredPayments.map(p => p.id));
+                    setSelectedIds([]);
+                    setCurrentPage(1);
+                  }
+                }}>Delete ALL {filteredPayments.length} Matching</button>
+              )}
+            </div>
           </div>
         )}
 
