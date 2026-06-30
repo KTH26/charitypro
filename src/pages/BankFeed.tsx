@@ -584,7 +584,7 @@ export const BankFeed: React.FC = () => {
                       </thead>
                       <tbody>
                         {transactions
-                          .filter(t => !t.isBatch && !t.batchTransactionId && (t.type === 'approved' || t.type === 'pending'))
+                          .filter(t => !t.isBatch && !t.batchTransactionId && t.type === 'approved')
                           .filter(t => {
                             if (batchMethodFilter && t.method !== batchMethodFilter) return false;
                             if (batchDateFrom && t.date < batchDateFrom) return false;
