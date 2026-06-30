@@ -169,6 +169,8 @@ export interface Bill {
   printStatus?: 'queued' | 'printed';
   projectId?: string;
   creditAccountId?: string;
+  earningType?: string;
+  t4aEligible?: boolean;
 }
 
 export interface Task {
@@ -212,6 +214,18 @@ export interface RecurringExpense {
   active: boolean;
 }
 
+export interface RecurringPayroll {
+  id: string;
+  entityId: string;
+  type: 'employee' | 'fundraiser';
+  amount: number;
+  earningType: string;
+  t4aEligible: boolean;
+  frequency: 'weekly' | 'biweekly' | 'monthly';
+  nextDate: string;
+  active: boolean;
+}
+
 interface AppState {
   clientId: string;
   lastEventId: number;
@@ -238,6 +252,7 @@ interface AppState {
   vendors: Vendor[];
   projects: Project[];
   recurringExpenses: RecurringExpense[];
+  recurringPayroll: RecurringPayroll[];
 
   toggleRtl: () => void;
   setCurrency: (currency: 'CAD' | 'USD') => void;
@@ -272,7 +287,7 @@ interface AppState {
 
   addEmployee: (emp: Omit<Employee, 'id' | 'balanceOwed'>) => void;
   payPayrollEntity: (entityId: string, type: 'employee' | 'fundraiser', amount: number) => void;
-  accruePayroll: (entityId: string, type: 'employee' | 'fundraiser', amount: number) => void;
+  accruePayroll: (entityId: string, type: 'employee' | 'fundraiser', amount: number, earningType?: string, t4aEligible?: boolean) => void;
   addT4A: (t4a: Omit<T4A, 'id' | 'issuedDate'>) => void;
 
   addAccount: (acc: Omit<Account, 'id'> | Account) => void;
@@ -290,9 +305,13 @@ interface AppState {
   editProject: (id: string, updates: Partial<Omit<Project, 'id'>>) => void;
   deleteProject: (id: string) => void;
 
-  addRecurringExpense: (rec: Omit<RecurringExpense, 'id'>) => void;
-  toggleRecurringExpense: (id: string) => void;
+  addRecurringExpense: (expense: Omit<RecurringExpense, 'id'>) => void;
+  deleteRecurringExpense: (id: string) => void;
   processRecurringExpenses: () => void;
+
+  addRecurringPayroll: (payroll: Omit<RecurringPayroll, 'id'>) => void;
+  deleteRecurringPayroll: (id: string) => void;
+  processRecurringPayroll: () => void;
 
   addTask: (task: Omit<Task, 'id' | 'createdAt'>) => void;
   completeTask: (id: string) => void;
@@ -389,7 +408,7 @@ export const dualStorage: StateStorage = {
 
 export const useStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       clientId: Math.random().toString(36).substr(2, 9),
       lastEventId: 0,
       isRtl: false,
@@ -415,6 +434,7 @@ export const useStore = create<AppState>()(
       vendors: [],
       projects: [],
       recurringExpenses: [],
+      recurringPayroll: [],
 
       toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
       setCurrency: (currency) => set({ currency }),
@@ -663,7 +683,7 @@ export const useStore = create<AppState>()(
           return { fundraisers: state.fundraisers.map(f => f.id === entityId ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - amount), internalAccountBalance: (f.internalAccountBalance || 0) - amount } : f) };
         }
       }),
-      accruePayroll: (entityId, type, amount) => set(state => {
+      accruePayroll: (entityId, type, amount, earningType, t4aEligible) => set(state => {
         let name = '';
         let newState = { ...state };
         if (type === 'employee') {
@@ -684,7 +704,9 @@ export const useStore = create<AppState>()(
           currency: 'CAD',
           dueDate: new Date().toISOString().split('T')[0],
           status: 'pending',
-          category: 'Payroll Expense'
+          category: 'Payroll Expense',
+          earningType,
+          t4aEligible
         };
         newState.bills = [newBill, ...state.bills];
 

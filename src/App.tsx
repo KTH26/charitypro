@@ -34,10 +34,12 @@ function App() {
       const unsub = useStore.persist.onFinishHydration(() => {
         setHasHydrated(true);
         useStore.getState().processRecurringExpenses();
+        useStore.getState().processRecurringPayroll();
       });
       if (useStore.persist.hasHydrated()) {
         setHasHydrated(true);
         useStore.getState().processRecurringExpenses();
+        useStore.getState().processRecurringPayroll();
       }
       return unsub;
     });

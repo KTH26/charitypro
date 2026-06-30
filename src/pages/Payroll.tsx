@@ -21,6 +21,10 @@ export const Payroll: React.FC = () => {
   const [showAccrue, setShowAccrue] = useState(false);
   const [accrueTarget, setAccrueTarget] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
   const [accrueAmount, setAccrueAmount] = useState('');
+  const [earningType, setEarningType] = useState('Salary');
+  const [t4aEligible, setT4aEligible] = useState(false);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringFrequency, setRecurringFrequency] = useState<'weekly' | 'biweekly' | 'monthly'>('monthly');
 
   const [showLedger, setShowLedger] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
 
@@ -43,10 +47,30 @@ export const Payroll: React.FC = () => {
   const handleAccrue = (e: React.FormEvent) => {
     e.preventDefault();
     if (!accrueTarget || !accrueAmount) return;
-    accruePayroll(accrueTarget.id, accrueTarget.type, parseFloat(accrueAmount));
+    
+    if (isRecurring) {
+      useStore.getState().addRecurringPayroll({
+        entityId: accrueTarget.id,
+        type: accrueTarget.type,
+        amount: parseFloat(accrueAmount),
+        earningType,
+        t4aEligible,
+        frequency: recurringFrequency,
+        nextDate: new Date().toISOString().split('T')[0],
+        active: true
+      });
+      useStore.getState().processRecurringPayroll();
+    } else {
+      accruePayroll(accrueTarget.id, accrueTarget.type, parseFloat(accrueAmount), earningType, t4aEligible);
+    }
+
     setShowAccrue(false);
     setAccrueTarget(null);
     setAccrueAmount('');
+    setEarningType('Salary');
+    setT4aEligible(false);
+    setIsRecurring(false);
+    setRecurringFrequency('monthly');
   };
 
   const handleGenerateT4A = (e: React.FormEvent) => {
@@ -125,17 +149,22 @@ export const Payroll: React.FC = () => {
                   </thead>
                   <tbody>
                     {employees.map(e => (
-                      <tr key={e.id}>
+                      <tr key={e.id} onClick={() => setShowLedger({ id: e.id, type: 'employee', name: e.name })} style={{ cursor: 'pointer', transition: 'background 0.2s' }} className="hover-bg-input">
                         <td style={{ fontWeight: 600 }}>{e.name}</td>
                         <td>{e.role}</td>
                         <td>{e.email || '-'}</td>
                         <td style={{ fontWeight: 700, color: 'var(--red)' }}>${e.balanceOwed.toFixed(2)}</td>
                         <td>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <button className="btn btn-ghost btn-sm" onClick={() => setShowLedger({ id: e.id, type: 'employee', name: e.name })}>View Ledger</button>
-                            <button className="btn btn-primary btn-sm" onClick={() => { setAccrueTarget({ id: e.id, type: 'employee', name: e.name }); setShowAccrue(true); }}>Add Earnings</button>
-                            <button className="btn btn-secondary btn-sm" onClick={() => { setPayTarget({ id: e.id, type: 'employee', name: e.name, balance: e.balanceOwed }); setShowPay(true); }}>Record Payment</button>
-                            <button className="btn btn-ghost btn-sm" onClick={() => { setT4ATarget({ id: e.id, type: 'employee', name: e.name }); setShowT4A(true); }}>Generate T4A</button>
+                            <button className="btn btn-primary btn-sm" onClick={(ev) => { ev.stopPropagation(); setAccrueTarget({ id: e.id, type: 'employee', name: e.name }); setShowAccrue(true); }}>Add Earnings</button>
+                            <button className="btn btn-secondary btn-sm" onClick={(ev) => { ev.stopPropagation(); setPayTarget({ id: e.id, type: 'employee', name: e.name, balance: e.balanceOwed }); setShowPay(true); }}>Record Payment</button>
+                            <button className="btn btn-ghost btn-sm" onClick={(ev) => { 
+                              ev.stopPropagation(); 
+                              setT4ATarget({ id: e.id, type: 'employee', name: e.name }); 
+                              const t4aSum = bills.filter(b => b.vendor === `Payroll: ${e.name}` && b.t4aEligible && b.dueDate.startsWith(t4aYear.toString())).reduce((s, b) => s + b.amount, 0);
+                              setT4ABox48(t4aSum > 0 ? t4aSum.toString() : '');
+                              setShowT4A(true); 
+                            }}>Generate T4A</button>
                           </div>
                         </td>
                       </tr>
@@ -165,17 +194,22 @@ export const Payroll: React.FC = () => {
                   </thead>
                   <tbody>
                     {fundraisers.map(f => (
-                      <tr key={f.id}>
+                      <tr key={f.id} onClick={() => setShowLedger({ id: f.id, type: 'fundraiser', name: f.name })} style={{ cursor: 'pointer', transition: 'background 0.2s' }} className="hover-bg-input">
                         <td style={{ fontWeight: 600 }}>{f.name}</td>
                         <td>{f.percentage}%</td>
                         <td style={{ color: 'var(--navy)', fontWeight: 600 }}>${(f.internalAccountBalance || 0).toFixed(2)}</td>
                         <td style={{ fontWeight: 700, color: 'var(--red)' }}>${f.balanceOwed.toFixed(2)}</td>
                         <td>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <button className="btn btn-ghost btn-sm" onClick={() => setShowLedger({ id: f.id, type: 'fundraiser', name: f.name })}>View Ledger</button>
-                            <button className="btn btn-primary btn-sm" onClick={() => { setAccrueTarget({ id: f.id, type: 'fundraiser', name: f.name }); setShowAccrue(true); }}>Add Earnings</button>
-                            <button className="btn btn-secondary btn-sm" onClick={() => { setPayTarget({ id: f.id, type: 'fundraiser', name: f.name, balance: f.balanceOwed }); setShowPay(true); }}>Record Payment</button>
-                            <button className="btn btn-ghost btn-sm" onClick={() => { setT4ATarget({ id: f.id, type: 'fundraiser', name: f.name }); setShowT4A(true); }}>Generate T4A</button>
+                            <button className="btn btn-primary btn-sm" onClick={(ev) => { ev.stopPropagation(); setAccrueTarget({ id: f.id, type: 'fundraiser', name: f.name }); setShowAccrue(true); }}>Add Earnings</button>
+                            <button className="btn btn-secondary btn-sm" onClick={(ev) => { ev.stopPropagation(); setPayTarget({ id: f.id, type: 'fundraiser', name: f.name, balance: f.balanceOwed }); setShowPay(true); }}>Record Payment</button>
+                            <button className="btn btn-ghost btn-sm" onClick={(ev) => { 
+                              ev.stopPropagation(); 
+                              setT4ATarget({ id: f.id, type: 'fundraiser', name: f.name }); 
+                              const t4aSum = bills.filter(b => b.vendor === `Payroll: ${f.name}` && b.t4aEligible && b.dueDate.startsWith(t4aYear.toString())).reduce((s, b) => s + b.amount, 0);
+                              setT4ABox48(t4aSum > 0 ? t4aSum.toString() : '');
+                              setShowT4A(true); 
+                            }}>Generate T4A</button>
                           </div>
                         </td>
                       </tr>
@@ -290,9 +324,42 @@ export const Payroll: React.FC = () => {
                 <div style={{ color: 'var(--navy)' }}>This will add to the balance owed to this {accrueTarget.type}.</div>
               </div>
               <div className="form-group">
+                <label>Earning Type</label>
+                <select value={earningType} onChange={e => setEarningType(e.target.value)}>
+                  <option value="Salary">Salary / Base</option>
+                  <option value="Hourly">Hourly</option>
+                  <option value="Bonus">Bonus</option>
+                  <option value="Tip">Tip</option>
+                  <option value="Commission">Commission</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div className="form-group">
                 <label>Earnings Amount ($)</label>
                 <input type="number" step="0.01" required value={accrueAmount} onChange={e => setAccrueAmount(e.target.value)} />
               </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input type="checkbox" checked={t4aEligible} onChange={e => setT4aEligible(e.target.checked)} style={{ width: 16, height: 16 }} />
+                <span>Include in T4A (Box 48 Eligible)</span>
+              </label>
+
+              <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)', marginTop: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
+                  <input type="checkbox" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} style={{ width: 16, height: 16 }} />
+                  Make this a recurring payroll entry
+                </label>
+                {isRecurring && (
+                  <div className="form-group" style={{ marginTop: '16px' }}>
+                    <label>Frequency</label>
+                    <select value={recurringFrequency} onChange={e => setRecurringFrequency(e.target.value as any)}>
+                      <option value="weekly">Weekly</option>
+                      <option value="biweekly">Bi-weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
               <div className="modal-footer" style={{ marginTop: '24px' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowAccrue(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary">Add Earnings</button>

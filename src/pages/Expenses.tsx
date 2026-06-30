@@ -98,9 +98,10 @@ export const Expenses: React.FC = () => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  const activeBills = bills.filter(b => b.status !== 'paid');
-  const paidBills = bills.filter(b => b.status === 'paid');
-  const urgentBills = bills.filter(b => b.status === 'urgent');
+  const nonPayrollBills = bills.filter(b => !b.vendor.startsWith('Payroll: '));
+  const activeBills = nonPayrollBills.filter(b => b.status !== 'paid');
+  const paidBills = nonPayrollBills.filter(b => b.status === 'paid');
+  const urgentBills = nonPayrollBills.filter(b => b.status === 'urgent');
 
   const totalDue = activeBills.reduce((sum, b) => sum + b.amount, 0);
 
@@ -277,6 +278,7 @@ export const Expenses: React.FC = () => {
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <span style={{ fontWeight: 700 }}>${bill.amount.toFixed(2)}</span>
                     <span className="badge badge-green">Paid</span>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setEditBillData(bill)}><Edit2 size={14} /></button>
                   </div>
                 </div>
               ))}
