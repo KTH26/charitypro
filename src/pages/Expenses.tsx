@@ -555,7 +555,7 @@ export const Expenses: React.FC = () => {
       )}
 
       {selectedVendor && <VendorModal vendorName={selectedVendor} onClose={() => setSelectedVendor(null)} />}
-      {showAddCategory && <AddAccountModal onClose={() => setShowAddCategory(false)} />}
+      {showAddCategory && <AddAccountModal onClose={() => setShowAddCategory(false)} hideTypeSelection defaultType="expense" modalTitle="Add Expense Category" />}
     </div>
   );
 };
