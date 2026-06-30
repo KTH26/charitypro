@@ -222,6 +222,7 @@ export interface RecurringPayroll {
   earningType: string;
   t4aEligible: boolean;
   frequency: 'weekly' | 'biweekly' | 'monthly';
+  startDate: string;
   nextDate: string;
   active: boolean;
 }
@@ -310,6 +311,7 @@ interface AppState {
   processRecurringExpenses: () => void;
 
   addRecurringPayroll: (payroll: Omit<RecurringPayroll, 'id'>) => void;
+  deleteRecurringPayroll: (id: string) => void;
   toggleRecurringPayroll: (id: string) => void;
   processRecurringPayroll: () => void;
 
@@ -734,13 +736,53 @@ export const useStore = create<AppState>()(
 
 
 
-      editBill: (id, updates) => set((state) => ({
-        bills: state.bills.map(b => b.id === id ? { ...b, ...updates } : b)
-      })),
+      editBill: (id, updates) => set((state) => {
+        const bill = state.bills.find(b => b.id === id);
+        if (!bill) return state;
 
-      deleteBills: (ids) => set(state => ({
-        bills: state.bills.filter(b => !ids.includes(b.id))
-      })),
+        let newState = { ...state };
+        let diff = (updates.amount !== undefined ? updates.amount : bill.amount) - bill.amount;
+
+        if (diff !== 0 && bill.vendor.startsWith('Payroll: ')) {
+          const name = bill.vendor.replace('Payroll: ', '');
+          
+          // If pending, increasing amount increases balanceOwed
+          // If paid, increasing amount means we paid MORE, so we decrease balanceOwed
+          const factor = bill.status === 'paid' ? -1 : 1;
+          const adjustedDiff = diff * factor;
+
+          newState.employees = newState.employees.map(e => e.name === name ? { ...e, balanceOwed: Math.max(0, e.balanceOwed + adjustedDiff) } : e);
+          newState.fundraisers = newState.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: Math.max(0, f.balanceOwed + adjustedDiff) } : f);
+        }
+
+        newState.bills = newState.bills.map(b => b.id === id ? { ...b, ...updates } : b);
+        return newState;
+      }),
+
+      deleteBills: (ids) => set(state => {
+        let newState = { ...state };
+        const billsToDelete = newState.bills.filter(b => ids.includes(b.id));
+
+        billsToDelete.forEach(bill => {
+          if (bill.vendor.startsWith('Payroll: ')) {
+            const name = bill.vendor.replace('Payroll: ', '');
+            // Deleting pending earning = subtract from balanceOwed
+            // Deleting paid payment = add back to balanceOwed
+            const factor = bill.status === 'paid' ? 1 : -1;
+            
+            newState.employees = newState.employees.map(e => e.name === name ? { ...e, balanceOwed: Math.max(0, e.balanceOwed + (bill.amount * factor)) } : e);
+            newState.fundraisers = newState.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: Math.max(0, f.balanceOwed + (bill.amount * factor)) } : f);
+          }
+          
+          // Refund bank account if it was paid
+          if (bill.status === 'paid' && bill.sourceAccountId) {
+             newState.accounts = newState.accounts.map(a => a.id === bill.sourceAccountId ? { ...a, balance: a.balance + bill.amount } : a);
+          }
+        });
+
+        newState.bills = newState.bills.filter(b => !ids.includes(b.id));
+        return newState;
+      }),
 
       addVendor: (vendor) => set((state) => ({
         vendors: [...state.vendors, { ...vendor, id: uid() }]
@@ -793,12 +835,13 @@ export const useStore = create<AppState>()(
       }),
 
       addRecurringPayroll: (payroll) => set(state => ({ recurringPayroll: [{ ...payroll, id: uid() }, ...state.recurringPayroll] })),
+      deleteRecurringPayroll: (id) => set(state => ({ recurringPayroll: state.recurringPayroll.filter(p => p.id !== id) })),
       toggleRecurringPayroll: (id) => set(state => ({ recurringPayroll: state.recurringPayroll.map(r => r.id === id ? { ...r, active: !r.active } : r) })),
       processRecurringPayroll: () => {
         const state = get();
         const today = new Date().toISOString().split('T')[0];
         
-        const duePayroll = state.recurringPayroll.filter(p => p.active && p.nextDate <= today);
+        const duePayroll = state.recurringPayroll.filter(p => p.active && p.nextDate <= today && p.startDate <= today);
         if (duePayroll.length > 0) {
           set(draft => {
             const newState = { ...draft };
@@ -862,9 +905,17 @@ export const useStore = create<AppState>()(
         });
 
         let updatedFundraisers = state.fundraisers;
+        let updatedEmployees = state.employees;
+
+        if (bill.vendor.startsWith('Payroll: ')) {
+          const name = bill.vendor.replace('Payroll: ', '');
+          updatedEmployees = state.employees.map(e => e.name === name ? { ...e, balanceOwed: Math.max(0, e.balanceOwed - bill.amount) } : e);
+          updatedFundraisers = state.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - bill.amount) } : f);
+        }
+
         const offsetAcc = state.accounts.find(a => a.id === offsetAccountId);
         if (offsetAcc && offsetAcc.linkedFundraiserId) {
-          updatedFundraisers = state.fundraisers.map(f => f.id === offsetAcc.linkedFundraiserId
+          updatedFundraisers = updatedFundraisers.map(f => f.id === offsetAcc.linkedFundraiserId
             ? { ...f, balanceOwed: Math.max(0, f.balanceOwed - (bill?.amount || 0)), internalAccountBalance: (f.internalAccountBalance || 0) + (bill?.amount || 0) }
             : f);
         }
@@ -872,7 +923,8 @@ export const useStore = create<AppState>()(
         return {
           bills: state.bills.map(b => b.id === id ? { ...b, status: 'paid', paidDate: new Date().toISOString().split('T')[0], sourceAccountId: finalSource, offsetAccountId: finalOffset } : b),
           accounts: updatedAccounts,
-          fundraisers: updatedFundraisers
+          fundraisers: updatedFundraisers,
+          employees: updatedEmployees
         };
       }),
 

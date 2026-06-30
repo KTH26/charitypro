@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Users, User, FileText, Download, Plus, Check } from 'lucide-react';
+import { Users, User, FileText, Download, Plus, Check, Trash2, Edit2 } from 'lucide-react';
 
 export const Payroll: React.FC = () => {
-  const { employees, fundraisers, t4aSlips, addEmployee, payPayrollEntity, addT4A, accruePayroll, bills } = useStore();
-  const [activeTab, setActiveTab] = useState<'employees' | 'fundraisers' | 't4a'>('employees');
+  const { employees, fundraisers, t4aSlips, addEmployee, payPayrollEntity, addT4A, accruePayroll, bills, accounts, addBill, markBillPaid } = useStore();
+  const [activeTab, setActiveTab] = useState<'employees' | 'fundraisers' | 't4a' | 'schedules'>('employees');
+
+  const { deleteBills, editBill, deleteRecurringPayroll, toggleRecurringPayroll, recurringPayroll } = useStore();
 
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empForm, setEmpForm] = useState({ name: '', role: '', email: '' });
@@ -12,6 +14,7 @@ export const Payroll: React.FC = () => {
   const [showPay, setShowPay] = useState(false);
   const [payTarget, setPayTarget] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string, balance: number } | null>(null);
   const [payAmount, setPayAmount] = useState('');
+  const [paySourceAccount, setPaySourceAccount] = useState('');
 
   const [showT4A, setShowT4A] = useState(false);
   const [t4aTarget, setT4ATarget] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
@@ -25,6 +28,7 @@ export const Payroll: React.FC = () => {
   const [t4aEligible, setT4aEligible] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringFrequency, setRecurringFrequency] = useState<'weekly' | 'biweekly' | 'monthly'>('monthly');
+  const [recurringStartDate, setRecurringStartDate] = useState(new Date().toISOString().split('T')[0]);
 
   const [showLedger, setShowLedger] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
 
@@ -37,11 +41,26 @@ export const Payroll: React.FC = () => {
 
   const handlePay = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!payTarget || !payAmount) return;
-    payPayrollEntity(payTarget.id, payTarget.type, parseFloat(payAmount));
+    if (!payTarget || !payAmount || !paySourceAccount) return;
+    
+    const amount = parseFloat(payAmount);
+    
+    // Create a new "Paid" bill so it shows in the ledger
+    const billId = addBill({
+      vendor: `Payroll: ${payTarget.name}`,
+      amount,
+      dueDate: new Date().toISOString().split('T')[0],
+      status: 'pending',
+      category: 'Payroll Expense'
+    });
+    
+    // Paying it will deduct from the bank AND reduce balanceOwed!
+    markBillPaid(billId, paySourceAccount, 'Payroll Expense');
+
     setShowPay(false);
     setPayTarget(null);
     setPayAmount('');
+    setPaySourceAccount('');
   };
 
   const handleAccrue = (e: React.FormEvent) => {
@@ -56,7 +75,8 @@ export const Payroll: React.FC = () => {
         earningType,
         t4aEligible,
         frequency: recurringFrequency,
-        nextDate: new Date().toISOString().split('T')[0],
+        startDate: recurringStartDate,
+        nextDate: recurringStartDate,
         active: true
       });
       useStore.getState().processRecurringPayroll();
@@ -71,6 +91,7 @@ export const Payroll: React.FC = () => {
     setT4aEligible(false);
     setIsRecurring(false);
     setRecurringFrequency('monthly');
+    setRecurringStartDate(new Date().toISOString().split('T')[0]);
   };
 
   const handleGenerateT4A = (e: React.FormEvent) => {
@@ -126,6 +147,17 @@ export const Payroll: React.FC = () => {
             }}
           >
             <FileText size={16} /> T4A Tax Slips
+          </button>
+          <button
+            onClick={() => setActiveTab('schedules')}
+            style={{
+              padding: '16px 24px', background: activeTab === 'schedules' ? 'var(--bg)' : 'transparent',
+              border: 'none', borderBottom: activeTab === 'schedules' ? '2px solid var(--green)' : '2px solid transparent',
+              color: activeTab === 'schedules' ? 'var(--green)' : 'var(--text-muted)', fontWeight: activeTab === 'schedules' ? 700 : 500,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'
+            }}
+          >
+            <Check size={16} /> Recurring Schedules
           </button>
         </div>
 
@@ -262,6 +294,56 @@ export const Payroll: React.FC = () => {
               </div>
             </>
           )}
+
+          {activeTab === 'schedules' && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h2 style={{ margin: 0, color: 'var(--navy)' }}>Recurring Payroll Schedules</h2>
+              </div>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Entity</th>
+                      <th>Type</th>
+                      <th>Frequency</th>
+                      <th>Start Date</th>
+                      <th>Next Date</th>
+                      <th style={{ textAlign: 'right' }}>Amount</th>
+                      <th style={{ textAlign: 'right' }}>Status</th>
+                      <th style={{ textAlign: 'right', width: '100px' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recurringPayroll.map(r => {
+                      const entity = r.type === 'employee' ? employees.find(e => e.id === r.entityId) : fundraisers.find(f => f.id === r.entityId);
+                      return (
+                        <tr key={r.id}>
+                          <td style={{ fontWeight: 600 }}>{entity?.name || 'Unknown'}</td>
+                          <td style={{ textTransform: 'capitalize' }}>{r.type}</td>
+                          <td style={{ textTransform: 'capitalize' }}>{r.frequency}</td>
+                          <td>{r.startDate}</td>
+                          <td>{r.nextDate}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 700 }}>${r.amount.toFixed(2)}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button onClick={() => toggleRecurringPayroll(r.id)} className={`badge ${r.active ? 'badge-green' : 'badge-yellow'}`} style={{ border: 'none', cursor: 'pointer' }}>
+                              {r.active ? 'Active' : 'Paused'}
+                            </button>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => deleteRecurringPayroll(r.id)} style={{ color: 'var(--red)' }}>
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {recurringPayroll.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>No recurring schedules found.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -297,6 +379,15 @@ export const Payroll: React.FC = () => {
             <form onSubmit={handlePay} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '8px' }}>
                 <div>Current Balance Owed: <strong>${payTarget.balance.toFixed(2)}</strong></div>
+              </div>
+              <div className="form-group">
+                <label>Paid From Bank Account</label>
+                <select value={paySourceAccount} required onChange={e => setPaySourceAccount(e.target.value)}>
+                  <option value="">-- Select Bank Account --</option>
+                  {accounts.filter(a => a.type === 'asset').map(a => (
+                    <option key={a.id} value={a.id}>{a.name} (${a.balance.toFixed(2)})</option>
+                  ))}
+                </select>
               </div>
               <div className="form-group">
                 <label>Amount Paid ($)</label>
@@ -349,13 +440,19 @@ export const Payroll: React.FC = () => {
                   Make this a recurring payroll entry
                 </label>
                 {isRecurring && (
-                  <div className="form-group" style={{ marginTop: '16px' }}>
-                    <label>Frequency</label>
-                    <select value={recurringFrequency} onChange={e => setRecurringFrequency(e.target.value as any)}>
-                      <option value="weekly">Weekly</option>
-                      <option value="biweekly">Bi-weekly</option>
-                      <option value="monthly">Monthly</option>
-                    </select>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Frequency</label>
+                      <select value={recurringFrequency} onChange={e => setRecurringFrequency(e.target.value as any)}>
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Bi-weekly</option>
+                        <option value="monthly">Monthly</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Start Date</label>
+                      <input type="date" required value={recurringStartDate} onChange={e => setRecurringStartDate(e.target.value)} />
+                    </div>
                   </div>
                 )}
               </div>
@@ -386,6 +483,7 @@ export const Payroll: React.FC = () => {
                       <th>Description</th>
                       <th>Type</th>
                       <th style={{ textAlign: 'right' }}>Amount</th>
+                      <th style={{ textAlign: 'right', width: '60px' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -400,6 +498,20 @@ export const Payroll: React.FC = () => {
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 700, color: b.status === 'paid' ? 'var(--green)' : 'var(--navy)' }}>
                           {b.status === 'paid' ? '-' : '+'}${b.amount.toFixed(2)}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button className="btn btn-ghost btn-sm" onClick={(e) => { 
+                            e.stopPropagation(); 
+                            const val = window.prompt('Enter new amount for this transaction:', b.amount.toString());
+                            if (val && !isNaN(parseFloat(val))) {
+                              editBill(b.id, { amount: parseFloat(val) });
+                            }
+                          }} style={{ color: 'var(--navy)', padding: '4px', marginRight: '4px' }}>
+                            <Edit2 size={14} />
+                          </button>
+                          <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); if(confirm('Are you sure you want to delete this ledger entry?')) deleteBills([b.id]); }} style={{ color: 'var(--red)', padding: '4px' }}>
+                            <Trash2 size={14} />
+                          </button>
                         </td>
                       </tr>
                     ))}
