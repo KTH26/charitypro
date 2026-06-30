@@ -188,7 +188,7 @@ export const Expenses: React.FC = () => {
       </div>
 
       {activeTab === 'bills' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+        <div>
         {/* Bills */}
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -283,8 +283,6 @@ export const Expenses: React.FC = () => {
             </div>
           )}
         </div>
-
-          </div>
         </div>
       ) : (
         <div className="card">
