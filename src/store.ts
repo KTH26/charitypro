@@ -94,6 +94,7 @@ export interface Transaction {
   batchTransactionId?: string; // Links individual tx to a master batch tx
   isBatch?: boolean; // True if this is the master batch tx
   projectId?: string;
+  pledgeId?: string;
 }
 
 export interface Pledge {
@@ -112,6 +113,7 @@ export interface Pledge {
 export interface RecurringPayment {
   id: string;
   donorId: string;
+  pledgeId?: string;
   amount: number;
   frequency: 'weekly' | 'monthly' | 'quarterly' | 'yearly';
   nextDate: string;
@@ -372,7 +374,7 @@ const mockTasks: Task[] = [
 ];
 
 let nextId = 200;
-const uid = () => String(++nextId);
+export const uid = () => String(++nextId);
 
 // System-reserved account ID for Undeposited Funds
 export const UNDEPOSITED_FUNDS_ID = 'sys-undeposited-funds';
@@ -749,7 +751,7 @@ export const useStore = create<AppState>()(
       })),
 
       bulkAddPledges: (pledgesArr) => set(state => {
-        const newPledges = pledgesArr.map(p => ({ ...p, id: uid() }));
+        const newPledges = pledgesArr.map(p => ({ ...p, id: (p as any).id || uid() }));
         const donorUpdates = new Map<string, number>();
         for (const p of newPledges) {
           donorUpdates.set(p.donorId, (donorUpdates.get(p.donorId) || 0) + (p.amountCAD ?? p.amount));
@@ -848,7 +850,7 @@ export const useStore = create<AppState>()(
       })),
 
       bulkAddRecurring: (recs) => set((state) => ({
-        recurringPayments: [...state.recurringPayments, ...recs.map(r => ({ ...r, id: uid() }))]
+        recurringPayments: [...state.recurringPayments, ...recs.map(r => ({ ...r, id: (r as any).id || uid() }))]
       })),
 
       toggleRecurring: (id) => set((state) => ({
@@ -1066,6 +1068,7 @@ export const useStore = create<AppState>()(
             newTransactions.push({
               id: uid(),
               donorId: rec.donorId,
+              pledgeId: rec.pledgeId,
               amount: rec.amount,
               amountCAD: rec.amount,
               date: currentNextDate,

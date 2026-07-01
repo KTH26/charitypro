@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, UploadCloud, FileType, CheckCircle, Download, AlertTriangle, User, UserPlus } from 'lucide-react';
 import Papa from 'papaparse';
-import { useStore } from '../store';
+import { useStore, uid } from '../store';
 
 const getVal = (row: any, ...keys: string[]) => {
   if (!row) return undefined;
@@ -274,7 +274,9 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
 
             if (dataType === 'pledges' && isPledgeMethod) {
               // Create ONE full pledge
+              const newPledgeId = uid();
               pledgesToAdd.push({
+                id: newPledgeId,
                 donorId: finalDonorId,
                 amount,
                 date: parsedDate,
@@ -291,6 +293,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               
               recurringToAdd.push({
                 donorId: finalDonorId,
+                pledgeId: newPledgeId,
                 amount: installmentAmt,
                 frequency: 'monthly',
                 nextDate: parsedDate,

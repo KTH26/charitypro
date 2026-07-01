@@ -29,6 +29,7 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [showPayment, setShowPayment] = useState(false);
   const [editDonorActive, setEditDonorActive] = useState(false);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
+  const [expandedPledgeId, setExpandedPledgeId] = useState<string | null>(null);
 
   const selectedDonor = donors.find(d => d.id === donorId);
   const [notesDraft, setNotesDraft] = useState(selectedDonor?.notes || '');
@@ -266,16 +267,69 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {donorPledges.map(p => (
-                        <tr key={p.id}>
-                          <td>{p.date}</td>
-                          <td style={{ fontWeight: 700, color: 'var(--gold)' }}>${(p.amountCAD ?? p.amount).toLocaleString()}</td>
-                          <td>{p.currency}</td>
-                          <td style={{ fontSize: '0.9rem' }}>{p.category || '—'}</td>
-                          <td style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{p.sponsor || '—'}</td>
-                          <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.notes || '—'}</td>
-                        </tr>
-                      ))}
+                      {donorPledges.map(p => {
+                        const isExpanded = expandedPledgeId === p.id;
+                        const pledgeTxs = donorTransactions.filter(t => t.pledgeId === p.id);
+                        
+                        // Payments already made (Approved transactions linked to this pledge)
+                        const paidForPledge = pledgeTxs.filter(t => t.type === 'approved').reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+                        
+                        // Arrears (Past due / Pending / Declined transactions linked to this pledge)
+                        const arrearsAmount = pledgeTxs.filter(t => t.type === 'pending' || t.type === 'declined').reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+                        
+                        // Pledge Balance
+                        const totalPledgeAmount = (p.amountCAD ?? p.amount);
+                        const pledgeBalance = totalPledgeAmount - paidForPledge;
+                        
+                        // Active Schedule Count
+                        const pledgeSchedules = donorRecurring.filter(r => r.pledgeId === p.id && r.active);
+                        
+                        return (
+                          <React.Fragment key={p.id}>
+                            <tr 
+                              style={{ cursor: 'pointer', background: isExpanded ? 'var(--bg-input)' : 'transparent', borderLeft: isExpanded ? '4px solid var(--navy)' : '4px solid transparent' }} 
+                              onClick={() => setExpandedPledgeId(isExpanded ? null : p.id)}
+                            >
+                              <td>{p.date}</td>
+                              <td style={{ fontWeight: 700, color: 'var(--gold)' }}>${totalPledgeAmount.toLocaleString()}</td>
+                              <td>{p.currency}</td>
+                              <td style={{ fontSize: '0.9rem' }}>{p.category || '—'}</td>
+                              <td style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{p.sponsor || '—'}</td>
+                              <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.notes || '—'}</td>
+                            </tr>
+                            {isExpanded && (
+                              <tr style={{ background: 'var(--bg-surface)' }}>
+                                <td colSpan={6} style={{ padding: '20px', borderBottom: '1px solid var(--border)' }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                                    
+                                    <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px' }}>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Pledge</div>
+                                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--gold)' }}>${totalPledgeAmount.toLocaleString()}</div>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px' }}>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Payments Made</div>
+                                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--green)' }}>${paidForPledge.toLocaleString()}</div>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px' }}>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Pledge Balance</div>
+                                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--navy)' }}>${pledgeBalance.toLocaleString()}</div>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px', borderLeft: '3px solid var(--red)' }}>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Past Due (Arrears)</div>
+                                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--red)' }}>${arrearsAmount.toLocaleString()}</div>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>From {pledgeSchedules.length} active schedules</div>
+                                    </div>
+                                    
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
