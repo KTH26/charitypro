@@ -86,6 +86,7 @@ export interface Transaction {
   sponsor?: string;
   notes?: string;
   invoiceSaved?: boolean;
+  bankTransactionId?: string;
   batchTransactionId?: string; // Links individual tx to a master batch tx
   isBatch?: boolean; // True if this is the master batch tx
   projectId?: string;
@@ -171,6 +172,7 @@ export interface Bill {
   creditAccountId?: string;
   earningType?: string;
   t4aEligible?: boolean;
+  bankTransactionId?: string;
 }
 
 export interface Task {
@@ -192,6 +194,7 @@ export interface AccountTransfer {
   amount: number;
   date: string;
   notes?: string;
+  bankTransactionId?: string;
 }
 
 export type DonorSortKey = 'lastName' | 'firstName' | 'hebLastName' | 'hebFirstName';
@@ -944,9 +947,64 @@ export const useStore = create<AppState>()(
         matchedBankTransactions: [...new Set([...state.matchedBankTransactions, id])]
       })),
 
-      unmatchBankTransaction: (id) => set(state => ({
-        matchedBankTransactions: state.matchedBankTransactions.filter(tid => tid !== id)
-      })),
+      unmatchBankTransaction: (id) => set(state => {
+        let newState = { ...state };
+        
+        // 1. Delete matching AccountTransfers and reverse their balance effects
+        const transfersToDelete = newState.accountTransfers.filter(t => t.bankTransactionId === id);
+        transfersToDelete.forEach(t => {
+          newState.accounts = newState.accounts.map(a => {
+            if (a.id === t.fromAccountId) return { ...a, balance: a.balance + t.amount };
+            if (a.id === t.toAccountId) return { ...a, balance: a.balance - t.amount };
+            return a;
+          });
+        });
+        newState.accountTransfers = newState.accountTransfers.filter(t => t.bankTransactionId !== id);
+
+        // 2. Delete matching Transactions and reverse their donor balance / account balance effects
+        const txsToDelete = newState.transactions.filter(t => t.bankTransactionId === id);
+        txsToDelete.forEach(tx => {
+           if (tx.donorId !== 'unknown' && tx.donorId !== 'batch') {
+              const f = tx.fundraiserId ? newState.fundraisers.find(fu => fu.id === tx.fundraiserId) : undefined;
+              const fPct = f ? f.percentage / 100 : 0;
+              newState.donors = newState.donors.map(d => d.id === tx.donorId ? { ...d, totalGiven: d.totalGiven - tx.amount, balanceOwed: d.balanceOwed - tx.amount } : d);
+              if (f) {
+                 newState.fundraisers = newState.fundraisers.map(fu => fu.id === f.id ? { ...fu, balanceOwed: fu.balanceOwed - (tx.amount * fPct) } : fu);
+              }
+           }
+           if (tx.sourceAccountId) {
+              newState.accounts = newState.accounts.map(a => a.id === tx.sourceAccountId ? { ...a, balance: a.balance - tx.amount } : a);
+           }
+        });
+        
+        // If it was a batch, we also need to UNLINK the child transactions
+        txsToDelete.forEach(tx => {
+          if (tx.isBatch) {
+             newState.transactions = newState.transactions.map(child => child.batchTransactionId === tx.id ? { ...child, batchTransactionId: undefined } : child);
+          }
+        });
+        newState.transactions = newState.transactions.filter(t => t.bankTransactionId !== id);
+
+        // 3. Delete matching Bills and reverse balances
+        const billsToDelete = newState.bills.filter(b => b.bankTransactionId === id);
+        billsToDelete.forEach(bill => {
+          if (bill.vendor.startsWith('Payroll: ')) {
+            const name = bill.vendor.replace('Payroll: ', '');
+            const factor = bill.status === 'paid' ? 1 : -1;
+            newState.employees = newState.employees.map(e => e.name === name ? { ...e, balanceOwed: e.balanceOwed + (bill.amount * factor) } : e);
+            newState.fundraisers = newState.fundraisers.map(f => f.name === name ? { ...f, balanceOwed: f.balanceOwed + (bill.amount * factor) } : f);
+          }
+          if (bill.status === 'paid' && bill.sourceAccountId) {
+             newState.accounts = newState.accounts.map(a => a.id === bill.sourceAccountId ? { ...a, balance: a.balance + bill.amount } : a);
+          }
+        });
+        newState.bills = newState.bills.filter(b => b.bankTransactionId !== id);
+
+        // 4. Finally unmatch
+        newState.matchedBankTransactions = newState.matchedBankTransactions.filter(tid => tid !== id);
+
+        return newState;
+      }),
 
       addBatchDeposit: (bankFeedId, internalTxIds, accountId, totalAmount, date, desc) => set(state => {
         const batchId = uid();
@@ -963,6 +1021,7 @@ export const useStore = create<AppState>()(
           sourceAccountId: accountId,
           notes: desc,
           isBatch: true,
+          bankTransactionId: bankFeedId,
         };
 
         // 2. Update individual transactions

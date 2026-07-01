@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../store';
-import { Building, Send, Check, Link as LinkIcon, RefreshCw, X, Plus } from 'lucide-react';
+import { Building, Send, Check, Link as LinkIcon, RefreshCw, X, Plus, Trash2 } from 'lucide-react';
 import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
 
 export const BankFeed: React.FC = () => {
-  const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, markBillPaid, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity, transactions, addBatchDeposit, donors } = useStore();
+  const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, markBillPaid, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity, transactions, addBatchDeposit, donors, unmatchBankTransaction } = useStore();
   const T = useT(isRtl);
   
   const connectedBanks = accounts.filter(a => a.plaidConnected);
@@ -203,7 +203,8 @@ export const BankFeed: React.FC = () => {
         toAccountId: isOutbound ? transferAccount.id : matchingTx.sourceAccountId,
         amount: Math.abs(matchingTx.amount),
         date: matchingTx.date,
-        notes: matchingTx.description
+        notes: matchingTx.description,
+        bankTransactionId: matchingTx.id
       });
       matchBankTransaction(matchingTx.id);
       setMatchingTx(null);
@@ -221,6 +222,7 @@ export const BankFeed: React.FC = () => {
         dueDate: matchingTx.date,
         status: 'pending',
         category: 'Payroll Expense',
+        bankTransactionId: matchingTx.id
       });
       markBillPaid(billId, matchingTx.sourceAccountId, 'Payroll Expense');
       matchBankTransaction(matchingTx.id);
@@ -240,6 +242,7 @@ export const BankFeed: React.FC = () => {
         dueDate: matchingTx.date,
         status: 'pending',
         category: matchCategory || 'Uncategorized Expense',
+        bankTransactionId: matchingTx.id
       });
       markBillPaid(billId, matchingTx.sourceAccountId, matchCategory || 'Uncategorized Expense');
     } else {
@@ -252,7 +255,8 @@ export const BankFeed: React.FC = () => {
         currency: 'CAD',
         sourceAccountId: matchingTx.sourceAccountId,
         category: matchCategory || 'General Donation',
-        notes: `Bank Deposit: ${matchEntity}`
+        notes: `Bank Deposit: ${matchEntity}`,
+        bankTransactionId: matchingTx.id
       });
     }
 
@@ -419,7 +423,12 @@ export const BankFeed: React.FC = () => {
                               </button>
                             )}
                             {selectedTab === 'matched' && (
-                              <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.85rem' }}>Matched</span>
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.85rem' }}>Matched</span>
+                                <button className="btn btn-ghost btn-sm" onClick={() => { if(window.confirm('Are you sure you want to unmatch this transaction? This will delete the internal records created.')) { unmatchBankTransaction(t.id); } }} style={{ color: 'var(--red)' }} title="Unmatch and Delete Records">
+                                  <Trash2 size={14} /> Unmatch
+                                </button>
+                              </div>
                             )}
                           </div>
                         </td>
