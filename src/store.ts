@@ -275,6 +275,7 @@ interface AppState {
   projects: Project[];
   recurringExpenses: RecurringExpense[];
   recurringPayroll: RecurringPayroll[];
+  dismissedSolaRefs: string[];
 
   toggleRtl: () => void;
   setCurrency: (currency: 'CAD' | 'USD') => void;
@@ -282,6 +283,7 @@ interface AppState {
   setGoogleSheetSyncUrl: (url: string) => void;
   setSolaApiKey: (key: string) => void;
   setLastSolaSyncDate: (date: string) => void;
+  dismissSolaRef: (ref: string) => void;
   setDonorSortBy: (key: DonorSortKey) => void;
   setBankFeed: (accountId: string, feed: any[]) => void;
 
@@ -298,6 +300,7 @@ interface AppState {
   bulkAddTransactions: (txs: Omit<Transaction, 'id'>[]) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
   editTransaction: (id: string, updates: Partial<Omit<Transaction, 'id'>>) => void;
+  bulkEditTransactions: (ids: string[], updates: Partial<Omit<Transaction, 'id'>>) => void;
   deleteTransactions: (ids: string[]) => void;
   deleteAllTransactions: () => void;
   removeDuplicateTransactions: () => { count: number };
@@ -485,6 +488,7 @@ export const useStore = create<AppState>()(
       projects: [],
       recurringExpenses: [],
       recurringPayroll: [],
+      dismissedSolaRefs: [],
 
       toggleRtl: () => set((state) => ({ isRtl: !state.isRtl })),
       setCurrency: (currency) => set({ currency }),
@@ -492,6 +496,7 @@ export const useStore = create<AppState>()(
       setGoogleSheetSyncUrl: (url) => set({ googleSheetSyncUrl: url }),
       setSolaApiKey: (key) => set({ solaApiKey: key }),
       setLastSolaSyncDate: (date) => set({ lastSolaSyncDate: date }),
+      dismissSolaRef: (ref) => set((state) => ({ dismissedSolaRefs: [...state.dismissedSolaRefs, ref] })),
       setDonorSortBy: (key) => set({ donorSortBy: key }),
       setBankFeed: (accountId, feed) => set(state => ({ bankFeeds: { ...state.bankFeeds, [accountId]: feed } })),
 
@@ -717,6 +722,10 @@ export const useStore = create<AppState>()(
 
       editTransaction: (id, updates) => set((state) => ({
         transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
+      })),
+
+      bulkEditTransactions: (ids, updates) => set((state) => ({
+        transactions: state.transactions.map(t => ids.includes(t.id) ? { ...t, ...updates } : t)
       })),
 
       deleteTransactions: (ids) => set(state => ({
@@ -1292,9 +1301,10 @@ export const applyRemoteEvent = (action: string, args: any[]) => {
 const methodsToWrap = [
   'addDonor', 'editDonor', 'updateDonorNotes', 'addSponsorshipDay', 'removeSponsorshipDay', 'deleteDonors', 'recalculateDonorBalances',
   'bulkUpsertDonors',
-  'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions', 'deleteAllTransactions',
+  'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'bulkEditTransactions', 'deleteTransactions', 'deleteAllTransactions',
   'addPledge', 'bulkAddPledges', 'editPledge', 'deletePledges', 'deleteAllPledges',
   'addRecurring', 'bulkAddRecurring', 'toggleRecurring',
+  'dismissSolaRef',
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
   'addAccount', 'editAccount', 'deleteAccount', 'transferBetweenAccounts',
   'addBill', 'editBill', 'markBillPaid', 'deleteBills',
