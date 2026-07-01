@@ -131,12 +131,23 @@ export const Pledges: React.FC = () => {
         {selectedIds.length > 0 && (
           <div style={{ background: 'var(--red-bg)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '12px 16px', borderRadius: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: 'var(--red)', fontWeight: 600 }}>{selectedIds.length} pledges selected</span>
-            <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
-              if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} pledges?`)) {
-                deleteTransactions(selectedIds);
-                setSelectedIds([]);
-              }
-            }}>Delete Selected</button>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
+                if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} pledges?`)) {
+                  deleteTransactions(selectedIds);
+                  setSelectedIds([]);
+                }
+              }}>Delete Selected</button>
+
+              {selectedIds.length > 0 && (
+                <button className="btn btn-sm" style={{ background: 'white', color: 'var(--red)', border: '1px solid var(--red)' }} onClick={() => {
+                  if (window.confirm(`WARNING: Are you sure you want to permanently delete ALL ${filteredPledges.length} pledges that match your current filter? This cannot be undone.`)) {
+                    deleteTransactions(filteredPledges.map(p => p.id));
+                    setSelectedIds([]);
+                  }
+                }}>Delete ALL {filteredPledges.length} Matching</button>
+              )}
+            </div>
           </div>
         )}
 
