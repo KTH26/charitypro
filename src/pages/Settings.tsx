@@ -4,7 +4,7 @@ import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, D
 import { useT } from '../i18n';
 
 export const Settings: React.FC = () => {
-  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy, googleSheetSyncUrl, setGoogleSheetSyncUrl, solaApiKey, setSolaApiKey, projects, addProject, editProject, deleteProject } = useStore();
+  const { isRtl, toggleRtl, currency, setCurrency, exchangeRate, setExchangeRate, donorSortBy, setDonorSortBy, googleSheetSyncUrl, setGoogleSheetSyncUrl, solaApiKey, setSolaApiKey, projects, addProject, editProject, deleteProject, recalculateDonorBalances } = useStore();
   const T = useT(isRtl);
   const [syncing, setSyncing] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
@@ -503,6 +503,24 @@ export const Settings: React.FC = () => {
               input.click();
             }}>
             {T('upload_design')}
+          </button>
+        </div>
+
+        {/* Recalculate Balances */}
+        <div style={{ marginBottom: '16px', padding: '16px', background: 'var(--bg-input)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: '6px', fontSize: '0.95rem' }}>🔄 Recalculate All Donor Balances</div>
+          <div style={{ fontSize: '0.83rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            Fixes donors that show a balance even when they have no pledges or all pledges are paid. Recomputes every donor's <strong>Total Given</strong> and <strong>Balance Owed</strong> from scratch based on actual payments and pledges.
+          </div>
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', fontWeight: 700 }}
+            onClick={() => {
+              recalculateDonorBalances();
+              alert('✅ All donor balances have been recalculated from actual payments and pledges.');
+            }}
+          >
+            🔄 Fix Donor Balances Now
           </button>
         </div>
 

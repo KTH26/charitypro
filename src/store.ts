@@ -292,6 +292,7 @@ interface AppState {
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
   deleteDonors: (ids: string[]) => void;
   bulkUpsertDonors: (donors: any[]) => void;
+  recalculateDonorBalances: () => void;
   
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
   bulkAddTransactions: (txs: Omit<Transaction, 'id'>[]) => void;
@@ -528,6 +529,35 @@ export const useStore = create<AppState>()(
           ? { ...d, sponsorshipDays: (d.sponsorshipDays || []).filter(s => s.id !== dayId) }
           : d)
       })),
+
+      recalculateDonorBalances: () => set(state => {
+        // Build totals from actual data
+        const totalGivenMap = new Map<string, number>();
+        const balanceOwedMap = new Map<string, number>();
+
+        // Sum up approved transactions → totalGiven
+        for (const tx of state.transactions) {
+          if (tx.type === 'approved' && !tx.isBatch) {
+            const amt = tx.amountCAD ?? tx.amount;
+            totalGivenMap.set(tx.donorId, (totalGivenMap.get(tx.donorId) || 0) + amt);
+          }
+        }
+
+        // Sum up pledges → total pledged, then balance = pledged - paid
+        for (const p of state.pledges) {
+          const amt = p.amountCAD ?? p.amount;
+          balanceOwedMap.set(p.donorId, (balanceOwedMap.get(p.donorId) || 0) + amt);
+        }
+
+        const updatedDonors = state.donors.map(d => {
+          const totalGiven = totalGivenMap.get(d.id) || 0;
+          const totalPledged = balanceOwedMap.get(d.id) || 0;
+          const balanceOwed = Math.max(0, totalPledged - totalGiven);
+          return { ...d, totalGiven, balanceOwed };
+        });
+
+        return { donors: updatedDonors };
+      }),
 
       deleteDonors: (ids) => set(state => ({
         donors: state.donors.filter(d => !ids.includes(d.id)),
@@ -1257,7 +1287,7 @@ export const applyRemoteEvent = (action: string, args: any[]) => {
 
 // Wrap methods for Event Sourcing
 const methodsToWrap = [
-  'addDonor', 'editDonor', 'updateDonorNotes', 'addSponsorshipDay', 'removeSponsorshipDay', 'deleteDonors',
+  'addDonor', 'editDonor', 'updateDonorNotes', 'addSponsorshipDay', 'removeSponsorshipDay', 'deleteDonors', 'recalculateDonorBalances',
   'bulkUpsertDonors',
   'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions', 'deleteAllTransactions',
   'addPledge', 'bulkAddPledges', 'editPledge', 'deletePledges', 'deleteAllPledges',
