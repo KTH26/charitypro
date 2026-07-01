@@ -350,6 +350,7 @@ interface AppState {
   toggleRecurringExpense: (id: string) => void;
   processRecurringExpenses: () => void;
   processRecurringPayments: () => void;
+  checkSystemAccounts: () => void;
 
   addRecurringPayroll: (payroll: Omit<RecurringPayroll, 'id'>) => void;
   deleteRecurringPayroll: (id: string) => void;
@@ -886,6 +887,25 @@ export const useStore = create<AppState>()(
       deleteAccount: (id) => set(state => ({
         accounts: state.accounts.filter(a => a.id !== id)
       })),
+
+      checkSystemAccounts: () => set(state => {
+        if (!state.accounts.some(a => a.id === UNDEPOSITED_FUNDS_ID)) {
+          return {
+            accounts: [
+              ...state.accounts,
+              {
+                id: UNDEPOSITED_FUNDS_ID,
+                name: 'Undeposited Funds',
+                currency: 'CAD',
+                balance: 0,
+                type: 'asset',
+                subType: 'general',
+              }
+            ]
+          };
+        }
+        return {};
+      }),
 
       addEmployee: (emp) => set(state => ({ employees: [...state.employees, { ...emp, id: uid(), balanceOwed: 0 }] })),
       editEmployee: (id, updates) => set(state => ({

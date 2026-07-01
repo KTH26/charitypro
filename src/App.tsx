@@ -33,12 +33,14 @@ function App() {
     import('./store').then(({ useStore }) => {
       const unsub = useStore.persist.onFinishHydration(() => {
         setHasHydrated(true);
+        useStore.getState().checkSystemAccounts();
         useStore.getState().processRecurringExpenses();
         useStore.getState().processRecurringPayroll();
         useStore.getState().processRecurringPayments();
       });
       if (useStore.persist.hasHydrated()) {
         setHasHydrated(true);
+        useStore.getState().checkSystemAccounts();
         useStore.getState().processRecurringExpenses();
         useStore.getState().processRecurringPayroll();
         useStore.getState().processRecurringPayments();
