@@ -138,6 +138,7 @@ export interface Account {
   name: string;
   currency: 'CAD' | 'USD';
   balance: number;
+  startingBalance?: number;
   type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
   parentId?: string;
   subType?: 'checking' | 'savings' | 'credit_card' | 'loan' | 'payroll' | 'general' | 'internal';
@@ -297,8 +298,6 @@ interface AppState {
   removeSponsorshipDay: (donorId: string, dayId: string) => void;
   deleteDonors: (ids: string[]) => void;
   bulkUpsertDonors: (donors: any[]) => void;
-  recalculateDonorBalances: () => void;
-  
   addTransaction: (tx: Omit<Transaction, 'id'>) => void;
   bulkAddTransactions: (txs: Omit<Transaction, 'id'>[]) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
@@ -331,9 +330,10 @@ interface AppState {
   accruePayroll: (entityId: string, type: 'employee' | 'fundraiser', amount: number, earningType?: string, t4aEligible?: boolean) => void;
   addT4A: (t4a: Omit<T4A, 'id' | 'issuedDate'>) => void;
 
-  addAccount: (acc: Omit<Account, 'id'> | Account) => void;
-  editAccount: (id: string, updates: Partial<Omit<Account, 'id'>>) => void;
+  addAccount: (acc: Omit<Account, 'id'> & { id?: string }) => void;
+  editAccount: (id: string, updates: Partial<Account>) => void;
   deleteAccount: (id: string) => void;
+  recalculateBalances: () => void;
   transferBetweenAccounts: (transfer: Omit<AccountTransfer, 'id'>) => void;
 
   addBill: (bill: Omit<Bill, 'id'>) => string;
@@ -543,35 +543,6 @@ export const useStore = create<AppState>()(
           : d)
       })),
 
-      recalculateDonorBalances: () => set(state => {
-        // Build totals from actual data
-        const totalGivenMap = new Map<string, number>();
-        const balanceOwedMap = new Map<string, number>();
-
-        // Sum up approved transactions → totalGiven
-        for (const tx of state.transactions) {
-          if (tx.type === 'approved' && !tx.isBatch) {
-            const amt = tx.amountCAD ?? tx.amount;
-            totalGivenMap.set(tx.donorId, (totalGivenMap.get(tx.donorId) || 0) + amt);
-          }
-        }
-
-        // Sum up pledges → total pledged, then balance = pledged - paid
-        for (const p of state.pledges) {
-          const amt = p.amountCAD ?? p.amount;
-          balanceOwedMap.set(p.donorId, (balanceOwedMap.get(p.donorId) || 0) + amt);
-        }
-
-        const updatedDonors = state.donors.map(d => {
-          const totalGiven = totalGivenMap.get(d.id) || 0;
-          const totalPledged = balanceOwedMap.get(d.id) || 0;
-          const balanceOwed = Math.max(0, totalPledged - totalGiven);
-          return { ...d, totalGiven, balanceOwed };
-        });
-
-        return { donors: updatedDonors };
-      }),
-
       deleteDonors: (ids) => set(state => ({
         donors: state.donors.filter(d => !ids.includes(d.id)),
         transactions: state.transactions.filter(t => !ids.includes(t.donorId)),
@@ -723,21 +694,36 @@ export const useStore = create<AppState>()(
         };
       }),
 
-      updateTransaction: (id, updates) => set((state) => ({
-        transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
-      })),
+      updateTransaction: (id, updates) => {
+        set((state) => ({
+          transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
+        }));
+        get().recalculateBalances();
+      },
 
-      editTransaction: (id, updates) => set((state) => ({
-        transactions: state.transactions.map(t => t.id === id ? { ...t, ...updates } : t)
-      })),
+      editTransaction: (id, updates) => {
+        set((state) => {
+          const newTxs = state.transactions.map(t => t.id === id ? { ...t, ...updates } : t);
+          return { transactions: newTxs };
+        });
+        get().recalculateBalances();
+      },
 
-      bulkEditTransactions: (ids, updates) => set((state) => ({
-        transactions: state.transactions.map(t => ids.includes(t.id) ? { ...t, ...updates } : t)
-      })),
+      bulkEditTransactions: (ids, updates) => {
+        set((state) => {
+          const newTxs = state.transactions.map(t => ids.includes(t.id) ? { ...t, ...updates } : t);
+          return { transactions: newTxs };
+        });
+        get().recalculateBalances();
+      },
 
-      deleteTransactions: (ids) => set(state => ({
-        transactions: state.transactions.filter(t => !ids.includes(t.id))
-      })),
+      deleteTransactions: (ids) => {
+        set(state => {
+          const newTxs = state.transactions.filter(t => !ids.includes(t.id));
+          return { transactions: newTxs };
+        });
+        get().recalculateBalances();
+      },
 
       deleteAllTransactions: () => set(state => {
         const resetDonors = state.donors.map(d => ({ ...d, totalGiven: 0 }));
@@ -879,9 +865,10 @@ export const useStore = create<AppState>()(
           : f)
       })),
 
-      addAccount: (acc) => set((state) => ({
-        accounts: [...state.accounts, { ...acc, id: (acc as any).id || uid() }]
-      })),
+      addAccount: (acc) => set((state) => {
+        const newAcc = { ...acc, id: (acc as any).id || uid(), startingBalance: acc.balance || 0 };
+        return { accounts: [...state.accounts, newAcc] };
+      }),
       editAccount: (id, updates) => set((state) => ({
         accounts: state.accounts.map(a => a.id === id ? { ...a, ...updates } : a)
       })),
@@ -899,6 +886,7 @@ export const useStore = create<AppState>()(
                 name: 'Undeposited Funds',
                 currency: 'CAD',
                 balance: 0,
+                startingBalance: 0,
                 type: 'asset',
                 subType: 'general',
               }
@@ -906,6 +894,75 @@ export const useStore = create<AppState>()(
           };
         }
         return {};
+      }),
+
+      recalculateBalances: () => set(state => {
+        const accountBals = new Map<string, number>();
+        const donorTotals = new Map<string, number>();
+        const donorBalanceOwed = new Map<string, number>();
+        const fundraiserOwed = new Map<string, number>();
+
+        // Init with starting balances
+        state.accounts.forEach(a => accountBals.set(a.id, a.startingBalance || 0));
+
+        // Sum up pledges
+        for (const p of state.pledges) {
+          const amt = p.amountCAD ?? p.amount;
+          donorBalanceOwed.set(p.donorId, (donorBalanceOwed.get(p.donorId) || 0) + amt);
+        }
+
+        for (const tx of state.transactions) {
+          if (tx.type !== 'approved') continue;
+          const effectiveAmount = tx.amountCAD ?? tx.amount;
+
+          // Donor Total
+          if (tx.donorId && !tx.isBatch) {
+             donorTotals.set(tx.donorId, (donorTotals.get(tx.donorId) || 0) + effectiveAmount);
+          }
+
+          // Fundraiser Owed
+          if (tx.fundraiserId) {
+            const f = state.fundraisers.find(f => f.id === tx.fundraiserId);
+            if (f) {
+              const amountOwed = tx.amount * (f.percentage / 100);
+              fundraiserOwed.set(tx.fundraiserId, (fundraiserOwed.get(tx.fundraiserId) || 0) + amountOwed);
+            }
+          }
+
+          // Accounts
+          if (tx.sourceAccountId) {
+            const acc = state.accounts.find(a => a.id === tx.sourceAccountId);
+            if (acc) {
+              const add = (acc.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
+              accountBals.set(tx.sourceAccountId, (accountBals.get(tx.sourceAccountId) || 0) + add);
+            }
+          }
+          if (tx.offsetAccountId) {
+            const acc = state.accounts.find(a => a.id === tx.offsetAccountId);
+            if (acc) {
+              const add = (acc.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
+              accountBals.set(tx.offsetAccountId, (accountBals.get(tx.offsetAccountId) || 0) + add);
+            }
+          }
+        }
+
+        // Apply internal transfers for fundraisers
+        state.fundraisers.forEach(f => {
+          if (f.internalAccountBalance) {
+             const current = fundraiserOwed.get(f.id) || 0;
+             fundraiserOwed.set(f.id, Math.max(0, current - f.internalAccountBalance));
+          }
+        });
+
+        const newAccounts = state.accounts.map(a => ({ ...a, balance: accountBals.get(a.id) || 0 }));
+        const newDonors = state.donors.map(d => {
+           const totalGiven = donorTotals.get(d.id) || 0;
+           const totalPledged = donorBalanceOwed.get(d.id) || 0;
+           return { ...d, totalGiven, balanceOwed: Math.max(0, totalPledged - totalGiven) };
+        });
+        const newFundraisers = state.fundraisers.map(f => ({ ...f, balanceOwed: fundraiserOwed.get(f.id) || 0 }));
+
+        return { accounts: newAccounts, donors: newDonors, fundraisers: newFundraisers };
       }),
 
       addEmployee: (emp) => set(state => ({ employees: [...state.employees, { ...emp, id: uid(), balanceOwed: 0 }] })),
