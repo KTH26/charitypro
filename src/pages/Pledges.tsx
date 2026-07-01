@@ -30,13 +30,21 @@ export const Pledges: React.FC = () => {
   // Calculate open balance for each pledge
   const pledgesWithBalance = useMemo(() => {
     const sorted = [...pledges].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const today = new Date().toISOString().split('T')[0];
 
     return sorted.map(p => {
       const amount = p.amountCAD ?? p.amount;
-      const paid = transactions
-        .filter(t => t.pledgeId === p.id && t.type === 'approved')
+      const pledgeTxs = transactions.filter(t => t.pledgeId === p.id);
+      
+      const paid = pledgeTxs
+        .filter(t => t.type === 'approved')
         .reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
-      return { ...p, openBalance: amount - paid };
+        
+      const scheduled = pledgeTxs
+        .filter(t => t.type === 'pending' && t.date >= today)
+        .reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+        
+      return { ...p, openBalance: amount - paid, scheduledAmount: scheduled };
     });
   }, [pledges, transactions]);
 
@@ -176,7 +184,13 @@ export const Pledges: React.FC = () => {
                     <td style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{pledge.sponsor || '—'}</td>
                     <td>
                       {pledge.openBalance > 0 ? (
-                        <span className="badge badge-warning">Open Balance</span>
+                        pledge.scheduledAmount >= pledge.openBalance ? (
+                          <span className="badge badge-success" style={{ background: 'var(--blue-bg)', color: 'var(--blue)', border: '1px solid rgba(59, 130, 246, 0.2)' }}>Scheduled</span>
+                        ) : pledge.scheduledAmount > 0 ? (
+                          <span className="badge badge-warning">Partially Scheduled</span>
+                        ) : (
+                          <span className="badge badge-warning" style={{ background: 'var(--red-bg)', color: 'var(--red)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>Past Due</span>
+                        )
                       ) : pledge.openBalance < 0 ? (
                         <span className="badge badge-success" style={{ background: 'var(--green-bg)', color: 'var(--green)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>Overpaid</span>
                       ) : (

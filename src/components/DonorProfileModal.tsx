@@ -276,12 +276,16 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
                         // Payments already made (Approved transactions linked to this pledge)
                         const paidForPledge = pledgeTxs.filter(t => t.type === 'approved').reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
                         
-                        // Arrears (Past due / Pending / Declined transactions linked to this pledge)
-                        const arrearsAmount = pledgeTxs.filter(t => t.type === 'pending' || t.type === 'declined').reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+                        // Scheduled (Pending Txs >= today)
+                        const todayStr = new Date().toISOString().split('T')[0];
+                        const scheduledAmount = pledgeTxs.filter(t => t.type === 'pending' && t.date >= todayStr).reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+
                         
                         // Pledge Balance
                         const totalPledgeAmount = (p.amountCAD ?? p.amount);
                         const pledgeBalance = totalPledgeAmount - paidForPledge;
+                        // Real Arrears
+                        const realArrears = Math.max(0, pledgeBalance - scheduledAmount);
                         
                         // Active Schedule Count
                         const pledgeSchedules = donorRecurring.filter(r => r.pledgeId === p.id && r.active);
@@ -319,11 +323,20 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
                                       <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--navy)' }}>${pledgeBalance.toLocaleString()}</div>
                                     </div>
 
-                                    <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px', borderLeft: '3px solid var(--red)' }}>
-                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Past Due (Arrears)</div>
-                                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--red)' }}>${arrearsAmount.toLocaleString()}</div>
-                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>From {pledgeSchedules.length} active schedules</div>
-                                    </div>
+                                      <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px', borderLeft: realArrears > 0 ? '3px solid var(--red)' : '3px solid var(--blue)' }}>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                                          {realArrears > 0 ? 'Past Due (Arrears)' : 'Scheduled'}
+                                        </div>
+                                        <div style={{ fontSize: '1.2rem', fontWeight: 700, color: realArrears > 0 ? 'var(--red)' : 'var(--blue)' }}>
+                                          ${(realArrears > 0 ? realArrears : scheduledAmount).toLocaleString()}
+                                        </div>
+                                        {realArrears > 0 && scheduledAmount > 0 && (
+                                          <div style={{ fontSize: '0.85rem', color: 'var(--blue)', marginTop: '4px', fontWeight: 600 }}>+ ${scheduledAmount.toLocaleString()} Scheduled</div>
+                                        )}
+                                        {pledgeSchedules.length > 0 && (
+                                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>From {pledgeSchedules.length} active schedule(s)</div>
+                                        )}
+                                      </div>
                                     
                                   </div>
                                   <div style={{ marginTop: '16px', display: 'flex', gap: '12px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
