@@ -3,13 +3,15 @@ import { useStore } from '../store';
 import { Users, User, FileText, Download, Plus, Check, Trash2, Edit2 } from 'lucide-react';
 
 export const Payroll: React.FC = () => {
-  const { employees, fundraisers, t4aSlips, addEmployee, payPayrollEntity, addT4A, accruePayroll, bills, accounts, addBill, markBillPaid } = useStore();
+  const { employees, fundraisers, t4aSlips, addEmployee, payPayrollEntity, addT4A, accruePayroll, bills, accounts, addBill, markBillPaid, editEmployee, deleteEmployee } = useStore();
   const [activeTab, setActiveTab] = useState<'employees' | 'fundraisers' | 't4a' | 'schedules'>('employees');
 
   const { deleteBills, editBill, deleteRecurringPayroll, toggleRecurringPayroll, recurringPayroll } = useStore();
 
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empForm, setEmpForm] = useState({ name: '', role: '', email: '' });
+  
+  const [showEditEmp, setShowEditEmp] = useState<{ id: string, name: string, role: string, email: string } | null>(null);
 
   const [showPay, setShowPay] = useState(false);
   const [payTarget, setPayTarget] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string, balance: number } | null>(null);
@@ -37,6 +39,13 @@ export const Payroll: React.FC = () => {
     addEmployee(empForm);
     setShowAddEmp(false);
     setEmpForm({ name: '', role: '', email: '' });
+  };
+
+  const handleEditEmployee = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showEditEmp) return;
+    editEmployee(showEditEmp.id, { name: showEditEmp.name, role: showEditEmp.role, email: showEditEmp.email });
+    setShowEditEmp(null);
   };
 
   const handlePay = (e: React.FormEvent) => {
@@ -197,6 +206,17 @@ export const Payroll: React.FC = () => {
                               setT4ABox48(t4aSum > 0 ? t4aSum.toString() : '');
                               setShowT4A(true); 
                             }}>Generate T4A</button>
+                            <button className="btn btn-ghost btn-sm" onClick={(ev) => { ev.stopPropagation(); setShowEditEmp({ id: e.id, name: e.name, role: e.role, email: e.email || '' }); }} title="Edit Employee">
+                              <Edit2 size={14} style={{ color: 'var(--navy)' }} />
+                            </button>
+                            <button className="btn btn-ghost btn-sm" onClick={(ev) => { 
+                              ev.stopPropagation(); 
+                              if (window.confirm(`Are you sure you want to delete ${e.name}? This will remove them from the payroll system.`)) {
+                                deleteEmployee(e.id);
+                              }
+                            }} title="Delete Employee">
+                              <Trash2 size={14} style={{ color: 'var(--red)' }} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -549,6 +569,36 @@ export const Payroll: React.FC = () => {
               <div className="modal-footer" style={{ marginTop: '24px' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowT4A(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary">Generate T4A</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Employee Modal */}
+      {showEditEmp && (
+        <div className="modal-overlay" onClick={() => setShowEditEmp(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Edit Employee</h2>
+              <button className="modal-close" onClick={() => setShowEditEmp(null)}>✕</button>
+            </div>
+            <form onSubmit={handleEditEmployee} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="form-group">
+                <label>Name</label>
+                <input type="text" required value={showEditEmp.name} onChange={e => setShowEditEmp({...showEditEmp, name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Role</label>
+                <input type="text" required value={showEditEmp.role} onChange={e => setShowEditEmp({...showEditEmp, role: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Email</label>
+                <input type="email" value={showEditEmp.email} onChange={e => setShowEditEmp({...showEditEmp, email: e.target.value})} />
+              </div>
+              <div className="modal-footer" style={{ marginTop: '24px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowEditEmp(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Save Changes</button>
               </div>
             </form>
           </div>

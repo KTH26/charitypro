@@ -290,6 +290,8 @@ interface AppState {
   chargeToFundraiser: (id: string, amount: number) => void;
 
   addEmployee: (emp: Omit<Employee, 'id' | 'balanceOwed'>) => void;
+  editEmployee: (id: string, updates: Partial<Omit<Employee, 'id' | 'balanceOwed'>>) => void;
+  deleteEmployee: (id: string) => void;
   payPayrollEntity: (entityId: string, type: 'employee' | 'fundraiser', amount: number) => void;
   accruePayroll: (entityId: string, type: 'employee' | 'fundraiser', amount: number, earningType?: string, t4aEligible?: boolean) => void;
   addT4A: (t4a: Omit<T4A, 'id' | 'issuedDate'>) => void;
@@ -681,6 +683,14 @@ export const useStore = create<AppState>()(
       })),
 
       addEmployee: (emp) => set(state => ({ employees: [...state.employees, { ...emp, id: uid(), balanceOwed: 0 }] })),
+      editEmployee: (id, updates) => set(state => ({
+        employees: state.employees.map(e => e.id === id ? { ...e, ...updates } : e)
+      })),
+      deleteEmployee: (id) => set(state => ({
+        employees: state.employees.filter(e => e.id !== id),
+        // optionally clean up related tasks, recurring payroll, etc.
+        recurringPayroll: state.recurringPayroll.filter(r => !(r.type === 'employee' && r.entityId === id))
+      })),
       payPayrollEntity: (entityId, type, amount) => set(state => {
         if (type === 'employee') {
           return { employees: state.employees.map(e => e.id === entityId ? { ...e, balanceOwed: e.balanceOwed - amount } : e) };
