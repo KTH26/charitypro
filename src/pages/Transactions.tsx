@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { BatchDetailsModal } from '../components/BatchDetailsModal';
 
 export const Transactions: React.FC = () => {
-  const { transactions, accounts, isRtl, deleteTransactions, editTransaction } = useStore();
+  const { transactions, accounts, isRtl, deleteTransactions, editTransaction, bulkEditTransactions } = useStore();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
@@ -113,6 +113,23 @@ export const Transactions: React.FC = () => {
                   }
                 }}>Delete ALL {filteredTransactions.length} Matching</button>
               )}
+
+              <div style={{ width: '1px', background: 'var(--border)', margin: '0 8px' }}></div>
+
+              <button className="btn btn-sm" style={{ background: 'var(--green)', color: 'white', border: 'none' }} onClick={() => {
+                bulkEditTransactions(selectedIds, { type: 'approved' });
+                setSelectedIds([]);
+              }}>Mark Approved</button>
+              
+              <button className="btn btn-sm" style={{ background: 'var(--yellow)', color: 'white', border: 'none' }} onClick={() => {
+                bulkEditTransactions(selectedIds, { type: 'pending' });
+                setSelectedIds([]);
+              }}>Mark Pending</button>
+              
+              <button className="btn btn-sm" style={{ background: 'var(--navy-light)', color: 'white', border: 'none' }} onClick={() => {
+                bulkEditTransactions(selectedIds, { type: 'declined' });
+                setSelectedIds([]);
+              }}>Mark Declined</button>
             </div>
           </div>
         )}

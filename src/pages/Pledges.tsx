@@ -6,6 +6,8 @@ import { PaymentModal } from '../components/PaymentModal';
 import { BulkUploadModal } from '../components/BulkUploadModal';
 import { useT } from '../i18n';
 import { DonorProfileModal } from '../components/DonorProfileModal';
+import { EditPledgeModal } from '../components/EditPledgeModal';
+import type { Pledge } from '../store';
 
 export const Pledges: React.FC = () => {
   const { pledges, transactions, donors, isRtl, deletePledges } = useStore();
@@ -16,6 +18,7 @@ export const Pledges: React.FC = () => {
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [selectedDonorId, setSelectedDonorId] = useState<string | null>(null);
   const [showDonorProfile, setShowDonorProfile] = useState<string | null>(null);
+  const [editPledgeObj, setEditPledgeObj] = useState<Pledge | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [filterYear, setFilterYear] = useState('All');
   const [filterOpen, setFilterOpen] = useState('All');
@@ -163,6 +166,7 @@ export const Pledges: React.FC = () => {
                 <th>Category</th>
                 <th>Sponsor</th>
                 <th>Status</th>
+                <th style={{ width: '40px' }}></th>
               </tr>
             </thead>
             <tbody>
@@ -189,6 +193,14 @@ export const Pledges: React.FC = () => {
                       ) : (
                         <span className="badge badge-success">Paid Off</span>
                       )}
+                    </td>
+                    <td>
+                      <button 
+                        className="btn btn-ghost btn-sm" 
+                        onClick={(e) => { e.stopPropagation(); setEditPledgeObj(pledge); }}
+                      >
+                        <Edit2 size={16} />
+                      </button>
                     </td>
                   </tr>
                 );
@@ -217,6 +229,9 @@ export const Pledges: React.FC = () => {
       )}
       {showBulkUpload && (
         <BulkUploadModal onClose={() => setShowBulkUpload(false)} />
+      )}
+      {editPledgeObj && (
+        <EditPledgeModal pledge={editPledgeObj} onClose={() => setEditPledgeObj(null)} />
       )}
     </div>
   );
