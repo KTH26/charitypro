@@ -945,6 +945,30 @@ export const useStore = create<AppState>()(
           }
         }
 
+        // Bills (Expenses)
+        for (const b of state.bills) {
+          if (b.status === 'paid' && b.sourceAccountId) {
+            const acc = state.accounts.find(a => a.id === b.sourceAccountId);
+            if (acc) {
+               // Money leaves the bank account
+               const amountCAD = (acc.currency === 'CAD' && b.currency === 'USD') ? (b.amount * (state.exchangeRate || 1.35)) : b.amount;
+               accountBals.set(b.sourceAccountId, (accountBals.get(b.sourceAccountId) || 0) - amountCAD);
+            }
+          }
+        }
+
+        // Account Transfers
+        for (const t of state.accountTransfers) {
+          // subtract from source
+          if (t.fromAccountId) {
+            accountBals.set(t.fromAccountId, (accountBals.get(t.fromAccountId) || 0) - t.amount);
+          }
+          // add to destination
+          if (t.toAccountId) {
+            accountBals.set(t.toAccountId, (accountBals.get(t.toAccountId) || 0) + t.amount);
+          }
+        }
+
         // Apply internal transfers for fundraisers
         state.fundraisers.forEach(f => {
           if (f.internalAccountBalance) {
