@@ -3,6 +3,12 @@ import { X, UploadCloud, FileType, CheckCircle, Download, AlertTriangle, User, U
 import Papa from 'papaparse';
 import { useStore } from '../store';
 
+const getVal = (row: any, ...keys: string[]) => {
+  if (!row) return undefined;
+  const foundKey = Object.keys(row).find(k => keys.includes(k.trim().toLowerCase()));
+  return foundKey ? row[foundKey] : undefined;
+};
+
 interface Props {
   onClose: () => void;
 }
@@ -48,21 +54,21 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
           const missingAccs = new Set<string>();
 
           rows.forEach(row => {
-            const donorIdValue = (row['Donor ID'] || '').trim();
+            const donorIdValue = String(getVal(row, 'donor id', 'donor', 'id') || '').trim();
             const donor = donors.find(d => d.displayId === donorIdValue || d.id === donorIdValue);
             
-            const amountVal = row['Amount'] || row['amount'] || row['Deposit'] || row['deposit'];
+            const amountVal = getVal(row, 'amount', 'deposit');
             if (donor) {
               matched.push({ row, donorId: donor.id });
             } else if (amountVal) {
               unmatched.push(row);
             }
 
-            const assetName = row['Asset Account']?.trim();
+            const assetName = String(getVal(row, 'asset account', 'asset') || '').trim();
             if (assetName && !accounts.find(a => a.name.toLowerCase() === assetName.toLowerCase())) {
               missingAccs.add(assetName);
             }
-            const revName = row['Revenue Account']?.trim();
+            const revName = String(getVal(row, 'revenue account', 'revenue') || '').trim();
             if (revName && !accounts.find(a => a.name.toLowerCase() === revName.toLowerCase())) {
               missingAccs.add(revName);
             }
@@ -150,11 +156,13 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
           const rows = results.data as any[];
           const { addBill, addVendor, vendors } = useStore.getState();
           rows.forEach(row => {
-            const amount = parseFloat((row['Amount'] || '').replace(/[^0-9.-]/g, ''));
+            const amountVal = getVal(row, 'amount', 'total');
+            const amount = parseFloat(String(amountVal || '').replace(/[^0-9.-]/g, ''));
             if (!isNaN(amount)) {
-                let vendorName = (row['Vendor'] || 'Unknown Vendor').trim();
-                let category = (row['Category'] || 'Uncategorized Expense').trim();
-                let dueDate = row['Due Date'] || row['Date'] || new Date().toISOString().split('T')[0];
+                let vendorName = String(getVal(row, 'vendor', 'name') || 'Unknown Vendor').trim();
+                let category = String(getVal(row, 'category', 'expense account') || 'Uncategorized Expense').trim();
+                let dueDateVal = getVal(row, 'due date', 'date');
+                let dueDate = dueDateVal ? new Date(dueDateVal).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
                 
                 const existingVendor = vendors.find(v => v.name.toLowerCase() === vendorName.toLowerCase());
                 if (!existingVendor && vendorName) {
@@ -224,26 +232,34 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
           if (d) finalDonorId = d.id;
         }
 
-        const amountStr = item.row['Amount'] || item.row['amount'] || item.row['Deposit'] || item.row['deposit'];
-        if (finalDonorId && amountStr) {
-          const amount = parseFloat(amountStr.replace(/[^0-9.-]/g, ''));
+        const amountVal = getVal(item.row, 'amount', 'deposit');
+        if (finalDonorId && amountVal) {
+          const amount = parseFloat(String(amountVal).replace(/[^0-9.-]/g, ''));
           if (!isNaN(amount)) {
             let parsedDate = new Date().toISOString().split('T')[0];
-            if (item.row['Date']) {
-              const d = new Date(item.row['Date']);
+            const dateVal = getVal(item.row, 'date', 'due date');
+            if (dateVal) {
+              const d = new Date(dateVal);
               if (!isNaN(d.getTime())) {
                 parsedDate = d.toISOString().split('T')[0];
               }
             }
-            const methodRaw = item.row['Method'] || item.row['Payment Method'] || item.row['method'];
-            let parsedMethod = methodRaw?.toLowerCase().trim() || 'check';
+            const methodRaw = String(getVal(item.row, 'method', 'payment method') || '');
+            let parsedMethod = methodRaw.toLowerCase().trim() || 'check';
             if (parsedMethod.includes('credit') || parsedMethod.includes('card')) parsedMethod = 'credit_card';
             else if (parsedMethod.includes('transfer') || parsedMethod.includes('wire')) parsedMethod = 'e_transfer';
             else if (parsedMethod.includes('cash')) parsedMethod = 'cash';
             else if (parsedMethod.includes('voucher')) parsedMethod = 'vouchers';
             else if (parsedMethod.includes('eizer')) parsedMethod = 'eizer';
             else if (parsedMethod.includes('bnei') || parsedMethod.includes('leivy')) parsedMethod = 'bnei_leivy';
-            else if (parsedMethod !== 'check') parsedMethod = 'other'; // fallback if we don't know it
+            else if (parsedMethod !== 'check') parsedMethod = 'other'; 
+
+            const currencyVal = getVal(item.row, 'currency');
+            const categoryVal = getVal(item.row, 'category');
+            const sponsorVal = getVal(item.row, 'sponsor');
+            const notesVal = getVal(item.row, 'notes');
+            const assetName = String(getVal(item.row, 'asset account', 'asset') || '').trim();
+            const revName = String(getVal(item.row, 'revenue account', 'revenue') || '').trim();
 
             transactionsToAdd.push({
               donorId: finalDonorId,
@@ -251,12 +267,12 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               date: parsedDate,
               type: dataType === 'pledges' ? 'recording' : 'approved',
               method: parsedMethod as any,
-              currency: (item.row['Currency']?.toUpperCase() || 'CAD') as any,
-              category: item.row['Category'] || 'General',
-              sponsor: item.row['Sponsor'] || '',
-              notes: item.row['Notes'] || '',
-              sourceAccountId: accountResolutions[item.row['Asset Account']?.trim()] || accounts.find(a => a.name.toLowerCase() === item.row['Asset Account']?.toLowerCase())?.id,
-              offsetAccountId: accountResolutions[item.row['Revenue Account']?.trim()] || accounts.find(a => a.name.toLowerCase() === item.row['Revenue Account']?.toLowerCase())?.id
+              currency: (String(currencyVal || 'CAD').toUpperCase()) as any,
+              category: String(categoryVal || 'General'),
+              sponsor: String(sponsorVal || ''),
+              notes: String(notesVal || ''),
+              sourceAccountId: accountResolutions[assetName] || accounts.find(a => a.name.toLowerCase() === assetName.toLowerCase())?.id,
+              offsetAccountId: accountResolutions[revName] || accounts.find(a => a.name.toLowerCase() === revName.toLowerCase())?.id
             });
           }
         }
