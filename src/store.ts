@@ -108,6 +108,7 @@ export interface Pledge {
   sponsor?: string;
   notes?: string;
   fundraiserId?: string;
+  projectId?: string;
 }
 
 export interface RecurringPayment {
@@ -307,7 +308,7 @@ interface AppState {
   deleteAllTransactions: () => void;
   removeDuplicateTransactions: () => { count: number };
 
-  addPledge: (pledge: Omit<Pledge, 'id'>) => void;
+  addPledge: (pledge: Omit<Pledge, 'id'>) => string;
   bulkAddPledges: (pledges: Omit<Pledge, 'id'>[]) => void;
   editPledge: (id: string, updates: Partial<Omit<Pledge, 'id'>>) => void;
   deletePledges: (ids: string[]) => void;
@@ -730,12 +731,16 @@ export const useStore = create<AppState>()(
         return { transactions: [], donors: resetDonors, accounts: resetAccounts };
       }),
 
-      addPledge: (pledge) => set(state => ({
-        pledges: [{ ...pledge, id: uid() }, ...state.pledges],
-        donors: state.donors.map(d => d.id === pledge.donorId
-          ? { ...d, balanceOwed: d.balanceOwed + (pledge.amountCAD ?? pledge.amount) }
-          : d)
-      })),
+      addPledge: (pledge) => {
+        const id = uid();
+        set(state => ({
+          pledges: [{ ...pledge, id }, ...state.pledges],
+          donors: state.donors.map(d => d.id === pledge.donorId
+            ? { ...d, balanceOwed: d.balanceOwed + (pledge.amountCAD ?? pledge.amount) }
+            : d)
+        }));
+        return id;
+      },
 
       bulkAddPledges: (pledgesArr) => set(state => {
         const newPledges = pledgesArr.map(p => ({ ...p, id: (p as any).id || uid() }));

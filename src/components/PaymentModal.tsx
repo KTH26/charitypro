@@ -18,8 +18,9 @@ const FREQUENCIES = [
 type TabType = 'one_time' | 'recurring' | 'pledge';
 
 export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
-  const { donors, fundraisers, addTransaction, addPledge, addRecurring, currency, exchangeRate, accounts, solaApiKey, projects } = useStore();
+  const { donors, pledges, fundraisers, addTransaction, addPledge, addRecurring, currency, exchangeRate, accounts, solaApiKey, projects } = useStore();
   const donor = donors.find(d => d.id === donorId);
+  const donorPledges = pledges.filter(p => p.donorId === donorId);
   const [tab, setTab] = useState<TabType>('one_time');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -41,6 +42,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [projectId, setProjectId] = useState('');
   const [notes, setNotes] = useState('');
   const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedPledgeId, setSelectedPledgeId] = useState('');
   
   // Removed manual rate state
 
@@ -122,6 +124,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       sponsor: sponsor || undefined,
       projectId: projectId || undefined,
       notes: finalNotes,
+      pledgeId: selectedPledgeId || undefined,
     });
     setSuccess(true);
     setTimeout(onClose, 1800);
@@ -198,6 +201,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
       method: recMethod,
       currency: recCurrency,
       active: true,
+      pledgeId: selectedPledgeId || undefined,
     });
 
     // Generate pending transactions for future installments
@@ -215,6 +219,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
         method: recMethod,
         currency: recCurrency,
         notes: `Installment ${i + 1} of ${installments} ${finalNotes}`,
+        pledgeId: selectedPledgeId || undefined,
       });
 
       // Increment date based on frequency
@@ -411,9 +416,24 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
 
                   {/* Notes */}
                   <div className="form-group" style={{ margin: 0 }}>
-                    <label><FileText size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Notes (optional)</label>
-                    <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="e.g. Check #1042, spoke to donor on June 24..." />
+                    <label><FileText size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Internal Notes (optional)</label>
+                    <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="e.g. Discussed with donor on Tuesday..." />
                   </div>
+
+                  {/* Apply to Pledge */}
+                  {tab !== 'pledge' && donorPledges.length > 0 && (
+                    <div className="form-group" style={{ margin: 0, padding: '12px', background: 'var(--gold-bg)', borderRadius: '8px', border: '1px solid rgba(217, 119, 6, 0.2)' }}>
+                      <label style={{ color: 'var(--gold)', fontWeight: 700 }}>Apply to Existing Pledge (Optional)</label>
+                      <select value={selectedPledgeId} onChange={e => setSelectedPledgeId(e.target.value)} style={{ border: '1px solid rgba(217, 119, 6, 0.4)' }}>
+                        <option value="">— Do not apply to a pledge —</option>
+                        {donorPledges.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.date} - ${p.amount.toLocaleString()} ({p.category})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               )}
 
