@@ -25,7 +25,7 @@ export const Reports: React.FC = () => {
 
   // ── Open Pledges (not pending/recording — need manual follow-up) ──
   const openPledges = donors.filter(d => d.balanceOwed > 0).map(d => {
-    const hasPending = transactions.some(t => t.donorId === d.id && (t.type === 'pending' || t.type === 'recording'));
+    const hasPending = transactions.some(t => t.donorId === d.id && t.type === 'pending');
     return { donor: d, hasCoverage: hasPending };
   }).filter(x => !x.hasCoverage);
 

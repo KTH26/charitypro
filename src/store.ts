@@ -588,7 +588,7 @@ export const useStore = create<AppState>()(
 
       addTransaction: (tx) => set((state) => {
         const goesToUndeposited = UNDEPOSITED_METHODS.has(tx.method);
-        const depositStatus = goesToUndeposited ? 'undeposited' : 'direct';
+        const depositStatus = goesToUndeposited ? 'undeposited' as const : 'direct' as const;
         // For undeposited methods: route sourceAccount to Undeposited Funds
         const effectiveSourceId = goesToUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
         const newTx = { ...tx, id: uid(), depositStatus, sourceAccountId: effectiveSourceId };
@@ -630,7 +630,7 @@ export const useStore = create<AppState>()(
             ...tx,
             id: uid(),
             invoiceSaved: false,
-            depositStatus: goesToUndeposited ? 'undeposited' : 'direct',
+            depositStatus: goesToUndeposited ? 'undeposited' as const : 'direct' as const,
             sourceAccountId: effectiveSourceId,
           };
         });
@@ -650,7 +650,6 @@ export const useStore = create<AppState>()(
           // Accumulate donor updates
           const dUpdate = donorUpdates.get(tx.donorId) || { totalGiven: 0, balanceOwed: 0 };
           if (tx.type === 'approved') dUpdate.totalGiven += effectiveAmount;
-          if (tx.type === 'recording') dUpdate.balanceOwed += effectiveAmount; 
           donorUpdates.set(tx.donorId, dUpdate);
 
           // Accumulate account updates
@@ -805,7 +804,6 @@ export const useStore = create<AppState>()(
                const effectiveAmount = tx.amountCAD ?? tx.amount;
                const dUpdate = donorUpdates.get(tx.donorId) || { totalGiven: 0, balanceOwed: 0 };
                if (tx.type === 'approved') dUpdate.totalGiven -= effectiveAmount;
-               if (tx.type === 'recording') dUpdate.balanceOwed -= effectiveAmount;
                donorUpdates.set(tx.donorId, dUpdate);
 
                if (tx.type === 'approved') {

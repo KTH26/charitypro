@@ -18,7 +18,7 @@ const FREQUENCIES = [
 type TabType = 'one_time' | 'recurring' | 'pledge';
 
 export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
-  const { donors, fundraisers, addTransaction, addRecurring, currency, exchangeRate, accounts, solaApiKey, projects } = useStore();
+  const { donors, fundraisers, addTransaction, addPledge, addRecurring, currency, exchangeRate, accounts, solaApiKey, projects } = useStore();
   const donor = donors.find(d => d.id === donorId);
   const [tab, setTab] = useState<TabType>('one_time');
   const [success, setSuccess] = useState(false);
@@ -129,19 +129,15 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
 
   const handlePledge = () => {
     if (!amount || isNaN(+amount)) return;
-    addTransaction({
+    addPledge({
       donorId,
       amount: parseFloat(amount),
       amountCAD: getAmountCAD(amount),
       date: txDate,
-      type: 'recording',
-      method,
       currency: txCurrency,
-      sourceAccountId,
-      offsetAccountId,
+      category: 'General', // default or you could add a state for it
       fundraiserId: fundraiserId || undefined,
       sponsor: sponsor || undefined,
-      projectId: projectId || undefined,
       notes,
     });
     setSuccess(true);

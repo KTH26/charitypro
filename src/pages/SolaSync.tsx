@@ -74,7 +74,7 @@ export const SolaSync: React.FC = () => {
   };
 
   const moveToBalance = (appTxId: string) => {
-    editTransaction(appTxId, { type: 'recording', notes: `Marked as missed/declined during Sola Sync.` });
+    editTransaction(appTxId, { type: 'declined', notes: `Marked as missed/declined during Sola Sync.` });
   };
 
   return (
