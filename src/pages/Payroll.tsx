@@ -27,7 +27,7 @@ export const Payroll: React.FC = () => {
   const [accrueTarget, setAccrueTarget] = useState<{ id: string, type: 'employee' | 'fundraiser', name: string } | null>(null);
   const [accrueAmount, setAccrueAmount] = useState('');
   const [earningType, setEarningType] = useState('Salary');
-  const [t4aEligible, setT4aEligible] = useState(false);
+  const [payT4aEligible, setPayT4aEligible] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringFrequency, setRecurringFrequency] = useState<'weekly' | 'biweekly' | 'monthly'>('monthly');
   const [recurringStartDate, setRecurringStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -60,7 +60,8 @@ export const Payroll: React.FC = () => {
       amount,
       dueDate: new Date().toISOString().split('T')[0],
       status: 'pending',
-      category: 'Payroll Expense'
+      category: 'Payroll Expense',
+      t4aEligible: payT4aEligible
     });
     
     // Paying it will deduct from the bank AND reduce balanceOwed!
@@ -70,6 +71,7 @@ export const Payroll: React.FC = () => {
     setPayTarget(null);
     setPayAmount('');
     setPaySourceAccount('');
+    setPayT4aEligible(false);
   };
 
   const handleAccrue = (e: React.FormEvent) => {
@@ -82,7 +84,7 @@ export const Payroll: React.FC = () => {
         type: accrueTarget.type,
         amount: parseFloat(accrueAmount),
         earningType,
-        t4aEligible,
+        t4aEligible: false,
         frequency: recurringFrequency,
         startDate: recurringStartDate,
         nextDate: recurringStartDate,
@@ -90,14 +92,13 @@ export const Payroll: React.FC = () => {
       });
       useStore.getState().processRecurringPayroll();
     } else {
-      accruePayroll(accrueTarget.id, accrueTarget.type, parseFloat(accrueAmount), earningType, t4aEligible);
+      accruePayroll(accrueTarget.id, accrueTarget.type, parseFloat(accrueAmount), earningType, false);
     }
 
     setShowAccrue(false);
     setAccrueTarget(null);
     setAccrueAmount('');
     setEarningType('Salary');
-    setT4aEligible(false);
     setIsRecurring(false);
     setRecurringFrequency('monthly');
     setRecurringStartDate(new Date().toISOString().split('T')[0]);
@@ -413,6 +414,10 @@ export const Payroll: React.FC = () => {
                 <label>Amount Paid ($)</label>
                 <input type="number" step="0.01" required value={payAmount} onChange={e => setPayAmount(e.target.value)} />
               </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '8px' }}>
+                <input type="checkbox" checked={payT4aEligible} onChange={e => setPayT4aEligible(e.target.checked)} style={{ width: 16, height: 16 }} />
+                <span>Include this payment in T4A (Box 48 Eligible)</span>
+              </label>
               <div className="modal-footer" style={{ marginTop: '24px' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowPay(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary">Record Payment</button>
@@ -449,10 +454,6 @@ export const Payroll: React.FC = () => {
                 <label>Earnings Amount ($)</label>
                 <input type="number" step="0.01" required value={accrueAmount} onChange={e => setAccrueAmount(e.target.value)} />
               </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={t4aEligible} onChange={e => setT4aEligible(e.target.checked)} style={{ width: 16, height: 16 }} />
-                <span>Include in T4A (Box 48 Eligible)</span>
-              </label>
 
               <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)', marginTop: '8px' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>

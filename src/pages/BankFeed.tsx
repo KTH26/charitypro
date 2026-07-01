@@ -27,6 +27,7 @@ export const BankFeed: React.FC = () => {
   const [batchDateTo, setBatchDateTo] = useState('');
   
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [payrollT4aEligible, setPayrollT4aEligible] = useState(false);
   const [batchMethodFilter, setBatchMethodFilter] = useState('credit_card');
 
   // Ensure selectedBank is valid
@@ -225,7 +226,8 @@ export const BankFeed: React.FC = () => {
         dueDate: matchingTx.date,
         status: 'pending',
         category: 'Payroll Expense',
-        bankTransactionId: matchingTx.id
+        bankTransactionId: matchingTx.id,
+        t4aEligible: payrollT4aEligible
       });
       markBillPaid(billId, matchingTx.sourceAccountId, 'Payroll Expense');
       matchBankTransaction(matchingTx.id);
@@ -518,12 +520,20 @@ export const BankFeed: React.FC = () => {
                     ))}
                   </select>
                 ) : matchType === 'payroll' ? (
-                  <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)}>
-                    <option value="">— Select Employee —</option>
-                    {employees.map(e => (
-                      <option key={e.id} value={e.id}>{e.name} (Owes: ${e.balanceOwed.toFixed(2)})</option>
-                    ))}
-                  </select>
+                  <>
+                    <select value={matchEntity} onChange={e => setMatchEntity(e.target.value)}>
+                      <option value="">— Select Employee —</option>
+                      {employees.map(e => (
+                        <option key={e.id} value={e.id}>{e.name} (Owes: ${e.balanceOwed.toFixed(2)})</option>
+                      ))}
+                    </select>
+                    {matchEntity && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '12px' }}>
+                        <input type="checkbox" checked={payrollT4aEligible} onChange={e => setPayrollT4aEligible(e.target.checked)} style={{ width: 16, height: 16 }} />
+                        <span>Include this payment in T4A (Box 48 Eligible)</span>
+                      </label>
+                    )}
+                  </>
                 ) : (
                   <input type="text" value={matchEntity} onChange={e => setMatchEntity(e.target.value)} />
                 )}
