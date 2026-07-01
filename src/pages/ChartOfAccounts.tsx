@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 import { AddAccountModal } from '../components/AddAccountModal';
 
 export const ChartOfAccounts: React.FC = () => {
-  const { accounts, transactions, bills, isRtl, deleteAccount, donors, editTransaction, editBill } = useStore();
+  const { accounts, transactions, bills, isRtl, deleteAccount, donors, editTransaction, editBill, addTransaction, addBill, markBillPaid, transferBetweenAccounts, payPayrollEntity, employees, fundraisers, vendors, addVendor } = useStore();
   const T = useT(isRtl);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAccount, setShowAddAccount] = useState(false);
@@ -18,6 +18,17 @@ export const ChartOfAccounts: React.FC = () => {
   const [editTx, setEditTx] = useState<Transaction | null>(null);
   const [viewTx, setViewTx] = useState<Transaction | null>(null);
   const [editBillState, setEditBillState] = useState<Bill | null>(null);
+
+  // Manual Transaction Modal State
+  const [showAddTx, setShowAddTx] = useState(false);
+  const [txType, setTxType] = useState<'income' | 'expense' | 'transfer' | 'payroll'>('expense');
+  const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
+  const [txAmount, setTxAmount] = useState('');
+  const [txEntity, setTxEntity] = useState(''); 
+  const [txCategory, setTxCategory] = useState(''); 
+  const [txNotes, setTxNotes] = useState('');
+  const [txT4aEligible, setTxT4aEligible] = useState(false);
+  const [txNewVendorFund, setTxNewVendorFund] = useState('General');
 
   const groupedAccounts = accounts.reduce((acc, account) => {
     if (!acc[account.type]) acc[account.type] = [];
@@ -106,6 +117,69 @@ export const ChartOfAccounts: React.FC = () => {
       .filter(Boolean)
   )).sort().reverse();
 
+  const handleManualTransaction = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAccount || !txAmount) return;
+    
+    const amount = parseFloat(txAmount);
+    
+    if (txType === 'expense') {
+      const existingVendor = vendors.find(v => v.name.toLowerCase() === txEntity.toLowerCase());
+      if (!existingVendor && txEntity) {
+        addVendor({ name: txEntity, fund: txNewVendorFund });
+      }
+      const billId = addBill({
+        vendor: txEntity || 'Unknown Vendor',
+        amount,
+        dueDate: txDate,
+        status: 'pending',
+        category: txCategory || 'Uncategorized Expense'
+      });
+      markBillPaid(billId, selectedAccount.id, txCategory || 'Uncategorized Expense');
+    } else if (txType === 'income') {
+      addTransaction({
+        donorId: txEntity || 'unknown',
+        amount,
+        date: txDate,
+        type: 'approved',
+        method: 'other',
+        currency: 'CAD',
+        sourceAccountId: selectedAccount.id,
+        category: txCategory || 'General Donation',
+        notes: txNotes
+      });
+    } else if (txType === 'transfer') {
+      transferBetweenAccounts({
+        fromAccountId: selectedAccount.id,
+        toAccountId: txEntity,
+        amount,
+        date: txDate,
+        notes: txNotes
+      });
+    } else if (txType === 'payroll') {
+      const entity = [...employees, ...fundraisers].find(x => x.id === txEntity);
+      if (entity) {
+        payPayrollEntity(entity.id, 'role' in entity ? 'employee' : 'fundraiser', amount);
+        const billId = addBill({
+          vendor: `Payroll: ${entity.name}`,
+          amount,
+          dueDate: txDate,
+          status: 'pending',
+          category: 'Payroll Expense',
+          t4aEligible: txT4aEligible
+        });
+        markBillPaid(billId, selectedAccount.id, 'Payroll Expense');
+      }
+    }
+    
+    setShowAddTx(false);
+    setTxAmount('');
+    setTxEntity('');
+    setTxCategory('');
+    setTxNotes('');
+    setTxT4aEligible(false);
+  };
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px', alignItems: 'start' }}>
       {!selectedAccount ? (
@@ -192,6 +266,9 @@ export const ChartOfAccounts: React.FC = () => {
               {selectedAccount.name}
             </h3>
             <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAddTx(true)}>
+                <Plus size={14} /> Add Transaction
+              </button>
               <button className="btn btn-ghost btn-sm" onClick={() => { if(window.confirm('Are you sure you want to delete this account?')) { deleteAccount(selectedAccount.id); setSelectedAccountId(null); } }} style={{ color: 'var(--red)' }}>
                 <Trash2 size={14} /> Delete Account
               </button>
@@ -475,6 +552,130 @@ export const ChartOfAccounts: React.FC = () => {
                 setEditBillState(null); 
               }}>Save Changes</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Transaction Modal */}
+      {showAddTx && selectedAccount && (
+        <div className="modal-overlay" onClick={() => setShowAddTx(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ margin: 0 }}>Add Transaction to {selectedAccount.name}</h2>
+              <button className="modal-close" onClick={() => setShowAddTx(false)}><X size={20} /></button>
+            </div>
+            <form onSubmit={handleManualTransaction}>
+              <div className="modal-body">
+                <div style={{ display: 'grid', gap: '16px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Transaction Type</label>
+                    <select value={txType} onChange={e => setTxType(e.target.value as any)}>
+                      <option value="expense">Expense / Bill Payment</option>
+                      <option value="income">Income / Deposit</option>
+                      <option value="transfer">Account Transfer</option>
+                      <option value="payroll">Payroll Payment</option>
+                    </select>
+                  </div>
+                  
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Date</label>
+                    <input type="date" required value={txDate} onChange={e => setTxDate(e.target.value)} />
+                  </div>
+                  
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Amount</label>
+                    <input type="number" step="0.01" required value={txAmount} onChange={e => setTxAmount(e.target.value)} />
+                  </div>
+
+                  {txType === 'expense' && (
+                    <>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Vendor</label>
+                        <input type="text" placeholder="Vendor Name" required value={txEntity} onChange={e => setTxEntity(e.target.value)} />
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Expense Category (Account)</label>
+                        <select required value={txCategory} onChange={e => setTxCategory(e.target.value)}>
+                          <option value="">-- Select Expense Account --</option>
+                          {accounts.filter(a => a.type === 'expense').map(a => (
+                            <option key={a.id} value={a.name}>{a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  {txType === 'income' && (
+                    <>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Donor / Source (Optional)</label>
+                        <select value={txEntity} onChange={e => setTxEntity(e.target.value)}>
+                          <option value="">-- Anonymous / None --</option>
+                          {donors.map(d => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Income Category (Account)</label>
+                        <select required value={txCategory} onChange={e => setTxCategory(e.target.value)}>
+                          <option value="">-- Select Income Account --</option>
+                          {accounts.filter(a => a.type === 'revenue').map(a => (
+                            <option key={a.id} value={a.name}>{a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Notes</label>
+                        <input type="text" value={txNotes} onChange={e => setTxNotes(e.target.value)} />
+                      </div>
+                    </>
+                  )}
+
+                  {txType === 'transfer' && (
+                    <>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Destination / Offset Account</label>
+                        <select required value={txEntity} onChange={e => setTxEntity(e.target.value)}>
+                          <option value="">-- Select Account --</option>
+                          {accounts.filter(a => a.id !== selectedAccount.id).map(a => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Notes</label>
+                        <input type="text" value={txNotes} onChange={e => setTxNotes(e.target.value)} />
+                      </div>
+                    </>
+                  )}
+
+                  {txType === 'payroll' && (
+                    <>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label>Employee / Fundraiser</label>
+                        <select required value={txEntity} onChange={e => setTxEntity(e.target.value)}>
+                          <option value="">-- Select Entity --</option>
+                          {employees.map(e => <option key={e.id} value={e.id}>{e.name} (Employee - Owes: ${e.balanceOwed.toFixed(2)})</option>)}
+                          {fundraisers.map(f => <option key={f.id} value={f.id}>{f.name} (Fundraiser - Owes: ${f.balanceOwed.toFixed(2)})</option>)}
+                        </select>
+                      </div>
+                      {txEntity && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '12px' }}>
+                          <input type="checkbox" checked={txT4aEligible} onChange={e => setTxT4aEligible(e.target.checked)} style={{ width: 16, height: 16 }} />
+                          <span>Include this payment in T4A (Box 48 Eligible)</span>
+                        </label>
+                      )}
+                    </>
+                  )}
+
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddTx(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Record Transaction</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
