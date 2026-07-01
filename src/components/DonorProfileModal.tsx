@@ -5,7 +5,7 @@ import { PaymentModal } from './PaymentModal';
 import { AddDonorModal } from './AddDonorModal';
 import { useT } from '../i18n';
 
-type DonorTab = 'overview' | 'transactions' | 'recurring' | 'declined' | 'notes';
+type DonorTab = 'overview' | 'transactions' | 'recurring' | 'pledges' | 'declined' | 'notes';
 
 interface Props {
   donorId: string;
@@ -19,7 +19,7 @@ const hebFullName = (donor: any) => {
 
 export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
   const {
-    donors, transactions, recurringPayments,
+    donors, transactions, pledges, recurringPayments,
     updateDonorNotes, toggleRecurring, fundraisers, isRtl,
     accounts
   } = useStore();
@@ -35,9 +35,17 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
 
   if (!selectedDonor) return null;
 
-  const donorTransactions = transactions.filter(t => t.donorId === donorId);
+  const donorTransactions = transactions.filter(t => t.donorId === donorId && !t.isBatch);
   const donorDeclined = donorTransactions.filter(t => t.type === 'declined');
   const donorRecurring = recurringPayments.filter(r => r.donorId === donorId);
+  const donorPledges = pledges.filter(p => p.donorId === donorId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  // Calculate open balance per pledge (total pledged minus total paid)
+  const totalPaid = donorTransactions
+    .filter(t => t.type === 'approved')
+    .reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+  const totalPledged = donorPledges.reduce((sum, p) => sum + (p.amountCAD ?? p.amount), 0);
+  const openBalance = Math.max(0, totalPledged - totalPaid);
 
   const methodLabel: Record<string, string> = {
     credit_card: 'Credit Card',
@@ -131,6 +139,7 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
             {([
               ['overview', T('overview')],
               ['transactions', `${T('payments')} (${donorTransactions.filter(t => t.type !== 'declined').length})`],
+              ['pledges', `Pledges (${donorPledges.length})`],
               ['recurring', `${T('recurring')} (${donorRecurring.length})`],
               ['declined', `${T('declined')} (${donorDeclined.length})`],
               ['notes', T('notes')],
@@ -202,18 +211,75 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
           {donorTab === 'transactions' && (
             <div className="table-container">
               <table>
-                <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+                <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Deposit</th><th>Status</th></tr></thead>
                 <tbody>
                   {donorTransactions.filter(t => t.type !== 'declined').map(t => (
                     <tr key={t.id}>
                       <td>{t.date}</td>
                       <td style={{ fontWeight: 700 }}>${t.amount.toLocaleString()} {t.currency}</td>
-                      <td>{methodLabel[t.method]}</td>
+                      <td>{methodLabel[t.method] || t.method}</td>
+                      <td>
+                        {t.depositStatus === 'undeposited'
+                          ? <span className="badge badge-yellow">Undeposited</span>
+                          : t.depositStatus === 'deposited'
+                          ? <span className="badge badge-green">Deposited</span>
+                          : <span className="badge badge-gray">Direct</span>}
+                      </td>
                       <td>{statusBadge(t.type)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* ── PLEDGES TAB ── */}
+          {donorTab === 'pledges' && (
+            <div>
+              {/* Summary bar */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '16px' }}>
+                {[
+                  { label: 'Total Pledged', val: `$${totalPledged.toLocaleString()}`, color: 'var(--gold)' },
+                  { label: 'Total Paid', val: `$${totalPaid.toLocaleString()}`, color: 'var(--green)' },
+                  { label: 'Open Balance', val: `$${openBalance.toLocaleString()}`, color: openBalance > 0 ? 'var(--red)' : 'var(--text-muted)' },
+                ].map(s => (
+                  <div key={s.label} style={{ background: 'var(--bg-input)', borderRadius: '10px', padding: '12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '4px' }}>{s.label}</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: s.color, fontFamily: 'Outfit, sans-serif' }}>{s.val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {donorPledges.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>No pledges found for this donor.</div>
+              ) : (
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Amount</th>
+                        <th>Currency</th>
+                        <th>Category</th>
+                        <th>Sponsor</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {donorPledges.map(p => (
+                        <tr key={p.id}>
+                          <td>{p.date}</td>
+                          <td style={{ fontWeight: 700, color: 'var(--gold)' }}>${(p.amountCAD ?? p.amount).toLocaleString()}</td>
+                          <td>{p.currency}</td>
+                          <td style={{ fontSize: '0.9rem' }}>{p.category || '—'}</td>
+                          <td style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{p.sponsor || '—'}</td>
+                          <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.notes || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
           
