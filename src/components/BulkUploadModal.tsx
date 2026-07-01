@@ -273,43 +273,32 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
             const isPledgeMethod = typeRaw.includes('ledge') || methodLower.includes('ledge');
 
             if (dataType === 'pledges' && isPledgeMethod) {
-              // 12-month split: each installment goes to pledges[]
+              // Create ONE full pledge
+              pledgesToAdd.push({
+                donorId: finalDonorId,
+                amount,
+                date: parsedDate,
+                currency: currencyVal,
+                category: categoryVal,
+                sponsor: sponsorVal,
+                notes: notesVal,
+              });
+
+              // Create ONE recurring payment schedule for 12 months
               const installmentAmt = amount / 12;
-              let firstFutureDate = '';
               const baseDate = new Date(parsedDate);
-              const year = baseDate.getUTCFullYear();
-              const month = baseDate.getUTCMonth();
-              const day = baseDate.getUTCDate();
-              const todayStr = new Date().toISOString().split('T')[0];
-
-              for (let i = 0; i < 12; i++) {
-                const d = new Date(Date.UTC(year, month + i, day));
-                const dateStr = d.toISOString().split('T')[0];
-                if (!dateStr || isNaN(d.getTime())) continue;
-                if (!firstFutureDate && dateStr > todayStr) firstFutureDate = dateStr;
-
-                pledgesToAdd.push({
-                  donorId: finalDonorId,
-                  amount: installmentAmt,
-                  date: dateStr,
-                  currency: currencyVal,
-                  category: categoryVal,
-                  sponsor: sponsorVal,
-                  notes: `Installment ${i + 1} of 12${notesVal ? ' - ' + notesVal : ''}`,
-                });
-              }
-
-              if (firstFutureDate) {
-                recurringToAdd.push({
-                  donorId: finalDonorId,
-                  amount: installmentAmt,
-                  frequency: 'monthly',
-                  nextDate: firstFutureDate,
-                  method: parsedMethod as any,
-                  currency: currencyVal,
-                  active: true
-                });
-              }
+              const endD = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + 11, baseDate.getUTCDate()));
+              
+              recurringToAdd.push({
+                donorId: finalDonorId,
+                amount: installmentAmt,
+                frequency: 'monthly',
+                nextDate: parsedDate,
+                endDate: endD.toISOString().split('T')[0],
+                method: parsedMethod as any,
+                currency: currencyVal,
+                active: true
+              });
             } else if (dataType === 'pledges') {
               // One-time pledge → goes to pledges[]
               pledgesToAdd.push({

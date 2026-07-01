@@ -115,6 +115,7 @@ export interface RecurringPayment {
   amount: number;
   frequency: 'weekly' | 'monthly' | 'quarterly' | 'yearly';
   nextDate: string;
+  endDate?: string;
   method: 'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other';
   currency: 'CAD' | 'USD';
   active: boolean;
@@ -314,6 +315,8 @@ interface AppState {
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
   bulkAddRecurring: (recs: Omit<RecurringPayment, 'id'>[]) => void;
   toggleRecurring: (id: string) => void;
+  deleteRecurring: (ids: string[]) => void;
+  deleteAllRecurring: () => void;
 
   addFundraiser: (f: Omit<Fundraiser, 'id' | 'balanceOwed'>) => void;
   payOutFundraiser: (id: string) => void;
@@ -344,6 +347,7 @@ interface AppState {
   addRecurringExpense: (expense: Omit<RecurringExpense, 'id'>) => void;
   toggleRecurringExpense: (id: string) => void;
   processRecurringExpenses: () => void;
+  processRecurringPayments: () => void;
 
   addRecurringPayroll: (payroll: Omit<RecurringPayroll, 'id'>) => void;
   deleteRecurringPayroll: (id: string) => void;
@@ -851,6 +855,12 @@ export const useStore = create<AppState>()(
         recurringPayments: state.recurringPayments.map(r => r.id === id ? { ...r, active: !r.active } : r)
       })),
 
+      deleteRecurring: (ids) => set((state) => ({
+        recurringPayments: state.recurringPayments.filter(r => !ids.includes(r.id))
+      })),
+
+      deleteAllRecurring: () => set({ recurringPayments: [] }),
+
       addFundraiser: (f) => set((state) => ({
         fundraisers: [...state.fundraisers, { ...f, id: uid(), balanceOwed: 0, internalAccountBalance: 0 }]
       })),
@@ -1038,6 +1048,59 @@ export const useStore = create<AppState>()(
 
         if (hasChanges) return { bills: newBills, recurringExpenses: updatedExpenses };
         return state;
+      }),
+
+      processRecurringPayments: () => set(state => {
+        const today = new Date().toISOString().split('T')[0];
+        let newTransactions = [...state.transactions];
+        let updatedSchedules = [...state.recurringPayments];
+        let hasChanges = false;
+
+        updatedSchedules = updatedSchedules.map(rec => {
+          if (!rec.active) return rec;
+          
+          let currentNextDate = rec.nextDate;
+          let generatedCount = 0;
+          
+          while (currentNextDate <= today && generatedCount < 12) {
+            newTransactions.push({
+              id: uid(),
+              donorId: rec.donorId,
+              amount: rec.amount,
+              amountCAD: rec.amount,
+              date: currentNextDate,
+              type: 'pending',
+              method: rec.method,
+              currency: rec.currency,
+              notes: 'Auto-generated from schedule'
+            });
+            
+            const d = new Date(currentNextDate);
+            if (rec.frequency === 'monthly') d.setUTCMonth(d.getUTCMonth() + 1);
+            else if (rec.frequency === 'weekly') d.setUTCDate(d.getUTCDate() + 7);
+            else if (rec.frequency === 'yearly') d.setUTCFullYear(d.getUTCFullYear() + 1);
+            else d.setUTCMonth(d.getUTCMonth() + 3);
+            
+            currentNextDate = d.toISOString().split('T')[0];
+            generatedCount++;
+          }
+          
+          let active: boolean = rec.active;
+          if (rec.endDate && currentNextDate > rec.endDate) {
+            active = false;
+          }
+
+          if (currentNextDate !== rec.nextDate || active !== rec.active) {
+            hasChanges = true;
+            return { ...rec, nextDate: currentNextDate, active };
+          }
+          return rec;
+        });
+
+        if (hasChanges) {
+          return { transactions: newTransactions, recurringPayments: updatedSchedules };
+        }
+        return {};
       }),
 
       addRecurringPayroll: (payroll) => set(state => ({ recurringPayroll: [{ ...payroll, id: uid() }, ...state.recurringPayroll] })),
@@ -1303,7 +1366,7 @@ const methodsToWrap = [
   'bulkUpsertDonors',
   'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'bulkEditTransactions', 'deleteTransactions', 'deleteAllTransactions',
   'addPledge', 'bulkAddPledges', 'editPledge', 'deletePledges', 'deleteAllPledges',
-  'addRecurring', 'bulkAddRecurring', 'toggleRecurring',
+  'addRecurring', 'bulkAddRecurring', 'toggleRecurring', 'deleteRecurring', 'deleteAllRecurring',
   'dismissSolaRef',
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
   'addAccount', 'editAccount', 'deleteAccount', 'transferBetweenAccounts',

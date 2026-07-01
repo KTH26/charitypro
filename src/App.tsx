@@ -35,11 +35,13 @@ function App() {
         setHasHydrated(true);
         useStore.getState().processRecurringExpenses();
         useStore.getState().processRecurringPayroll();
+        useStore.getState().processRecurringPayments();
       });
       if (useStore.persist.hasHydrated()) {
         setHasHydrated(true);
         useStore.getState().processRecurringExpenses();
         useStore.getState().processRecurringPayroll();
+        useStore.getState().processRecurringPayments();
       }
       return unsub;
     });
