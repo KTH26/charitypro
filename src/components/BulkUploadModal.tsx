@@ -268,7 +268,8 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
             const sourceAccountId = accountResolutions[assetName] || accounts.find(a => a.name.toLowerCase() === assetName.toLowerCase())?.id;
             const offsetAccountId = accountResolutions[revName] || accounts.find(a => a.name.toLowerCase() === revName.toLowerCase())?.id;
 
-            const isPledgeMethod = methodLower.includes('ledge'); // matches pledge or ledge
+            const typeRaw = String(getVal(item.row, 'donation type', 'type') || '').toLowerCase().trim();
+            const isPledgeMethod = typeRaw.includes('ledge') || methodLower.includes('ledge'); // matches pledge or ledge
 
             if (dataType === 'pledges' && isPledgeMethod) {
               const installmentAmt = amount / 12;
