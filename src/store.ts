@@ -76,13 +76,13 @@ export interface Transaction {
   amount: number;
   amountCAD?: number; // for USD transactions, the CAD equivalent
   date: string;
-  type: 'approved' | 'pending' | 'recording' | 'declined';
+  type: 'approved' | 'pending' | 'declined';
   method: 'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other';
   currency: 'CAD' | 'USD';
   sourceAccountId?: string; // e.g. Bank Account (Asset)
   offsetAccountId?: string; // e.g. Category/Fundraiser Payroll (Revenue/Expense)
   fundraiserId?: string;
-  category?: string; // Keeping for legacy string tags
+  category?: string;
   sponsor?: string;
   notes?: string;
   invoiceSaved?: boolean;
@@ -90,6 +90,19 @@ export interface Transaction {
   batchTransactionId?: string; // Links individual tx to a master batch tx
   isBatch?: boolean; // True if this is the master batch tx
   projectId?: string;
+}
+
+export interface Pledge {
+  id: string;
+  donorId: string;
+  amount: number;
+  amountCAD?: number;
+  date: string;
+  currency: 'CAD' | 'USD';
+  category?: string;
+  sponsor?: string;
+  notes?: string;
+  fundraiserId?: string;
 }
 
 export interface RecurringPayment {
@@ -239,6 +252,7 @@ interface AppState {
   donorSortBy: DonorSortKey;
   donors: Donor[];
   transactions: Transaction[];
+  pledges: Pledge[];
   recurringPayments: RecurringPayment[];
   fundraisers: Fundraiser[];
   accounts: Account[];
@@ -282,6 +296,13 @@ interface AppState {
   deleteTransactions: (ids: string[]) => void;
   deleteAllTransactions: () => void;
   removeDuplicateTransactions: () => { count: number };
+
+  addPledge: (pledge: Omit<Pledge, 'id'>) => void;
+  bulkAddPledges: (pledges: Omit<Pledge, 'id'>[]) => void;
+  editPledge: (id: string, updates: Partial<Omit<Pledge, 'id'>>) => void;
+  deletePledges: (ids: string[]) => void;
+  deleteAllPledges: () => void;
+
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
   toggleRecurring: (id: string) => void;
 
@@ -424,6 +445,7 @@ export const useStore = create<AppState>()(
       donorSortBy: 'lastName',
       donors: [],
       transactions: [],
+      pledges: [],
       recurringPayments: [],
       fundraisers: [],
       accounts: [],
@@ -491,6 +513,7 @@ export const useStore = create<AppState>()(
       deleteDonors: (ids) => set(state => ({
         donors: state.donors.filter(d => !ids.includes(d.id)),
         transactions: state.transactions.filter(t => !ids.includes(t.donorId)),
+        pledges: state.pledges.filter(p => !ids.includes(p.donorId)),
         recurringPayments: state.recurringPayments.filter(r => !ids.includes(r.donorId)),
       })),
 
@@ -547,10 +570,8 @@ export const useStore = create<AppState>()(
       }),
 
       bulkAddTransactions: (txs) => set((state) => {
-        const today = new Date().toISOString().split('T')[0];
         const newTxs = txs.map(tx => {
-          const type = (tx.date > today) ? 'recording' : tx.type;
-          return { ...tx, type, id: uid(), invoiceSaved: false };
+          return { ...tx, id: uid(), invoiceSaved: false };
         });
         
         let updatedDonors = [...state.donors];
@@ -643,12 +664,57 @@ export const useStore = create<AppState>()(
       })),
 
       deleteAllTransactions: () => set(state => {
-        // Only safely delete transactions, without touching donors or accounts
-        // We keep 'recording' (pledges) so they aren't wiped out
-        const pledges = state.transactions.filter(t => t.type === 'recording');
         const resetDonors = state.donors.map(d => ({ ...d, totalGiven: 0 }));
-        return { transactions: pledges, donors: resetDonors };
+        return { transactions: [], donors: resetDonors };
       }),
+
+      addPledge: (pledge) => set(state => ({
+        pledges: [{ ...pledge, id: uid() }, ...state.pledges],
+        donors: state.donors.map(d => d.id === pledge.donorId
+          ? { ...d, balanceOwed: d.balanceOwed + (pledge.amountCAD ?? pledge.amount) }
+          : d)
+      })),
+
+      bulkAddPledges: (pledgesArr) => set(state => {
+        const newPledges = pledgesArr.map(p => ({ ...p, id: uid() }));
+        const donorUpdates = new Map<string, number>();
+        for (const p of newPledges) {
+          donorUpdates.set(p.donorId, (donorUpdates.get(p.donorId) || 0) + (p.amountCAD ?? p.amount));
+        }
+        const updatedDonors = state.donors.map(d => {
+          if (!donorUpdates.has(d.id)) return d;
+          return { ...d, balanceOwed: d.balanceOwed + donorUpdates.get(d.id)! };
+        });
+        return {
+          pledges: [...newPledges, ...state.pledges].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+          donors: updatedDonors
+        };
+      }),
+
+      editPledge: (id, updates) => set(state => ({
+        pledges: state.pledges.map(p => p.id === id ? { ...p, ...updates } : p)
+      })),
+
+      deletePledges: (ids) => set(state => {
+        const toDelete = state.pledges.filter(p => ids.includes(p.id));
+        const donorUpdates = new Map<string, number>();
+        for (const p of toDelete) {
+          donorUpdates.set(p.donorId, (donorUpdates.get(p.donorId) || 0) + (p.amountCAD ?? p.amount));
+        }
+        const updatedDonors = state.donors.map(d => {
+          if (!donorUpdates.has(d.id)) return d;
+          return { ...d, balanceOwed: Math.max(0, d.balanceOwed - donorUpdates.get(d.id)!) };
+        });
+        return {
+          pledges: state.pledges.filter(p => !ids.includes(p.id)),
+          donors: updatedDonors
+        };
+      }),
+
+      deleteAllPledges: () => set(state => ({
+        pledges: [],
+        donors: state.donors.map(d => ({ ...d, balanceOwed: 0 }))
+      })),
 
       removeDuplicateTransactions: () => {
         let countRemoved = 0;
@@ -1170,6 +1236,7 @@ const methodsToWrap = [
   'addDonor', 'editDonor', 'updateDonorNotes', 'addSponsorshipDay', 'removeSponsorshipDay', 'deleteDonors',
   'bulkUpsertDonors',
   'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions', 'deleteAllTransactions',
+  'addPledge', 'bulkAddPledges', 'editPledge', 'deletePledges', 'deleteAllPledges',
   'addRecurring', 'toggleRecurring',
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
   'addAccount', 'editAccount', 'deleteAccount', 'transferBetweenAccounts',

@@ -8,7 +8,7 @@ import { useT } from '../i18n';
 import { DonorProfileModal } from '../components/DonorProfileModal';
 
 export const Pledges: React.FC = () => {
-  const { transactions, donors, isRtl, deleteTransactions } = useStore();
+  const { pledges, transactions, donors, isRtl, deletePledges } = useStore();
   const navigate = useNavigate();
   const T = useT(isRtl);
   const [searchTerm, setSearchTerm] = useState('');
@@ -22,21 +22,23 @@ export const Pledges: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 50;
 
+  // Sum of actual approved payments per donor
   const donorPayments = useMemo(() => {
     const map = new Map<string, number>();
     transactions.forEach(t => {
-      if (t.type === 'approved' || t.type === 'pending') {
+      if (t.type === 'approved') {
         map.set(t.donorId, (map.get(t.donorId) || 0) + (t.amountCAD ?? t.amount));
       }
     });
     return map;
   }, [transactions]);
 
+  // Calculate open balance for each pledge
   const pledgesWithBalance = useMemo(() => {
-    const sortedPledges = [...transactions.filter(t => t.type === 'recording')].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const sorted = [...pledges].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     const remainingPayments = new Map(donorPayments);
-    
-    const mapped = sortedPledges.map(p => {
+
+    const mapped = sorted.map(p => {
       const amount = p.amountCAD ?? p.amount;
       const donorPaid = remainingPayments.get(p.donorId) || 0;
       let balance = 0;
@@ -49,7 +51,7 @@ export const Pledges: React.FC = () => {
       return { ...p, openBalance: balance };
     });
     return mapped.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transactions, donorPayments]);
+  }, [pledges, donorPayments]);
 
   const years = useMemo(() => {
     const y = new Set<string>();
@@ -60,7 +62,6 @@ export const Pledges: React.FC = () => {
   const filteredPledges = pledgesWithBalance.filter(p => {
     if (filterYear !== 'All' && !p.date.startsWith(filterYear)) return false;
     if (filterOpen === 'Open' && p.openBalance <= 0) return false;
-    
     const donor = donors.find(d => d.id === p.donorId);
     if (!donor) return false;
     return donor.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.amount.toString().includes(searchTerm);
@@ -134,19 +135,17 @@ export const Pledges: React.FC = () => {
             <div style={{ display: 'flex', gap: '12px' }}>
               <button className="btn btn-sm" style={{ background: 'var(--red)', color: 'white', border: 'none' }} onClick={() => {
                 if (window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} pledges?`)) {
-                  deleteTransactions(selectedIds);
+                  deletePledges(selectedIds);
                   setSelectedIds([]);
                 }
               }}>Delete Selected</button>
 
-              {selectedIds.length > 0 && (
-                <button className="btn btn-sm" style={{ background: 'white', color: 'var(--red)', border: '1px solid var(--red)' }} onClick={() => {
-                  if (window.confirm(`WARNING: Are you sure you want to permanently delete ALL ${filteredPledges.length} pledges that match your current filter? This cannot be undone.`)) {
-                    deleteTransactions(filteredPledges.map(p => p.id));
-                    setSelectedIds([]);
-                  }
-                }}>Delete ALL {filteredPledges.length} Matching</button>
-              )}
+              <button className="btn btn-sm" style={{ background: 'white', color: 'var(--red)', border: '1px solid var(--red)' }} onClick={() => {
+                if (window.confirm(`WARNING: Are you sure you want to permanently delete ALL ${filteredPledges.length} pledges that match your current filter? This cannot be undone.`)) {
+                  deletePledges(filteredPledges.map(p => p.id));
+                  setSelectedIds([]);
+                }
+              }}>Delete ALL {filteredPledges.length} Matching</button>
             </div>
           </div>
         )}

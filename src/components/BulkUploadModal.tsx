@@ -17,7 +17,7 @@ interface Props {
 }
 
 export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
-  const { donors, bulkAddTransactions, addDonor, accounts } = useStore();
+  const { donors, bulkAddTransactions, bulkAddPledges, addDonor, accounts } = useStore();
   const [dataType, setDataType] = useState<'donors' | 'transactions' | 'expenses' | 'pledges'>('donors');
   const [isDragging, setIsDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -227,6 +227,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
     setTimeout(() => {
       const currentDonors = useStore.getState().donors;
       const transactionsToAdd: any[] = [];
+      const pledgesToAdd: any[] = [];
       const recurringToAdd: any[] = [];
       
       allToProcess.forEach(item => {
@@ -269,12 +270,12 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
             const offsetAccountId = accountResolutions[revName] || accounts.find(a => a.name.toLowerCase() === revName.toLowerCase())?.id;
 
             const typeRaw = String(getVal(item.row, 'donation type', 'type') || '').toLowerCase().trim();
-            const isPledgeMethod = typeRaw.includes('ledge') || methodLower.includes('ledge'); // matches pledge or ledge
+            const isPledgeMethod = typeRaw.includes('ledge') || methodLower.includes('ledge');
 
             if (dataType === 'pledges' && isPledgeMethod) {
+              // 12-month split: each installment goes to pledges[]
               const installmentAmt = amount / 12;
               let firstFutureDate = '';
-
               const baseDate = new Date(parsedDate);
               const year = baseDate.getUTCFullYear();
               const month = baseDate.getUTCMonth();
@@ -284,26 +285,17 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               for (let i = 0; i < 12; i++) {
                 const d = new Date(Date.UTC(year, month + i, day));
                 const dateStr = d.toISOString().split('T')[0];
-                
-                const isPastOrToday = dateStr <= todayStr;
-                const txType = isPastOrToday ? 'recording' : 'pending';
+                if (!dateStr || isNaN(d.getTime())) continue;
+                if (!firstFutureDate && dateStr > todayStr) firstFutureDate = dateStr;
 
-                if (!isPastOrToday && !firstFutureDate) {
-                  firstFutureDate = dateStr;
-                }
-
-                transactionsToAdd.push({
+                pledgesToAdd.push({
                   donorId: finalDonorId,
                   amount: installmentAmt,
                   date: dateStr,
-                  type: txType,
-                  method: parsedMethod as any,
                   currency: currencyVal,
                   category: categoryVal,
                   sponsor: sponsorVal,
                   notes: `Installment ${i + 1} of 12${notesVal ? ' - ' + notesVal : ''}`,
-                  sourceAccountId,
-                  offsetAccountId
                 });
               }
 
@@ -318,12 +310,24 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
                   active: true
                 });
               }
+            } else if (dataType === 'pledges') {
+              // One-time pledge → goes to pledges[]
+              pledgesToAdd.push({
+                donorId: finalDonorId,
+                amount,
+                date: parsedDate,
+                currency: currencyVal,
+                category: categoryVal,
+                sponsor: sponsorVal,
+                notes: notesVal,
+              });
             } else {
+              // Regular transaction → goes to transactions[]
               transactionsToAdd.push({
                 donorId: finalDonorId,
-                amount: amount,
+                amount,
                 date: parsedDate,
-                type: dataType === 'pledges' ? 'recording' : 'approved',
+                type: 'approved' as const,
                 method: parsedMethod as any,
                 currency: currencyVal,
                 category: categoryVal,
@@ -337,6 +341,9 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
         }
       });
 
+      if (pledgesToAdd.length > 0) {
+        bulkAddPledges(pledgesToAdd);
+      }
       if (transactionsToAdd.length > 0) {
         bulkAddTransactions(transactionsToAdd);
       }
