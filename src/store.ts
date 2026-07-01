@@ -571,10 +571,9 @@ export const useStore = create<AppState>()(
       }),
 
       addTransaction: (tx) => set((state) => {
-        const goesToUndeposited = UNDEPOSITED_METHODS.has(tx.method);
-        const depositStatus = goesToUndeposited ? 'undeposited' as const : 'direct' as const;
-        // For undeposited methods: route sourceAccount to Undeposited Funds
-        const effectiveSourceId = goesToUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
+        const isUndeposited = tx.sourceAccountId === UNDEPOSITED_FUNDS_ID || tx.depositStatus === 'undeposited';
+        const depositStatus = isUndeposited ? 'undeposited' as const : 'direct' as const;
+        const effectiveSourceId = isUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
         const newTx = { ...tx, id: uid(), depositStatus, sourceAccountId: effectiveSourceId };
         const effectiveAmount = tx.amountCAD ?? tx.amount;
 
@@ -608,13 +607,13 @@ export const useStore = create<AppState>()(
 
       bulkAddTransactions: (txs) => set((state) => {
         const newTxs = txs.map(tx => {
-          const goesToUndeposited = UNDEPOSITED_METHODS.has(tx.method);
-          const effectiveSourceId = goesToUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
+          const isUndeposited = tx.sourceAccountId === UNDEPOSITED_FUNDS_ID || tx.depositStatus === 'undeposited';
+          const effectiveSourceId = isUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
           return {
             ...tx,
             id: uid(),
             invoiceSaved: false,
-            depositStatus: goesToUndeposited ? 'undeposited' as const : 'direct' as const,
+            depositStatus: isUndeposited ? 'undeposited' as const : 'direct' as const,
             sourceAccountId: effectiveSourceId,
           };
         });
