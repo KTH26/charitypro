@@ -49,17 +49,13 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
 
           rows.forEach(row => {
             const donorIdValue = (row['Donor ID'] || '').trim();
+            const donor = donors.find(d => d.displayId === donorIdValue || d.id === donorIdValue);
             
-            if (dataType === 'transactions' && donorIdValue === '') {
-              matched.push({ row, donorId: 'unknown' });
-            } else {
-              const donor = donors.find(d => d.displayId === donorIdValue || d.id === donorIdValue);
-              
-              if (donor) {
-                matched.push({ row, donorId: donor.id });
-              } else if (row['Amount']) {
-                unmatched.push(row);
-              }
+            const amountVal = row['Amount'] || row['amount'] || row['Deposit'] || row['deposit'];
+            if (donor) {
+              matched.push({ row, donorId: donor.id });
+            } else if (amountVal) {
+              unmatched.push(row);
             }
 
             const assetName = row['Asset Account']?.trim();
@@ -193,7 +189,12 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
 
     // First process creations
     unmatchedWithResolutions.forEach(({ row, res }) => {
-      if (res.action === 'skip') return;
+      if (res.action === 'skip') {
+        if (dataType === 'transactions') {
+          allToProcess.push({ row, donorId: 'unknown' });
+        }
+        return;
+      }
       if (res.action === 'match' && res.donorId) {
         allToProcess.push({ row, donorId: res.donorId });
       } else if (res.action === 'create' && res.newFirstName && res.newLastName) {
@@ -203,7 +204,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
           email: '',
           phone: '',
           address: '',
-          notes: 'Auto-created during bulk pledge import'
+          notes: 'Auto-created during bulk import'
         };
         const tempId = Math.random().toString();
         addDonor({ ...newDonorObj, id: tempId } as any);
@@ -223,8 +224,9 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
           if (d) finalDonorId = d.id;
         }
 
-        if (finalDonorId && item.row['Amount']) {
-          const amount = parseFloat(item.row['Amount'].replace(/[^0-9.-]/g, ''));
+        const amountStr = item.row['Amount'] || item.row['amount'] || item.row['Deposit'] || item.row['deposit'];
+        if (finalDonorId && amountStr) {
+          const amount = parseFloat(amountStr.replace(/[^0-9.-]/g, ''));
           if (!isNaN(amount)) {
             let parsedDate = new Date().toISOString().split('T')[0];
             if (item.row['Date']) {
