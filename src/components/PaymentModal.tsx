@@ -157,7 +157,6 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
         const installments = parseInt(pledgeRecInstallments) || 12;
         const installmentAmt = scheduledAmt / installments;
         
-        const recId = uid();
         const baseDate = new Date(pledgeRecStartDate);
         
         let endD = new Date(baseDate);
@@ -172,7 +171,6 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
         }
 
         addRecurring({
-          id: recId,
           donorId,
           pledgeId,
           amount: installmentAmt,
