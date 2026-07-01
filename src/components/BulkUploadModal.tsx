@@ -227,6 +227,7 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
     setTimeout(() => {
       const currentDonors = useStore.getState().donors;
       const transactionsToAdd: any[] = [];
+      const recurringToAdd: any[] = [];
       
       allToProcess.forEach(item => {
         let finalDonorId = item.donorId;
@@ -248,7 +249,8 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
               }
             }
             const methodRaw = String(getVal(item.row, 'method', 'payment method') || '');
-            let parsedMethod = methodRaw.toLowerCase().trim() || 'check';
+            const methodLower = methodRaw.toLowerCase().trim();
+            let parsedMethod = methodLower || 'check';
             if (parsedMethod.includes('credit') || parsedMethod.includes('card')) parsedMethod = 'credit_card';
             else if (parsedMethod.includes('transfer') || parsedMethod.includes('wire')) parsedMethod = 'e_transfer';
             else if (parsedMethod.includes('cash')) parsedMethod = 'cash';
@@ -257,32 +259,90 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
             else if (parsedMethod.includes('bnei') || parsedMethod.includes('leivy')) parsedMethod = 'bnei_leivy';
             else if (parsedMethod !== 'check') parsedMethod = 'other'; 
 
-            const currencyVal = getVal(item.row, 'currency');
-            const categoryVal = getVal(item.row, 'category');
-            const sponsorVal = getVal(item.row, 'sponsor');
-            const notesVal = getVal(item.row, 'notes');
+            const currencyVal = String(getVal(item.row, 'currency') || 'CAD').toUpperCase() as 'CAD' | 'USD';
+            const categoryVal = String(getVal(item.row, 'category') || 'General');
+            const sponsorVal = String(getVal(item.row, 'sponsor') || '');
+            const notesVal = String(getVal(item.row, 'notes') || '');
             const assetName = String(getVal(item.row, 'asset account', 'asset') || '').trim();
             const revName = String(getVal(item.row, 'revenue account', 'revenue') || '').trim();
+            const sourceAccountId = accountResolutions[assetName] || accounts.find(a => a.name.toLowerCase() === assetName.toLowerCase())?.id;
+            const offsetAccountId = accountResolutions[revName] || accounts.find(a => a.name.toLowerCase() === revName.toLowerCase())?.id;
 
-            transactionsToAdd.push({
-              donorId: finalDonorId,
-              amount: amount,
-              date: parsedDate,
-              type: dataType === 'pledges' ? 'recording' : 'approved',
-              method: parsedMethod as any,
-              currency: (String(currencyVal || 'CAD').toUpperCase()) as any,
-              category: String(categoryVal || 'General'),
-              sponsor: String(sponsorVal || ''),
-              notes: String(notesVal || ''),
-              sourceAccountId: accountResolutions[assetName] || accounts.find(a => a.name.toLowerCase() === assetName.toLowerCase())?.id,
-              offsetAccountId: accountResolutions[revName] || accounts.find(a => a.name.toLowerCase() === revName.toLowerCase())?.id
-            });
+            const isPledgeMethod = methodLower.includes('ledge'); // matches pledge or ledge
+
+            if (dataType === 'pledges' && isPledgeMethod) {
+              const installmentAmt = amount / 12;
+              let firstFutureDate = '';
+
+              const baseDate = new Date(parsedDate);
+              const year = baseDate.getUTCFullYear();
+              const month = baseDate.getUTCMonth();
+              const day = baseDate.getUTCDate();
+              const todayStr = new Date().toISOString().split('T')[0];
+
+              for (let i = 0; i < 12; i++) {
+                const d = new Date(Date.UTC(year, month + i, day));
+                const dateStr = d.toISOString().split('T')[0];
+                
+                const isPastOrToday = dateStr <= todayStr;
+                const txType = isPastOrToday ? 'recording' : 'pending';
+
+                if (!isPastOrToday && !firstFutureDate) {
+                  firstFutureDate = dateStr;
+                }
+
+                transactionsToAdd.push({
+                  donorId: finalDonorId,
+                  amount: installmentAmt,
+                  date: dateStr,
+                  type: txType,
+                  method: parsedMethod as any,
+                  currency: currencyVal,
+                  category: categoryVal,
+                  sponsor: sponsorVal,
+                  notes: `Installment ${i + 1} of 12${notesVal ? ' - ' + notesVal : ''}`,
+                  sourceAccountId,
+                  offsetAccountId
+                });
+              }
+
+              if (firstFutureDate) {
+                recurringToAdd.push({
+                  donorId: finalDonorId,
+                  amount: installmentAmt,
+                  frequency: 'monthly',
+                  nextDate: firstFutureDate,
+                  method: parsedMethod as any,
+                  currency: currencyVal,
+                  active: true
+                });
+              }
+            } else {
+              transactionsToAdd.push({
+                donorId: finalDonorId,
+                amount: amount,
+                date: parsedDate,
+                type: dataType === 'pledges' ? 'recording' : 'approved',
+                method: parsedMethod as any,
+                currency: currencyVal,
+                category: categoryVal,
+                sponsor: sponsorVal,
+                notes: notesVal,
+                sourceAccountId,
+                offsetAccountId
+              });
+            }
           }
         }
       });
 
       if (transactionsToAdd.length > 0) {
         bulkAddTransactions(transactionsToAdd);
+      }
+      
+      if (recurringToAdd.length > 0) {
+        const { addRecurring } = useStore.getState();
+        recurringToAdd.forEach(r => addRecurring(r));
       }
 
       setStep('success');
