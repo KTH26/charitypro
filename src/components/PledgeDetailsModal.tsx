@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
 import type { Transaction } from '../store';
-import { X, CheckCircle2, Clock, XCircle, ArrowUpRight } from 'lucide-react';
+import { X, CheckCircle2, Clock, XCircle, ArrowRightLeft } from 'lucide-react';
 import { useT } from '../i18n';
+import { TransferCreditModal } from './TransferCreditModal';
 
 interface PledgeDetailsModalProps {
   pledgeId: string;
@@ -11,6 +12,7 @@ interface PledgeDetailsModalProps {
 
 export const PledgeDetailsModal: React.FC<PledgeDetailsModalProps> = ({ pledgeId, onClose }) => {
   const { pledges, transactions, donors, isRtl } = useStore();
+  const [creditTransferPledgeId, setCreditTransferPledgeId] = useState<string | null>(null);
   const T = useT(isRtl);
 
   const pledge = pledges.find(p => p.id === pledgeId);
@@ -63,6 +65,23 @@ export const PledgeDetailsModal: React.FC<PledgeDetailsModalProps> = ({ pledgeId
             </div>
           </div>
 
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            {balance > 0 ? (
+              <button 
+                className="btn btn-secondary" 
+                style={{ fontSize: '0.9rem', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => setCreditTransferPledgeId(pledge.id)}
+              >
+                <ArrowRightLeft size={16} /> Use Credit from Other Pledge
+              </button>
+            ) : null}
+            {balance < 0 ? (
+              <div style={{ fontSize: '0.9rem', color: 'var(--green)', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, padding: '8px 16px', background: 'var(--green-bg)', borderRadius: '8px' }}>
+                <ArrowRightLeft size={16} /> This pledge is overpaid by ${Math.abs(balance).toLocaleString()}
+              </div>
+            ) : null}
+          </div>
+
           <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', marginBottom: '24px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div><span style={{ color: 'var(--text-muted)' }}>Date:</span> <span style={{ fontWeight: 600 }}>{pledge.date}</span></div>
@@ -112,6 +131,15 @@ export const PledgeDetailsModal: React.FC<PledgeDetailsModalProps> = ({ pledgeId
           </div>
         </div>
       </div>
+      
+      {creditTransferPledgeId && (
+        <TransferCreditModal 
+          donorId={pledge.donorId} 
+          targetPledgeId={creditTransferPledgeId} 
+          targetPledgeBalance={Math.max(0, balance)}
+          onClose={() => setCreditTransferPledgeId(null)} 
+        />
+      )}
     </div>
   );
 };

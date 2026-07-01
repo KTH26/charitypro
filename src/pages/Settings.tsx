@@ -248,6 +248,35 @@ export const Settings: React.FC = () => {
               
               <div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  <Link size={16} /> Data Tools
+                </label>
+                <div className="card" style={{ padding: '24px', border: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                    <div style={{ padding: '10px', background: 'var(--blue-bg)', borderRadius: '12px', color: 'var(--blue)' }}>
+                      <Link size={24} />
+                    </div>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontFamily: 'Outfit, sans-serif' }}>Auto-Match Pledges</h3>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Automatically scan all unlinked transactions and link them to the active pledge for that time period based on the strict Date-Window matching rule.</div>
+                    </div>
+                  </div>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ width: '100%', padding: '12px', fontWeight: 600 }}
+                    onClick={() => {
+                      if (window.confirm('This will automatically link payments to pledges based on date. Existing pledge assignments will be overwritten for matching date ranges. Proceed?')) {
+                        useStore.getState().autoMatchPledges();
+                        alert('Auto-matching complete! All eligible payments are now linked to their respective pledges.');
+                      }
+                    }}
+                  >
+                    Run Auto-Match Now
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
                   <AlertTriangle size={16} /> Danger Zone
                 </label>
                 <div className="card" style={{ padding: '24px', border: '1px solid rgba(239,68,68,0.3)', background: 'var(--red-bg)' }}>

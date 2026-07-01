@@ -313,6 +313,8 @@ interface AppState {
   editPledge: (id: string, updates: Partial<Omit<Pledge, 'id'>>) => void;
   deletePledges: (ids: string[]) => void;
   deleteAllPledges: () => void;
+  autoMatchPledges: () => void;
+  transferPledgeCredit: (donorId: string, fromPledgeId: string, toPledgeId: string, amount: number) => void;
 
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
   bulkAddRecurring: (recs: Omit<RecurringPayment, 'id'>[]) => void;
@@ -782,6 +784,68 @@ export const useStore = create<AppState>()(
         pledges: [],
         donors: state.donors.map(d => ({ ...d, balanceOwed: 0 }))
       })),
+
+      autoMatchPledges: () => set(state => {
+        const newTransactions = [...state.transactions];
+        
+        // Group pledges by donor and sort by date ASC
+        const donorPledges = new Map<string, Pledge[]>();
+        for (const p of state.pledges) {
+          if (!donorPledges.has(p.donorId)) donorPledges.set(p.donorId, []);
+          donorPledges.get(p.donorId)!.push(p);
+        }
+        
+        for (const [donorId, pledges] of donorPledges.entries()) {
+          pledges.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          
+          for (let i = 0; i < pledges.length; i++) {
+            const p = pledges[i];
+            const startDate = new Date(p.date).getTime();
+            const endDate = i < pledges.length - 1 ? new Date(pledges[i+1].date).getTime() : Infinity;
+            
+            for (let j = 0; j < newTransactions.length; j++) {
+              const tx = newTransactions[j];
+              if (tx.donorId === donorId && tx.type === 'approved' && !tx.isBatch) {
+                const txDate = new Date(tx.date).getTime();
+                if (txDate >= startDate && txDate < endDate) {
+                  newTransactions[j] = { ...tx, pledgeId: p.id };
+                }
+              }
+            }
+          }
+        }
+        return { transactions: newTransactions };
+      }),
+
+      transferPledgeCredit: (donorId, fromPledgeId, toPledgeId, amount) => set(state => {
+        const tx1: Transaction = {
+          id: uid(),
+          donorId,
+          amount: -amount,
+          date: new Date().toISOString().split('T')[0],
+          type: 'approved',
+          method: 'other',
+          category: 'Internal Credit Transfer',
+          currency: 'CAD',
+          notes: `Credit transferred to pledge ${toPledgeId}`,
+          pledgeId: fromPledgeId
+        };
+        const tx2: Transaction = {
+          id: uid(),
+          donorId,
+          amount: amount,
+          date: new Date().toISOString().split('T')[0],
+          type: 'approved',
+          method: 'other',
+          category: 'Internal Credit Transfer',
+          currency: 'CAD',
+          notes: `Credit received from pledge ${fromPledgeId}`,
+          pledgeId: toPledgeId
+        };
+        return {
+          transactions: [tx1, tx2, ...state.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        };
+      }),
 
       removeDuplicateTransactions: () => {
         let countRemoved = 0;

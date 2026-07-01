@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useStore, type Transaction } from '../store';
-import { Edit2, X } from 'lucide-react';
+import { Edit2, X, ArrowRightLeft } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { AddDonorModal } from './AddDonorModal';
+import { TransferCreditModal } from './TransferCreditModal';
 import { useT } from '../i18n';
 
 type DonorTab = 'overview' | 'transactions' | 'recurring' | 'pledges' | 'declined' | 'notes';
@@ -30,6 +31,7 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [editDonorActive, setEditDonorActive] = useState(false);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
   const [expandedPledgeId, setExpandedPledgeId] = useState<string | null>(null);
+  const [creditTransferPledgeId, setCreditTransferPledgeId] = useState<string | null>(null);
 
   const selectedDonor = donors.find(d => d.id === donorId);
   const [notesDraft, setNotesDraft] = useState(selectedDonor?.notes || '');
@@ -324,6 +326,22 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
                                     </div>
                                     
                                   </div>
+                                  <div style={{ marginTop: '16px', display: 'flex', gap: '12px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                                    {pledgeBalance > 0 ? (
+                                      <button 
+                                        className="btn btn-secondary" 
+                                        style={{ fontSize: '0.85rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                        onClick={() => setCreditTransferPledgeId(p.id)}
+                                      >
+                                        <ArrowRightLeft size={14} /> Use Credit from Other Pledge
+                                      </button>
+                                    ) : null}
+                                    {pledgeBalance < 0 ? (
+                                      <div style={{ fontSize: '0.85rem', color: 'var(--green)', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700 }}>
+                                        <ArrowRightLeft size={14} /> This pledge is overpaid by ${Math.abs(pledgeBalance).toLocaleString()}
+                                      </div>
+                                    ) : null}
+                                  </div>
                                 </td>
                               </tr>
                             )}
@@ -374,6 +392,14 @@ export const DonorProfileModal: React.FC<Props> = ({ donorId, onClose }) => {
       
       {showPayment && <PaymentModal donorId={selectedDonor.id} onClose={() => setShowPayment(false)} />}
       {editDonorActive && <AddDonorModal editDonorData={selectedDonor} onClose={() => setEditDonorActive(false)} />}
+      {creditTransferPledgeId && (
+        <TransferCreditModal 
+          donorId={donorId} 
+          targetPledgeId={creditTransferPledgeId} 
+          targetPledgeBalance={Math.max(0, (donorPledges.find(p => p.id === creditTransferPledgeId)?.amountCAD ?? donorPledges.find(p => p.id === creditTransferPledgeId)?.amount ?? 0) - donorTransactions.filter(t => t.pledgeId === creditTransferPledgeId && t.type === 'approved').reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0))}
+          onClose={() => setCreditTransferPledgeId(null)} 
+        />
+      )}
     </div>
   );
 };
