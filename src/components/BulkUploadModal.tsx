@@ -49,12 +49,17 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
 
           rows.forEach(row => {
             const donorIdValue = (row['Donor ID'] || '').trim();
-            const donor = donors.find(d => d.displayId === donorIdValue || d.id === donorIdValue);
             
-            if (donor) {
-              matched.push({ row, donorId: donor.id });
-            } else if (row['Amount']) {
-              unmatched.push(row);
+            if (dataType === 'transactions' && donorIdValue === '') {
+              matched.push({ row, donorId: 'unknown' });
+            } else {
+              const donor = donors.find(d => d.displayId === donorIdValue || d.id === donorIdValue);
+              
+              if (donor) {
+                matched.push({ row, donorId: donor.id });
+              } else if (row['Amount']) {
+                unmatched.push(row);
+              }
             }
 
             const assetName = row['Asset Account']?.trim();
@@ -135,6 +140,40 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
             }
           });
           useStore.getState().bulkUpsertDonors(donorsToUpsert);
+          setStep('success');
+          setTimeout(onClose, 2000);
+        }
+      });
+      return;
+    } else if (dataType === 'expenses') {
+      Papa.parse(file, {
+        header: true,
+        encoding: fileEncoding,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const rows = results.data as any[];
+          const { addBill, addVendor, vendors } = useStore.getState();
+          rows.forEach(row => {
+            const amount = parseFloat((row['Amount'] || '').replace(/[^0-9.-]/g, ''));
+            if (!isNaN(amount)) {
+                let vendorName = (row['Vendor'] || 'Unknown Vendor').trim();
+                let category = (row['Category'] || 'Uncategorized Expense').trim();
+                let dueDate = row['Due Date'] || row['Date'] || new Date().toISOString().split('T')[0];
+                
+                const existingVendor = vendors.find(v => v.name.toLowerCase() === vendorName.toLowerCase());
+                if (!existingVendor && vendorName) {
+                    addVendor({ name: vendorName, fund: 'General' });
+                }
+                
+                addBill({
+                    vendor: vendorName,
+                    amount,
+                    dueDate,
+                    status: 'pending',
+                    category
+                });
+            }
+          });
           setStep('success');
           setTimeout(onClose, 2000);
         }
