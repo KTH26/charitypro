@@ -56,6 +56,14 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   const [recInstallments, setRecInstallments] = useState('12');
   const [localExchangeRate, setLocalExchangeRate] = useState(exchangeRate);
 
+  // Partial recurring for pledge state
+  const [setupRecurringForPledge, setSetupRecurringForPledge] = useState(false);
+  const [pledgeScheduledAmount, setPledgeScheduledAmount] = useState('');
+  const [pledgeRecFrequency, setPledgeRecFrequency] = useState<'weekly' | 'monthly' | 'quarterly' | 'yearly'>('monthly');
+  const [pledgeRecInstallments, setPledgeRecInstallments] = useState('12');
+  const [pledgeRecStartDate, setPledgeRecStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [pledgeRecMethod, setPledgeRecMethod] = useState<'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other'>('credit_card');
+
   if (!donor) return null;
 
   const getAmountCAD = (amt: string) => {
@@ -131,19 +139,79 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   };
 
   const handlePledge = () => {
-    if (!amount || isNaN(+amount)) return;
-    addPledge({
-      donorId,
-      amount: parseFloat(amount),
-      amountCAD: getAmountCAD(amount),
-      date: txDate,
-      currency: txCurrency,
-      category: 'General', // default or you could add a state for it
-      fundraiserId: fundraiserId || undefined,
-      sponsor: sponsor || undefined,
-      notes,
-    });
-    setSuccess(true);
+      const pledgeId = addPledge({
+        donorId,
+        amount: parseFloat(amount),
+        amountCAD: getAmountCAD(amount),
+        date: txDate,
+        currency: txCurrency,
+        category: CATEGORIES[0], // default
+        fundraiserId: fundraiserId || undefined,
+        sponsor,
+        projectId: projectId || undefined,
+        notes
+      });
+
+      if (setupRecurringForPledge) {
+        const scheduledAmt = parseFloat(pledgeScheduledAmount) || parseFloat(amount);
+        const installments = parseInt(pledgeRecInstallments) || 12;
+        const installmentAmt = scheduledAmt / installments;
+        
+        const recId = uid();
+        const baseDate = new Date(pledgeRecStartDate);
+        
+        let endD = new Date(baseDate);
+        if (pledgeRecFrequency === 'weekly') {
+          endD.setDate(endD.getDate() + (7 * (installments - 1)));
+        } else if (pledgeRecFrequency === 'monthly') {
+          endD.setMonth(endD.getMonth() + (installments - 1));
+        } else if (pledgeRecFrequency === 'quarterly') {
+          endD.setMonth(endD.getMonth() + (3 * (installments - 1)));
+        } else if (pledgeRecFrequency === 'yearly') {
+          endD.setFullYear(endD.getFullYear() + (installments - 1));
+        }
+
+        addRecurring({
+          id: recId,
+          donorId,
+          pledgeId,
+          amount: installmentAmt,
+          frequency: pledgeRecFrequency,
+          nextDate: pledgeRecStartDate,
+          endDate: endD.toISOString().split('T')[0],
+          method: pledgeRecMethod,
+          currency: txCurrency,
+          active: true,
+        });
+
+        // Generate pending transactions for future installments
+        let currentDate = new Date(pledgeRecStartDate);
+        for (let i = 0; i < installments; i++) {
+          addTransaction({
+            donorId,
+            amount: installmentAmt,
+            amountCAD: txCurrency === 'USD' ? installmentAmt * localExchangeRate : installmentAmt,
+            date: currentDate.toISOString().split('T')[0],
+            type: 'pending',
+            method: pledgeRecMethod,
+            currency: txCurrency,
+            notes: `Installment ${i + 1} of ${installments} ${notes}`,
+            pledgeId,
+          });
+
+          if (pledgeRecFrequency === 'weekly') {
+            currentDate.setDate(currentDate.getDate() + 7);
+          } else if (pledgeRecFrequency === 'monthly') {
+            currentDate.setMonth(currentDate.getMonth() + 1);
+          } else if (pledgeRecFrequency === 'quarterly') {
+            currentDate.setMonth(currentDate.getMonth() + 3);
+          } else if (pledgeRecFrequency === 'yearly') {
+            currentDate.setFullYear(currentDate.getFullYear() + 1);
+          }
+        }
+      }
+
+      setSuccess(true);
     setTimeout(onClose, 1800);
   };
 
@@ -432,6 +500,93 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
                           </option>
                         ))}
                       </select>
+                    </div>
+                  )}
+
+                  {tab === 'pledge' && (
+                    <div style={{ background: 'var(--bg-panel)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 700, margin: 0 }}>
+                        <input 
+                          type="checkbox" 
+                          checked={setupRecurringForPledge} 
+                          onChange={e => {
+                            setSetupRecurringForPledge(e.target.checked);
+                            if (e.target.checked && !pledgeScheduledAmount) setPledgeScheduledAmount(amount);
+                          }} 
+                          style={{ width: '18px', height: '18px' }}
+                        />
+                        Set up a recurring schedule for this pledge
+                      </label>
+                      
+                      {setupRecurringForPledge && (
+                        <div style={{ marginTop: '16px', display: 'grid', gap: '16px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label>Amount to Schedule</label>
+                              <div style={{ position: 'relative' }}>
+                                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontWeight: 700 }}>$</span>
+                                <input 
+                                  type="number" 
+                                  value={pledgeScheduledAmount} 
+                                  onChange={e => setPledgeScheduledAmount(e.target.value)} 
+                                  style={{ paddingLeft: '28px', fontWeight: 700 }}
+                                />
+                              </div>
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                Unscheduled Balance: ${(parseFloat(amount || '0') - parseFloat(pledgeScheduledAmount || '0')).toLocaleString()}
+                              </div>
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label>Frequency</label>
+                              <select value={pledgeRecFrequency} onChange={e => setPledgeRecFrequency(e.target.value as any)}>
+                                <option value="weekly">Weekly</option>
+                                <option value="monthly">Monthly</option>
+                                <option value="quarterly">Quarterly</option>
+                                <option value="yearly">Yearly</option>
+                              </select>
+                            </div>
+                          </div>
+                          
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label>Installments</label>
+                              <input type="number" value={pledgeRecInstallments} onChange={e => setPledgeRecInstallments(e.target.value)} />
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label>Start Date</label>
+                              <input type="date" value={pledgeRecStartDate} onChange={e => setPledgeRecStartDate(e.target.value)} />
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label>Method</label>
+                              <select value={pledgeRecMethod} onChange={e => setPledgeRecMethod(e.target.value as any)}>
+                                <option value="credit_card">Credit Card</option>
+                                <option value="check">Check</option>
+                                <option value="e_transfer">E-Transfer</option>
+                                <option value="other">Other</option>
+                              </select>
+                            </div>
+                          </div>
+                          
+                          {pledgeRecMethod === 'credit_card' && (
+                            <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px' }}>
+                              <div className="form-group" style={{ margin: '0 0 12px 0' }}>
+                                <label>Card Number</label>
+                                <input type="text" placeholder="0000 0000 0000 0000" maxLength={19} value={cardNumber} onChange={e => setCardNumber(e.target.value)} />
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                  <label>Expiry (MM/YY)</label>
+                                  <input type="text" placeholder="MM/YY" maxLength={5} value={cardExp} onChange={e => setCardExp(e.target.value)} />
+                                </div>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                  <label>CVV</label>
+                                  <input type="text" placeholder="123" maxLength={4} value={cardCvv} onChange={e => setCardCvv(e.target.value)} />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
