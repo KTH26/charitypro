@@ -27,36 +27,18 @@ export const Pledges: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 50;
 
-  // Sum of actual approved payments per donor
-  const donorPayments = useMemo(() => {
-    const map = new Map<string, number>();
-    transactions.forEach(t => {
-      if (t.type === 'approved') {
-        map.set(t.donorId, (map.get(t.donorId) || 0) + (t.amountCAD ?? t.amount));
-      }
-    });
-    return map;
-  }, [transactions]);
-
   // Calculate open balance for each pledge
   const pledgesWithBalance = useMemo(() => {
-    const sorted = [...pledges].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const remainingPayments = new Map(donorPayments);
+    const sorted = [...pledges].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    const mapped = sorted.map(p => {
+    return sorted.map(p => {
       const amount = p.amountCAD ?? p.amount;
-      const donorPaid = remainingPayments.get(p.donorId) || 0;
-      let balance = 0;
-      if (donorPaid >= amount) {
-        remainingPayments.set(p.donorId, donorPaid - amount);
-      } else {
-        balance = amount - donorPaid;
-        remainingPayments.set(p.donorId, 0);
-      }
-      return { ...p, openBalance: balance };
+      const paid = transactions
+        .filter(t => t.pledgeId === p.id && t.type === 'approved')
+        .reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
+      return { ...p, openBalance: amount - paid };
     });
-    return mapped.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [pledges, donorPayments]);
+  }, [pledges, transactions]);
 
   const years = useMemo(() => {
     const y = new Set<string>();
@@ -186,12 +168,17 @@ export const Pledges: React.FC = () => {
                       {pledge.openBalance > 0 && pledge.openBalance < (pledge.amountCAD ?? pledge.amount) && (
                         <div style={{ fontSize: '0.75rem', color: 'var(--red)', fontWeight: 600 }}>Bal: ${pledge.openBalance.toLocaleString()}</div>
                       )}
+                      {pledge.openBalance < 0 && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--green)', fontWeight: 600 }}>Credit: ${Math.abs(pledge.openBalance).toLocaleString()}</div>
+                      )}
                     </td>
                     <td style={{ fontSize: '0.9rem' }}>{pledge.category}</td>
                     <td style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{pledge.sponsor || '—'}</td>
                     <td>
                       {pledge.openBalance > 0 ? (
                         <span className="badge badge-warning">Open Balance</span>
+                      ) : pledge.openBalance < 0 ? (
+                        <span className="badge badge-success" style={{ background: 'var(--green-bg)', color: 'var(--green)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>Overpaid</span>
                       ) : (
                         <span className="badge badge-success">Paid Off</span>
                       )}
