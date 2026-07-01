@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useStore, Transaction } from '../store';
+import { useStore } from '../store';
+import type { Transaction } from '../store';
 import { X, CheckCircle2, Clock, XCircle, ArrowUpRight } from 'lucide-react';
 import { useT } from '../i18n';
 
