@@ -262,7 +262,7 @@ export const Settings: React.FC = () => {
                   </div>
                   <button 
                     className="btn" 
-                    style={{ width: '100%', padding: '12px', background: 'var(--red)', color: 'white', border: 'none', fontWeight: 600 }}
+                    style={{ width: '100%', padding: '12px', background: 'var(--red)', color: 'white', border: 'none', fontWeight: 600, marginBottom: '12px' }}
                     onClick={() => {
                       if (window.confirm('Are you ABSOLUTELY SURE you want to DELETE ALL TRANSACTIONS? This cannot be undone.')) {
                         useStore.getState().deleteAllTransactions();
@@ -272,6 +272,29 @@ export const Settings: React.FC = () => {
                     }}
                   >
                     Delete All Transactions
+                  </button>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', marginTop: '24px' }}>
+                    <div style={{ padding: '10px', background: 'var(--yellow)', borderRadius: '12px', color: 'white' }}>
+                      <AlertTriangle size={24} />
+                    </div>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontFamily: 'Outfit, sans-serif', color: 'var(--yellow)' }}>Undo Duplicate Upload</h3>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>If you accidentally uploaded the same file twice, this will automatically find and remove all exact duplicate transactions and restore your donor balances.</div>
+                    </div>
+                  </div>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ width: '100%', padding: '12px', fontWeight: 600, borderColor: 'var(--yellow)', color: 'var(--yellow)' }}
+                    onClick={() => {
+                      if (window.confirm('This will scan for and delete all exact duplicate transactions. Proceed?')) {
+                        const result = useStore.getState().removeDuplicateTransactions();
+                        alert(`Successfully removed ${result.count} duplicate transaction(s)!`);
+                        window.location.reload();
+                      }
+                    }}
+                  >
+                    Remove Duplicate Transactions
                   </button>
                 </div>
               </div>

@@ -5,7 +5,10 @@ import { useStore } from '../store';
 
 const getVal = (row: any, ...keys: string[]) => {
   if (!row) return undefined;
-  const foundKey = Object.keys(row).find(k => keys.includes(k.trim().toLowerCase()));
+  const foundKey = Object.keys(row).find(k => {
+    const norm = k.trim().toLowerCase();
+    return keys.some(key => norm.includes(key));
+  });
   return foundKey ? row[foundKey] : undefined;
 };
 

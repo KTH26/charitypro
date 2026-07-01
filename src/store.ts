@@ -281,7 +281,7 @@ interface AppState {
   editTransaction: (id: string, updates: Partial<Omit<Transaction, 'id'>>) => void;
   deleteTransactions: (ids: string[]) => void;
   deleteAllTransactions: () => void;
-
+  removeDuplicateTransactions: () => { count: number };
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
   toggleRecurring: (id: string) => void;
 
@@ -649,6 +649,61 @@ export const useStore = create<AppState>()(
         const resetDonors = state.donors.map(d => ({ ...d, totalGiven: 0 }));
         return { transactions: pledges, donors: resetDonors };
       }),
+
+      removeDuplicateTransactions: () => {
+        let countRemoved = 0;
+        set(state => {
+          const seen = new Set<string>();
+          const toDelete = new Set<string>();
+          
+          for (const tx of state.transactions) {
+            // Include category and method to be safe
+            const hash = `${tx.donorId}-${tx.amount}-${tx.date}-${tx.type}-${tx.method}-${tx.currency}-${tx.category || ''}`;
+            if (seen.has(hash)) {
+              toDelete.add(tx.id);
+            } else {
+              seen.add(hash);
+            }
+          }
+
+          if (toDelete.size === 0) return state;
+
+          const updatedTxs = state.transactions.filter(t => !toDelete.has(t.id));
+          
+          const donorUpdates = new Map<string, { totalGiven: number, balanceOwed: number }>();
+          const accountUpdates = new Map<string, number>();
+
+          for (const tx of state.transactions) {
+            if (toDelete.has(tx.id)) {
+               countRemoved++;
+               const effectiveAmount = tx.amountCAD ?? tx.amount;
+               const dUpdate = donorUpdates.get(tx.donorId) || { totalGiven: 0, balanceOwed: 0 };
+               if (tx.type === 'approved') dUpdate.totalGiven -= effectiveAmount;
+               if (tx.type === 'recording') dUpdate.balanceOwed -= effectiveAmount;
+               donorUpdates.set(tx.donorId, dUpdate);
+
+               if (tx.type === 'approved') {
+                 if (tx.sourceAccountId) accountUpdates.set(tx.sourceAccountId, (accountUpdates.get(tx.sourceAccountId) || 0) - tx.amount);
+                 if (tx.offsetAccountId) accountUpdates.set(tx.offsetAccountId, (accountUpdates.get(tx.offsetAccountId) || 0) - tx.amount);
+               }
+            }
+          }
+
+          const updatedDonors = state.donors.map(d => {
+            if (!donorUpdates.has(d.id)) return d;
+            const u = donorUpdates.get(d.id)!;
+            return { ...d, totalGiven: d.totalGiven + u.totalGiven, balanceOwed: Math.max(0, d.balanceOwed + u.balanceOwed) };
+          });
+          
+          const updatedAccounts = state.accounts.map(a => {
+            if (!accountUpdates.has(a.id)) return a;
+            return { ...a, balance: a.balance + accountUpdates.get(a.id)! };
+          });
+
+          return { transactions: updatedTxs, donors: updatedDonors, accounts: updatedAccounts };
+        });
+        return { count: countRemoved };
+      },
 
       addRecurring: (rec) => set((state) => ({
         recurringPayments: [...state.recurringPayments, { ...rec, id: uid() }]
