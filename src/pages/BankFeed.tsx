@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useStore } from '../store';
+import { useStore, UNDEPOSITED_FUNDS_ID } from '../store';
 import { Building, Send, Check, Link as LinkIcon, RefreshCw, X, Plus, Trash2 } from 'lucide-react';
 import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
@@ -624,7 +624,8 @@ export const BankFeed: React.FC = () => {
                       </thead>
                       <tbody>
                         {transactions
-                          .filter(t => !t.isBatch && !t.batchTransactionId && t.type === 'approved')
+                          // Only show undeposited transactions (CC, eTransfer, check not yet matched)
+                          .filter(t => t.depositStatus === 'undeposited' && !t.batchTransactionId && t.type === 'approved')
                           .filter(t => {
                             if (batchMethodFilter && t.method !== batchMethodFilter) return false;
                             if (batchDateFrom && t.date < batchDateFrom) return false;

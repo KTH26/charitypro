@@ -79,6 +79,10 @@ export interface Transaction {
   type: 'approved' | 'pending' | 'declined';
   method: 'credit_card' | 'check' | 'cash' | 'e_transfer' | 'vouchers' | 'eizer' | 'bnei_leivy' | 'other';
   currency: 'CAD' | 'USD';
+  // 'direct'      = cash, hits bank account immediately
+  // 'undeposited' = all other methods, waits for bank feed batch match
+  // 'deposited'   = has been matched in bank feed, balance already applied
+  depositStatus?: 'direct' | 'undeposited' | 'deposited';
   sourceAccountId?: string; // e.g. Bank Account (Asset)
   offsetAccountId?: string; // e.g. Category/Fundraiser Payroll (Revenue/Expense)
   fundraiserId?: string;
@@ -361,6 +365,12 @@ const mockTasks: Task[] = [
 let nextId = 200;
 const uid = () => String(++nextId);
 
+// System-reserved account ID for Undeposited Funds
+export const UNDEPOSITED_FUNDS_ID = 'sys-undeposited-funds';
+
+// Methods that go to Undeposited Funds instead of hitting the bank directly
+const UNDEPOSITED_METHODS = new Set(['credit_card', 'e_transfer', 'check']);
+
 const LOCAL_KEY = 'charity-store';
 
 /**
@@ -448,7 +458,16 @@ export const useStore = create<AppState>()(
       pledges: [],
       recurringPayments: [],
       fundraisers: [],
-      accounts: [],
+      accounts: [
+        {
+          id: UNDEPOSITED_FUNDS_ID,
+          name: 'Undeposited Funds',
+          currency: 'CAD' as const,
+          balance: 0,
+          type: 'asset' as const,
+          subType: 'general' as const,
+        }
+      ],
       bills: [],
       tasks: mockTasks,
       accountTransfers: [],
@@ -538,29 +557,33 @@ export const useStore = create<AppState>()(
       }),
 
       addTransaction: (tx) => set((state) => {
-        const today = new Date().toISOString().split('T')[0];
-        const type = (tx.date > today) ? 'recording' : tx.type;
-        const newTx = { ...tx, type, id: uid() };
+        const goesToUndeposited = UNDEPOSITED_METHODS.has(tx.method);
+        const depositStatus = goesToUndeposited ? 'undeposited' : 'direct';
+        // For undeposited methods: route sourceAccount to Undeposited Funds
+        const effectiveSourceId = goesToUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
+        const newTx = { ...tx, id: uid(), depositStatus, sourceAccountId: effectiveSourceId };
         const effectiveAmount = tx.amountCAD ?? tx.amount;
+
+        // Donor totalGiven updates immediately for all approved transactions
         const updatedDonors = state.donors.map(d => {
           if (d.id !== tx.donorId) return d;
-          if (type === 'approved') return { ...d, totalGiven: d.totalGiven + effectiveAmount };
-          if (type === 'recording') return { ...d, balanceOwed: d.balanceOwed + effectiveAmount };
+          if (tx.type === 'approved') return { ...d, totalGiven: d.totalGiven + effectiveAmount };
           return d;
         });
 
+        // Always update the source account (Undeposited Funds for CC/eTransfer/check, real account for others)
         let updatedAccounts = state.accounts;
-        if (type === 'approved') {
+        if (tx.type === 'approved') {
           updatedAccounts = updatedAccounts.map(a => {
             let newBalance = a.balance;
             const amountToAdd = (a.currency === 'CAD' && tx.currency === 'USD') ? effectiveAmount : tx.amount;
-            if (a.id === tx.sourceAccountId) newBalance += amountToAdd;
+            if (a.id === effectiveSourceId) newBalance += amountToAdd;
             if (a.id === tx.offsetAccountId) newBalance += amountToAdd;
             return { ...a, balance: newBalance };
           });
         }
 
-        const updatedFundraisers = tx.fundraiserId && type === 'approved'
+        const updatedFundraisers = tx.fundraiserId && tx.type === 'approved'
           ? state.fundraisers.map(f => f.id === tx.fundraiserId
               ? { ...f, balanceOwed: f.balanceOwed + (tx.amount * f.percentage / 100) }
               : f)
@@ -571,7 +594,15 @@ export const useStore = create<AppState>()(
 
       bulkAddTransactions: (txs) => set((state) => {
         const newTxs = txs.map(tx => {
-          return { ...tx, id: uid(), invoiceSaved: false };
+          const goesToUndeposited = UNDEPOSITED_METHODS.has(tx.method);
+          const effectiveSourceId = goesToUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
+          return {
+            ...tx,
+            id: uid(),
+            invoiceSaved: false,
+            depositStatus: goesToUndeposited ? 'undeposited' : 'direct',
+            sourceAccountId: effectiveSourceId,
+          };
         });
         
         let updatedDonors = [...state.donors];
@@ -593,10 +624,8 @@ export const useStore = create<AppState>()(
           donorUpdates.set(tx.donorId, dUpdate);
 
           // Accumulate account updates
+          // source account (Undeposited Funds for CC/eTransfer/check, real account for direct)
           if (tx.type === 'approved') {
-            const amountToAdd = tx.amount; // Simplify since this is batch processing. (The original code had a bug where it just checked if a.currency === CAD and tx.currency === USD, but in bulk it's better to just add).
-            // Actually, wait, let's keep exact same logic as original
-            
             if (tx.sourceAccountId) {
               const acc = updatedAccounts.find(a => a.id === tx.sourceAccountId);
               if (acc) {
@@ -604,6 +633,7 @@ export const useStore = create<AppState>()(
                 accountUpdates.set(tx.sourceAccountId, (accountUpdates.get(tx.sourceAccountId) || 0) + add);
               }
             }
+            // Revenue/offset account always updates immediately
             if (tx.offsetAccountId) {
               const acc = updatedAccounts.find(a => a.id === tx.offsetAccountId);
               if (acc) {
@@ -1140,10 +1170,10 @@ export const useStore = create<AppState>()(
       addBatchDeposit: (bankFeedId, internalTxIds, accountId, totalAmount, date, desc) => set(state => {
         const batchId = uid();
         
-        // 1. Create the master batch transaction
+        // 1. Create the master batch transaction (the real bank deposit)
         const masterTx: Transaction = {
           id: batchId,
-          donorId: 'batch', // generic ID for batches
+          donorId: 'batch',
           amount: totalAmount,
           date,
           type: 'approved',
@@ -1153,37 +1183,31 @@ export const useStore = create<AppState>()(
           notes: desc,
           isBatch: true,
           bankTransactionId: bankFeedId,
+          depositStatus: 'deposited',
         };
 
-        // 2. Update individual transactions
+        // 2. Mark individual transactions as deposited, keep their original sourceAccountId
         const updatedTxs = state.transactions.map(tx => {
           if (internalTxIds.includes(tx.id)) {
-            return {
-              ...tx,
-              sourceAccountId: undefined, // Remove from bank ledger
-              batchTransactionId: batchId
-            };
+            return { ...tx, batchTransactionId: batchId, depositStatus: 'deposited' as const };
           }
           return tx;
         });
 
-        // 3. Update account balances (we subtract the original sourceAccountId and add to the new one)
-        // Note: For a robust system we should completely recalculate balances, but here we just add the totalAmount to the accountId
+        // 3. Move money: deduct from Undeposited Funds, add to real bank account
+        const depositsTotal = internalTxIds.reduce((sum, id) => {
+          const t = state.transactions.find(x => x.id === id);
+          return sum + (t ? (t.amountCAD ?? t.amount) : 0);
+        }, 0);
+
         const updatedAccounts = state.accounts.map(a => {
           if (a.id === accountId) {
+            // Add deposit amount to the real bank account
             return { ...a, balance: a.balance + totalAmount };
           }
-          // We also ideally should deduct from whatever sourceAccountId the individual txs had, if any.
-          // For simplicity and speed, we will assume they were mostly undeposited/cleared.
-          let balanceDeduction = 0;
-          internalTxIds.forEach(id => {
-             const t = state.transactions.find(x => x.id === id);
-             if (t && t.sourceAccountId === a.id) {
-               balanceDeduction += t.amount;
-             }
-          });
-          if (balanceDeduction > 0) {
-            return { ...a, balance: a.balance - balanceDeduction };
+          if (a.id === UNDEPOSITED_FUNDS_ID) {
+            // Deduct the matched transactions from Undeposited Funds
+            return { ...a, balance: Math.max(0, a.balance - depositsTotal) };
           }
           return a;
         });
