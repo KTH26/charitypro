@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { Building, Send, Check, Link as LinkIcon, RefreshCw, X, Plus, Trash2 } from 'lucide-react';
 import { useT } from '../i18n';
 import { usePlaidLink } from 'react-plaid-link';
+import { AddAccountModal } from '../components/AddAccountModal';
 
 export const BankFeed: React.FC = () => {
   const { accounts, addAccount, isRtl, matchedBankTransactions, needsReviewBankTransactions, matchBankTransaction, markBankTransactionForReview, unmarkBankTransactionForReview, addBill, markBillPaid, addTransaction, bankFeeds, setBankFeed, transferBetweenAccounts, bills, vendors, addVendor, employees, payPayrollEntity, transactions, addBatchDeposit, donors, unmatchBankTransaction } = useStore();
@@ -18,12 +19,13 @@ export const BankFeed: React.FC = () => {
   const [matchType, setMatchType] = useState<'expense' | 'deposit' | 'transfer' | 'payroll' | 'match_multiple'>('expense');
   const [matchCategory, setMatchCategory] = useState('');
   const [matchEntity, setMatchEntity] = useState(''); // Vendor or Donor name
-  const [newVendorFund, setNewVendorFund] = useState('Canadian WFW'); // Tracking fund for new vendors
-  const [selectedTab, setSelectedTab] = useState<'unmatched' | 'review' | 'matched'>('unmatched');
+  const [newVendorFund, setNewVendorFund] = useState('General');
   const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
   const [batchSearchTerm, setBatchSearchTerm] = useState('');
   const [batchDateFrom, setBatchDateFrom] = useState('');
   const [batchDateTo, setBatchDateTo] = useState('');
+  
+  const [showAddAccount, setShowAddAccount] = useState(false);
   const [batchMethodFilter, setBatchMethodFilter] = useState('credit_card');
 
   // Ensure selectedBank is valid
@@ -529,7 +531,27 @@ export const BankFeed: React.FC = () => {
               {matchType !== 'transfer' && matchType !== 'payroll' && matchType !== 'match_multiple' && (
                 <div className="form-group">
                   <label>Category / Fund</label>
-                  <input type="text" placeholder="e.g. Office Supplies, General Fund" value={matchCategory} onChange={e => setMatchCategory(e.target.value)} />
+                  {matchType === 'expense' ? (
+                    <select 
+                      value={matchCategory} 
+                      onChange={e => {
+                        if (e.target.value === 'ADD_NEW') {
+                          setShowAddAccount(true);
+                        } else {
+                          setMatchCategory(e.target.value);
+                        }
+                      }}
+                      required
+                    >
+                      <option value="">— Select Expense Category —</option>
+                      {accounts.filter(a => a.type === 'expense').map(a => (
+                        <option key={a.id} value={a.name}>{a.name}</option>
+                      ))}
+                      <option value="ADD_NEW">+ Add New Category</option>
+                    </select>
+                  ) : (
+                    <input type="text" placeholder="e.g. Office Supplies, General Fund" value={matchCategory} onChange={e => setMatchCategory(e.target.value)} />
+                  )}
                 </div>
               )}
 
@@ -642,6 +664,13 @@ export const BankFeed: React.FC = () => {
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .spin { animation: spin 1s linear infinite; }
       `}</style>
+      {showAddAccount && (
+        <AddAccountModal 
+          onClose={() => setShowAddAccount(false)}
+          defaultType="expense"
+        />
+      )}
+
     </div>
   );
 };
