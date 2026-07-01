@@ -741,7 +741,8 @@ export const useStore = create<AppState>()(
 
       deleteAllTransactions: () => set(state => {
         const resetDonors = state.donors.map(d => ({ ...d, totalGiven: 0 }));
-        return { transactions: [], donors: resetDonors };
+        const resetAccounts = state.accounts.map(a => ({ ...a, balance: 0 }));
+        return { transactions: [], donors: resetDonors, accounts: resetAccounts };
       }),
 
       addPledge: (pledge) => set(state => ({
