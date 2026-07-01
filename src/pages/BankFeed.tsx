@@ -20,6 +20,7 @@ export const BankFeed: React.FC = () => {
   const [matchCategory, setMatchCategory] = useState('');
   const [matchEntity, setMatchEntity] = useState(''); // Vendor or Donor name
   const [newVendorFund, setNewVendorFund] = useState('General');
+  const [selectedTab, setSelectedTab] = useState<'unmatched' | 'review' | 'matched'>('unmatched');
   const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
   const [batchSearchTerm, setBatchSearchTerm] = useState('');
   const [batchDateFrom, setBatchDateFrom] = useState('');
