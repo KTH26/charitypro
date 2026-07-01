@@ -309,6 +309,7 @@ interface AppState {
   deleteAllPledges: () => void;
 
   addRecurring: (rec: Omit<RecurringPayment, 'id'>) => void;
+  bulkAddRecurring: (recs: Omit<RecurringPayment, 'id'>[]) => void;
   toggleRecurring: (id: string) => void;
 
   addFundraiser: (f: Omit<Fundraiser, 'id' | 'balanceOwed'>) => void;
@@ -833,6 +834,10 @@ export const useStore = create<AppState>()(
         recurringPayments: [...state.recurringPayments, { ...rec, id: uid() }]
       })),
 
+      bulkAddRecurring: (recs) => set((state) => ({
+        recurringPayments: [...state.recurringPayments, ...recs.map(r => ({ ...r, id: uid() }))]
+      })),
+
       toggleRecurring: (id) => set((state) => ({
         recurringPayments: state.recurringPayments.map(r => r.id === id ? { ...r, active: !r.active } : r)
       })),
@@ -1289,7 +1294,7 @@ const methodsToWrap = [
   'bulkUpsertDonors',
   'addTransaction', 'bulkAddTransactions', 'updateTransaction', 'editTransaction', 'deleteTransactions', 'deleteAllTransactions',
   'addPledge', 'bulkAddPledges', 'editPledge', 'deletePledges', 'deleteAllPledges',
-  'addRecurring', 'toggleRecurring',
+  'addRecurring', 'bulkAddRecurring', 'toggleRecurring',
   'addFundraiser', 'payOutFundraiser', 'chargeToFundraiser',
   'addAccount', 'editAccount', 'deleteAccount', 'transferBetweenAccounts',
   'addBill', 'editBill', 'markBillPaid', 'deleteBills',

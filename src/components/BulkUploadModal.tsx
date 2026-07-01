@@ -349,8 +349,8 @@ export const BulkUploadModal: React.FC<Props> = ({ onClose }) => {
       }
       
       if (recurringToAdd.length > 0) {
-        const { addRecurring } = useStore.getState();
-        recurringToAdd.forEach(r => addRecurring(r));
+        const { bulkAddRecurring } = useStore.getState();
+        bulkAddRecurring(recurringToAdd);
       }
 
       setStep('success');
