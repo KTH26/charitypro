@@ -580,14 +580,16 @@ app.get('/debug/sample-tx', async (c) => {
   return c.json(res);
 });
 
-app.get('/debug/pull-test', async (c) => {
+app.get('/debug/super-fix', async (c) => {
   try {
-    const changes = await c.env.DB.prepare(
-      'SELECT change_id, type FROM sync_changes ORDER BY change_id ASC LIMIT 5'
-    ).all();
-    return c.json({ success: true, changes: changes.results });
+    await c.env.DB.prepare(
+      "UPDATE sync_changes SET change_id = 'mig-' || substr('0000000000' || rowid, -10, 10)"
+    ).run();
+    const count = await c.env.DB.prepare('SELECT count(*) as c FROM sync_changes').first();
+    const sample = await c.env.DB.prepare('SELECT change_id FROM sync_changes LIMIT 5').all();
+    return c.json({ success: true, count: count?.c, sample: sample.results });
   } catch (e: any) {
-    return c.json({ success: false, error: e.message || e.toString() });
+    return c.json({ success: false, error: e.message });
   }
 });
 
