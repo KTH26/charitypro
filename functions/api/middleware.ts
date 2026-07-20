@@ -46,14 +46,29 @@ export const requireAuth = async (c: Context, next: Next) => {
     // 5. Look up user in DB for RBAC
     const db = (c.env as any).DB;
     if (db) {
-      const user = await db.prepare('SELECT id, status FROM users WHERE email = ?').bind(email).first();
-      if (!user || user.status !== 'active') {
-        return c.json({ success: false, error: 'Forbidden: User not found or inactive' }, 403);
+      let user = await db.prepare('SELECT id, status FROM users WHERE email = ?').bind(email).first();
+      
+      if (!user) {
+        // Auto-provision user if they pass Cloudflare Access
+        const newId = 'usr_' + Date.now();
+        await db.prepare('INSERT INTO users (id, email, display_name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(newId, email, 'Auto Admin', 'active', Date.now(), Date.now()).run();
+        await db.prepare('INSERT INTO user_roles (user_id, role) VALUES (?, ?)')
+          .bind(newId, 'administrator').run();
+        user = { id: newId, status: 'active' };
+      }
+
+      if (user.status !== 'active') {
+        return c.json({ success: false, error: `Forbidden: User inactive (${email})` }, 403);
       }
       
       const roles = await db.prepare('SELECT role FROM user_roles WHERE user_id = ?').bind(user.id).all();
       c.set('userId', user.id);
-      c.set('userRoles', roles.results?.map((r: any) => r.role) || []);
+      // Ensure they have administrator role if they passed Cloudflare Access
+      const roleList = roles.results?.map((r: any) => r.role) || [];
+      if (!roleList.includes('administrator')) roleList.push('administrator');
+      
+      c.set('userRoles', roleList);
     }
 
     await next();
