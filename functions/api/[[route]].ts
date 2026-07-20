@@ -570,4 +570,9 @@ app.get('/debug/users', async (c) => {
   return c.json(users.results);
 });
 
+app.get('/debug/types2', async (c) => {
+  const res = await c.env.DB.prepare('SELECT type, COUNT(*) as count FROM sync_records GROUP BY type').all();
+  return c.json(res.results);
+});
+
 export const onRequest = handle(app)
