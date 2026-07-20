@@ -205,7 +205,11 @@ export const SyncEngineHardened: React.FC = () => {
             
           } else if (SINGLETON_KEYS.includes(recordType)) {
             if (operation !== 'delete') {
-              stateUpdates[type] = JSON.parse(payload);
+              try {
+                stateUpdates[type] = JSON.parse(payload);
+              } catch (e) {
+                console.error(`Failed to parse singleton ${recordType}:`, e);
+              }
             }
           }
         }
