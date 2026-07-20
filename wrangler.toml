@@ -10,6 +10,10 @@ database_id = "210266c7-283d-4410-b4b3-33ad43d2131e"
 
 # STAGING ENVIRONMENT (Phase 1)
 [env.preview]
+[env.preview.vars]
+CF_ACCESS_ISSUER = "https://gentle-forest-7be4.cloudflareaccess.com"
+CF_ACCESS_AUDIENCE = "90007633ab3ca91383397a3ca3987ec0f228a4ff7f44216acdc1df53036970a2"
+
 [[env.preview.d1_databases]]
 binding = "DB"
 database_name = "charity-db-staging"
