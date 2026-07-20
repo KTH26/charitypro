@@ -52,7 +52,7 @@ const cloneState = (state: AppState) => {
 };
 
 export const SyncEngineHardened: React.FC = () => {
-  const [syncStatus, setSyncStatus] = useState<'initializing' | 'offline' | 'online' | 'conflict' | 'error'>('initializing');
+  const [syncStatus, setSyncStatus] = useState<'initializing' | 'offline' | 'online' | 'conflict' | 'error' | 'syncing'>('initializing');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -104,7 +104,7 @@ export const SyncEngineHardened: React.FC = () => {
       } catch (e: any) {
         console.error('Initial sync failed', e);
         alert(`SYNC CRASHED: ${e.message || e}`);
-        useStore.setState({ syncStatus: 'error' });
+        setSyncStatus('error');
         setErrorMsg('Failed to connect to the server.');
       } finally {
         setIsInitialSync(false);
