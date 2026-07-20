@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
 import type { Context, Next } from 'hono';
 
 // Cache the JWKS mapping by issuer domain
@@ -16,7 +16,18 @@ export const requireAuth = async (c: Context, next: Next) => {
     const audience = (c.env as any).CF_ACCESS_AUDIENCE;
 
     if (!issuer || !audience) {
-       return c.json({ success: false, error: 'Internal Server Error: Missing Cloudflare Access configuration' }, 500);
+       let configurationHint: { issuer?: string, audience?: string | string[] } | undefined;
+       try {
+         const unverified = decodeJwt(jwt);
+         configurationHint = { issuer: unverified.iss, audience: unverified.aud };
+       } catch {
+         // The normal verification path below remains mandatory once configured.
+       }
+       return c.json({
+         success: false,
+         error: 'Internal Server Error: Missing Cloudflare Access configuration',
+         configurationHint
+       }, 500);
     }
 
     // 2. Fetch or retrieve cached JWKS for this issuer
