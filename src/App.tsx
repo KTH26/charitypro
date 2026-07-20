@@ -27,8 +27,7 @@ import { SolaSync } from './pages/SolaSync';
 import { Payroll } from './pages/Payroll';
 
 import { SyncEngineHardened } from './components/SyncEngineHardened';
-
-const SYNC_ENGINE_VERSION = import.meta.env.VITE_SYNC_ENGINE_VERSION ?? 'v2_current';
+const SYNC_ENGINE_VERSION = import.meta.env.VITE_SYNC_ENGINE_VERSION ?? 'v2_hardened';
 
 function App() {
   const [hasHydrated, setHasHydrated] = useState(false);
