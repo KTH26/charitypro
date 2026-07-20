@@ -147,9 +147,15 @@ export const SyncEngineHardened: React.FC = () => {
     let totalDownloaded = 0;
     
     while (hasMore) {
-      const res = await fetch(`/api/sync2/hardened/pull?after=${currentCursor}&limit=500`);
-      if (!res.ok) throw new Error('Pull failed');
+      const res = await fetch(`/api/sync2/hardened/pull?after=${encodeURIComponent(currentCursor)}&limit=500`);
+      if (!res.ok) throw new Error(`Pull failed with status ${res.status}`);
       
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        const text = await res.text();
+        throw new Error(`Server returned HTML instead of JSON! HTML snippet: ${text.substring(0, 100)}`);
+      }
+
       const data = await res.json();
       const changes = data.changes || [];
       
