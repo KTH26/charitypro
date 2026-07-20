@@ -378,17 +378,16 @@ app.post('/sync2/hardened/push', async (c) => {
     const results: any[] = [];
     const serverTime = Date.now();
     
+    // Check if entire mutation is already processed (Idempotency)
+    const existingMut = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id = ?').bind(mutation_id).first();
+    if (existingMut && existingMut.result_json) {
+      return c.json({ success: true, results: JSON.parse(existingMut.result_json as string) });
+    }
+
     for (const op of operations) {
       const opId = op.operationId;
       if (!opId) {
         results.push({ status: 'invalid', error: 'Missing operationId' });
-        continue;
-      }
-
-      // Check if already processed (Idempotency)
-      const existing = await c.env.DB.prepare('SELECT result_json FROM processed_operations WHERE operation_id = ?').bind(opId).first();
-      if (existing && existing.result_json) {
-        results.push(JSON.parse(existing.result_json as string));
         continue;
       }
 
@@ -421,63 +420,46 @@ app.post('/sync2/hardened/push', async (c) => {
           nextRev = op.baseRevision + 1;
           stmts.push(c.env.DB.prepare(`
               UPDATE sync_records 
-              SET is_deleted = 1, revision = revision + 1, last_operation_id = ?, updated_at = ?
+              SET is_deleted = 1, revision = revision + 1, updated_at = ?
               WHERE id = ? AND revision = ? AND is_deleted = 0
-          `).bind(opId, serverTime, op.id, op.baseRevision));
+          `).bind(serverTime, op.id, op.baseRevision));
       } else if (op.operation === 'restore') {
           nextRev = op.baseRevision + 1;
           stmts.push(c.env.DB.prepare(`
               UPDATE sync_records 
-              SET is_deleted = 0, data = ?, revision = revision + 1, last_operation_id = ?, updated_at = ?
+              SET is_deleted = 0, data = ?, revision = revision + 1, updated_at = ?
               WHERE id = ? AND revision = ? AND is_deleted = 1
-          `).bind(JSON.stringify(op.data || {}), opId, serverTime, op.id, op.baseRevision));
+          `).bind(JSON.stringify(op.data || {}), serverTime, op.id, op.baseRevision));
       } else if (op.operation === 'insert' && op.baseRevision === 0) {
           stmts.push(c.env.DB.prepare(`
-              INSERT INTO sync_records (id, type, data, updated_at, revision, is_deleted, last_operation_id)
-              VALUES (?, ?, ?, ?, 1, 0, ?)
-          `).bind(op.id, op.type, JSON.stringify(op.data), serverTime, opId));
+              INSERT INTO sync_records (id, type, data, updated_at, revision, is_deleted)
+              VALUES (?, ?, ?, ?, 1, 0)
+          `).bind(op.id, op.type, JSON.stringify(op.data), serverTime));
       } else { 
           nextRev = op.baseRevision + 1;
           stmts.push(c.env.DB.prepare(`
               UPDATE sync_records
-              SET data = ?, revision = revision + 1, last_operation_id = ?, updated_at = ?
+              SET data = ?, revision = revision + 1, updated_at = ?
               WHERE id = ? AND revision = ? AND is_deleted = 0
-          `).bind(JSON.stringify(op.data), opId, serverTime, op.id, op.baseRevision));
+          `).bind(JSON.stringify(op.data), serverTime, op.id, op.baseRevision));
       }
 
       const dataStr = op.operation === 'delete' ? '{}' : JSON.stringify(op.data || {});
+      const changeId = 'chg_' + serverTime + '_' + opId;
 
       stmts.push(c.env.DB.prepare(`
-          INSERT INTO sync_changes (record_id, type, revision, operation, data, changed_at, mutation_id, operation_id)
-          SELECT id, type, revision, ?, data, updated_at, ?, ?
-          FROM sync_records WHERE id = ? AND revision = ? AND last_operation_id = ?
-      `).bind(op.operation, mutation_id, opId, op.id, nextRev, opId));
+          INSERT INTO sync_changes (change_id, record_id, type, revision, operation, data, changed_at)
+          SELECT ?, id, type, revision, ?, data, updated_at
+          FROM sync_records WHERE id = ? AND revision = ?
+      `).bind(changeId, op.operation, op.id, nextRev));
 
       stmts.push(c.env.DB.prepare(`
-          INSERT INTO audit_log (record_id, record_type, action, old_revision, new_revision, old_data, new_data, changed_by_user_id, changed_by_email, changed_at, mutation_id, operation_id)
-          SELECT id, type, ?, ?, revision, '', data, ?, ?, updated_at, ?, ?
-          FROM sync_records WHERE id = ? AND revision = ? AND last_operation_id = ?
-      `).bind(op.operation, op.baseRevision, userId, userEmail, mutation_id, opId, op.id, nextRev, opId));
+          INSERT INTO audit_log (record_id, record_type, action, old_revision, new_revision, old_data, new_data, changed_by_user_id, changed_by_email, changed_at, mutation_id, request_id, reason)
+          SELECT id, type, ?, ?, revision, '', data, ?, ?, updated_at, ?, ?, ?
+          FROM sync_records WHERE id = ? AND revision = ?
+      `).bind(op.operation, op.baseRevision, userId, userEmail, mutation_id, opId, op.reason || '', op.id, nextRev));
 
       const successResult = { status: 'accepted', operationId: opId, recordId: op.id, revision: nextRev };
-
-      stmts.push(c.env.DB.prepare(`
-          INSERT INTO processed_operations (operation_id, mutation_id, result_json, processed_at)
-          SELECT ?, ?, ?, ?
-          FROM sync_records WHERE id = ? AND revision = ? AND last_operation_id = ?
-      `).bind(opId, mutation_id, JSON.stringify(successResult), serverTime, op.id, nextRev, opId));
-
-      stmts.push(c.env.DB.prepare(`
-          INSERT INTO sync_batch_assertions (id, assertion_value)
-          SELECT ?, CASE WHEN 
-            (SELECT 1 FROM sync_records WHERE id = ? AND revision = ? AND last_operation_id = ?) = 1 AND
-            (SELECT 1 FROM sync_changes WHERE record_id = ? AND revision = ? AND operation_id = ?) = 1 AND
-            (SELECT 1 FROM audit_log WHERE record_id = ? AND new_revision = ? AND operation_id = ?) = 1 AND
-            (SELECT 1 FROM processed_operations WHERE operation_id = ?) = 1
-          THEN 1 ELSE 0 END
-      `).bind(opId, op.id, nextRev, opId, op.id, nextRev, opId, op.id, nextRev, opId, opId));
-
-      stmts.push(c.env.DB.prepare(`DELETE FROM sync_batch_assertions WHERE id = ?`).bind(opId));
 
       try {
         await c.env.DB.batch(stmts);
@@ -499,10 +481,6 @@ app.post('/sync2/hardened/push', async (c) => {
               serverIsDeleted: current ? (current.is_deleted === 1) : true,
               detectedAt: serverTime
            };
-           
-           await c.env.DB.prepare('INSERT INTO processed_operations (operation_id, mutation_id, result_json, processed_at) VALUES (?, ?, ?, ?) ON CONFLICT(operation_id) DO NOTHING')
-              .bind(opId, mutation_id, JSON.stringify(conflictPayload), serverTime).run();
-              
            results.push(conflictPayload);
         } else {
            results.push({ status: 'integrity_error', operationId: opId, error: err.message });
@@ -510,6 +488,10 @@ app.post('/sync2/hardened/push', async (c) => {
       }
     }
     
+    // Save mutation idempotency
+    await c.env.DB.prepare('INSERT INTO processed_mutations (mutation_id, result_json, server_time) VALUES (?, ?, ?) ON CONFLICT(mutation_id) DO NOTHING')
+        .bind(mutation_id, JSON.stringify(results), serverTime).run();
+
     return c.json({ success: true, results });
     
   } catch (e: any) {
