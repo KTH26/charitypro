@@ -524,4 +524,25 @@ app.get('/sync2/hardened/audit', async (c) => {
   return c.json({ success: true, logs: logs.results || [] });
 });
 
+app.get('/debug/count', async (c) => {
+  const records = await c.env.DB.prepare('SELECT count(*) as c FROM sync_records').first();
+  const changes = await c.env.DB.prepare('SELECT count(*) as c FROM sync_changes').first();
+  return c.json({ records: records?.c, changes: changes?.c });
+});
+
+app.get('/debug/fix-sync-changes', async (c) => {
+  try {
+    await c.env.DB.prepare('DELETE FROM sync_changes').run();
+    await c.env.DB.prepare(`
+      INSERT INTO sync_changes (record_id, type, revision, operation, data, changed_at, mutation_id, operation_id)
+      SELECT id, type, revision, CASE WHEN is_deleted = 1 THEN 'delete' ELSE 'snapshot' END, data, updated_at, 'migration_v2', 'snapshot_' || id
+      FROM sync_records
+    `).run();
+    const changes = await c.env.DB.prepare('SELECT count(*) as c FROM sync_changes').first();
+    return c.json({ success: true, newCount: changes?.c });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message });
+  }
+});
+
 export const onRequest = handle(app)
