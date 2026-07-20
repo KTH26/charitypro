@@ -550,4 +550,19 @@ app.get('/debug/types', async (c) => {
   return c.json({ types: types.results });
 });
 
+app.get('/debug/invalid', async (c) => {
+  const changes = await c.env.DB.prepare('SELECT change_id, type, data FROM sync_changes').all();
+  let invalidCount = 0;
+  let firstInvalid = null;
+  for (const row of changes.results) {
+    try {
+      JSON.parse(row.data as string);
+    } catch (e) {
+      invalidCount++;
+      if (!firstInvalid) firstInvalid = row;
+    }
+  }
+  return c.json({ invalidCount, firstInvalid });
+});
+
 export const onRequest = handle(app)
