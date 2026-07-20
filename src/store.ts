@@ -696,7 +696,7 @@ export const useStore = create<AppState>()(
           const isUndeposited = tx.sourceAccountId === UNDEPOSITED_FUNDS_ID || tx.depositStatus === 'undeposited';
         const depositStatus = isUndeposited ? 'undeposited' as const : 'direct' as const;
         const effectiveSourceId = isUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
-        const newTx = { ...tx, id: uid(), depositStatus, sourceAccountId: effectiveSourceId };
+        const newTx = { ...tx, id: (tx as any).id || uid(), depositStatus, sourceAccountId: effectiveSourceId };
         const effectiveAmount = tx.amountCAD ?? tx.amount;
 
         // Donor totalGiven updates immediately for all approved transactions
@@ -751,7 +751,7 @@ export const useStore = create<AppState>()(
           const effectiveSourceId = isUndeposited ? UNDEPOSITED_FUNDS_ID : tx.sourceAccountId;
           return {
             ...tx,
-            id: uid(),
+            id: (tx as any).id || uid(),
             invoiceSaved: false,
             depositStatus: isUndeposited ? 'undeposited' as const : 'direct' as const,
             sourceAccountId: effectiveSourceId,
@@ -1981,8 +1981,14 @@ methodsToWrap.forEach(method => {
     const original = storeState[method];
     overrides[method] = (...args: any[]) => {
       if (!isRemote.current) {
+        // Auto-generate IDs for single 'add' methods if missing so the event matches the local state
+        if (method.startsWith('add') && args[0] && typeof args[0] === 'object' && !args[0].id) {
+            args[0].id = require('./store').uid();
+        }
+
         if (method === 'bulkAddTransactions' && Array.isArray(args[0])) {
           const txs = args[0];
+          txs.forEach((tx: any) => { if (!tx.id) tx.id = require('./store').uid(); });
           for (let i = 0; i < txs.length; i += 500) {
             pushEvent('bulkAddTransactions', [txs.slice(i, i + 500)]);
           }

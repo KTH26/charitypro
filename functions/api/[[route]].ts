@@ -583,4 +583,9 @@ app.get('/debug/super-fix', async (c) => {
   }
 });
 
+app.get('/debug/last-mutation', async (c) => {
+  const res = await c.env.DB.prepare("SELECT * FROM processed_mutations ORDER BY server_time DESC LIMIT 5").all();
+  return c.json(res);
+});
+
 export const onRequest = handle(app)
