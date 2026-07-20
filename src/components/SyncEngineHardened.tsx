@@ -170,19 +170,30 @@ export const SyncEngineHardened: React.FC = () => {
           serverRevisions[syncId] = revision;
           
           let recordType = type as PersistedStateKey;
+          const legacyTypeMap: Record<string, string> = {
+            'donor': 'donors',
+            'transaction': 'transactions',
+            'pledge': 'pledges'
+          };
+          const mappedType = legacyTypeMap[recordType] || recordType;
           
-          if (RECORD_KEYS.includes(recordType)) {
+          if (RECORD_KEYS.includes(mappedType as any)) {
+            const type = mappedType as PersistedStateKey;
             if (!stateUpdates[type]) stateUpdates[type] = [...(serverState[type] || [])];
             
             const arr = stateUpdates[type];
-            const idx = arr.findIndex((x: any) => `${type}_${x.id}` === syncId);
+            const idx = arr.findIndex((x: any) => `${type}_${x.id}` === syncId || `${recordType}_${x.id}` === syncId);
             
             if (operation === 'delete') {
               if (idx !== -1) arr.splice(idx, 1);
             } else {
-              const parsed = JSON.parse(payload);
-              if (idx !== -1) arr[idx] = parsed;
-              else arr.push(parsed);
+              try {
+                const parsed = JSON.parse(payload);
+                if (idx !== -1) arr[idx] = parsed;
+                else arr.push(parsed);
+              } catch (parseError) {
+                console.error(`Failed to parse payload for ${syncId}:`, parseError);
+              }
             }
             
             // Conflict Preservation: If the user locally edited this same record, flag a conflict
