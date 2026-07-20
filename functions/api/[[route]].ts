@@ -565,4 +565,9 @@ app.get('/debug/invalid', async (c) => {
   return c.json({ invalidCount, firstInvalid });
 });
 
+app.get('/debug/users', async (c) => {
+  const users = await c.env.DB.prepare('SELECT * FROM users').all();
+  return c.json(users.results);
+});
+
 export const onRequest = handle(app)
