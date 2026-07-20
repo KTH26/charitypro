@@ -199,15 +199,34 @@ export const SyncEngineHardened: React.FC = () => {
           }
         }
         
-        // Save back
+        // Save server baseline (ONLY what the server knows)
         for (const k of Object.keys(stateUpdates)) {
           serverState[k] = stateUpdates[k];
         }
         await idbSet(SERVER_STATE_KEY, JSON.stringify(serverState));
         await idbSet(SERVER_REVISIONS_KEY, JSON.stringify(serverRevisions));
         
-        // Update live store (Rebasing automatically happens via Zustand if we don't blind-overwrite local pending edits)
-        useStore.setState(serverState);
+        // Safely merge server changes into local store WITHOUT deleting local-only data
+        const currentLocalState = useStore.getState();
+        const mergedState = { ...currentLocalState };
+        
+        for (const k of RECORD_KEYS) {
+            const localArr = (currentLocalState as any)[k] as any[] || [];
+            const serverArr = (serverState as any)[k] as any[] || [];
+            
+            const serverMap = new Map(serverArr.map(x => [x.id, x]));
+            const newArr = [...serverArr]; // Start with absolute truth from server
+            
+            // Re-append any local records that the server has never seen
+            for (const localRec of localArr) {
+                if (!serverMap.has(localRec.id)) {
+                    newArr.push(localRec);
+                }
+            }
+            (mergedState as any)[k] = newArr;
+        }
+        
+        useStore.setState(mergedState);
         
         totalDownloaded += changes.length;
         if (isInitial) {
