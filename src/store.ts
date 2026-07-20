@@ -424,6 +424,7 @@ export interface AppState {
   deleteTransactions: (ids: string[]) => void;
   deleteAllTransactions: () => void;
   removeDuplicateTransactions: () => { count: number };
+  deduplicateDonors: () => void;
   forceCloudSync: () => Promise<void>;
 
   addPledge: (pledge: Omit<Pledge, 'id'>) => string;
@@ -739,6 +740,21 @@ export const useStore = create<AppState>()(
         });
         get().recalculateBalances();
       },
+
+      deduplicateDonors: () => set((state) => {
+        const seen = new Set();
+        const deduplicated = [];
+        // Keep the newest (last) version of duplicates based on displayId (e.g. D-1001) or email
+        for (let i = state.donors.length - 1; i >= 0; i--) {
+          const d = state.donors[i];
+          const key = d.displayId || d.id;
+          if (!seen.has(key)) {
+            seen.add(key);
+            deduplicated.unshift(d);
+          }
+        }
+        return { donors: deduplicated };
+      }),
 
       bulkAddTransactions: (txs) => {
         set((state) => {

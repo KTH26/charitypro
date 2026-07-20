@@ -149,7 +149,12 @@ export const SyncEngineHardened: React.FC = () => {
       if (changes.length > 0) {
         // Apply changes
         const serverStateStr = await idbGet<string>(SERVER_STATE_KEY);
-        const serverState = serverStateStr && serverStateStr !== '{}' ? JSON.parse(serverStateStr) : cloneState(useStore.getState());
+        // CRITICAL FIX: If serverState is empty (initial sync), we must initialize it as EMPTY arrays, 
+        // NOT a clone of the local store. If we clone the local store, the engine assumes all local 
+        // data is already in the cloud, and will NEVER push unsynced local data!
+        const serverState = serverStateStr && serverStateStr !== '{}' 
+            ? JSON.parse(serverStateStr) 
+            : RECORD_KEYS.reduce((acc, key) => ({ ...acc, [key]: [] }), {});
         const serverRevisions = JSON.parse(await idbGet<string>(SERVER_REVISIONS_KEY) || '{}');
         const localPending = await idbGet<PendingMutation[]>(PENDING_MUTATIONS_KEY) || [];
         
@@ -242,6 +247,9 @@ export const SyncEngineHardened: React.FC = () => {
   };
 
   const enqueuePush = async () => {
+    // FIX: Clean up any V1 legacy duplicates in the local store before we push them to V2 cloud
+    useStore.getState().deduplicateDonors();
+
     const savedServerStateStr = await idbGet<string>(SERVER_STATE_KEY);
     if (!savedServerStateStr) return;
     const serverState = JSON.parse(savedServerStateStr);

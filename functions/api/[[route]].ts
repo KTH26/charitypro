@@ -344,7 +344,7 @@ app.get('/sync2/hardened/pull', async (c) => {
   }
   
   const genRec = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key = 'sync_generation'").first();
-  const syncGeneration = genRec ? parseInt(genRec.value as string, 10) : 1;
+  const syncGeneration = 3; // FORCED RESET TO 3 to force V1-to-V2 unsynced data push
   
   return c.json({
     changes: permittedChanges,
