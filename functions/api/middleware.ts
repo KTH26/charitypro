@@ -59,6 +59,6 @@ export const requireAuth = async (c: Context, next: Next) => {
     await next();
   } catch (error: any) {
     console.error('JWT Verification failed:', error);
-    return c.json({ success: false, error: `Unauthorized: Token validation failed` }, 401);
+    return c.json({ success: false, error: `Unauthorized: ${error.message || 'Token validation failed'}` }, 401);
   }
 };
