@@ -428,7 +428,9 @@ export const SyncEngineHardened: React.FC = () => {
     }
   };
 
-  if (syncStatus === 'initializing' || syncStatus === 'error') {
+  const isInitialSync = useMemo(() => isInitial, [isInitial]);
+  
+  if (syncStatus === 'initializing' || syncStatus === 'error' || (syncStatus === 'syncing' && isInitialSync)) {
     return (
       <div style={{
         position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
@@ -438,7 +440,7 @@ export const SyncEngineHardened: React.FC = () => {
       }}>
         <h1 style={{ marginBottom: '20px', color: 'var(--navy)' }}>Preparing CharityPro</h1>
         
-        {syncStatus === 'initializing' ? (
+        {syncStatus === 'initializing' || syncStatus === 'syncing' ? (
            <>
              <div className="loader" style={{ width: '50px', height: '50px', border: '5px solid var(--border)', borderTopColor: 'var(--navy)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '20px' }}>
                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
