@@ -580,4 +580,15 @@ app.get('/debug/sample-tx', async (c) => {
   return c.json(res);
 });
 
+app.get('/debug/pull-test', async (c) => {
+  try {
+    const changes = await c.env.DB.prepare(
+      'SELECT change_id, type FROM sync_changes WHERE change_id > 500 ORDER BY change_id ASC LIMIT 5'
+    ).all();
+    return c.json({ success: true, changes: changes.results });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message || e.toString() });
+  }
+});
+
 export const onRequest = handle(app)

@@ -428,9 +428,7 @@ export const SyncEngineHardened: React.FC = () => {
     }
   };
 
-  const isInitialSync = useMemo(() => isInitial, [isInitial]);
-  
-  if (syncStatus === 'initializing' || syncStatus === 'error' || (syncStatus === 'syncing' && isInitialSync)) {
+  if (syncStatus === 'initializing' || syncStatus === 'error' || (syncStatus === 'syncing' && isInitial)) {
     return (
       <div style={{
         position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
