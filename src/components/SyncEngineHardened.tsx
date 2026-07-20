@@ -67,7 +67,7 @@ export const SyncEngineHardened: React.FC = () => {
       }
 
       try {
-        let cursor = await idbGet<number>(SERVER_CURSOR_KEY);
+        let cursor = await idbGet<string>(SERVER_CURSOR_KEY);
         const localGen = await idbGet<number>(CLIENT_GENERATION_KEY) || 1;
         
         // 2. Fetch server generation
@@ -83,14 +83,14 @@ export const SyncEngineHardened: React.FC = () => {
           setIsInitialSync(true);
           setSyncStatus('initializing');
           console.warn(`Sync generation mismatch (Local: ${localGen}, Server: ${serverGen}). Rebuilding full snapshot...`);
-          await idbSet(SERVER_CURSOR_KEY, 0); // Drop cursor entirely
+          await idbSet(SERVER_CURSOR_KEY, '0'); // Drop cursor entirely
           await idbSet(SERVER_REVISIONS_KEY, '{}');
           await idbSet(SERVER_STATE_KEY, '{}');
-          cursor = 0;
+          cursor = '0';
         }
 
         // 4. Complete initial pull
-        if (isInitial || cursor === 0) {
+        if (isInitial || cursor === '0') {
           setIsInitialSync(true);
           await fullPullFromCloud(true, serverGen);
         } else {
@@ -256,7 +256,7 @@ export const SyncEngineHardened: React.FC = () => {
         }
       }
       
-      currentCursor = parseInt(data.nextCursor, 10);
+      currentCursor = data.nextCursor;
       hasMore = data.hasMore;
     }
     

@@ -316,7 +316,7 @@ app.post('/sola/recurring', async (c) => {
 
 
 app.get('/sync2/hardened/pull', async (c) => {
-  const after = parseInt(c.req.query('after') || '0', 10);
+  const after = c.req.query('after') || '0';
   const limit = parseInt(c.req.query('limit') || '500');
   const userRoles = c.get('userRoles') || [];
   
@@ -331,7 +331,7 @@ app.get('/sync2/hardened/pull', async (c) => {
     if (changes.results.length === limit) {
       hasMore = true;
     }
-    nextCursor = changes.results[changes.results.length - 1].change_id;
+    nextCursor = changes.results[changes.results.length - 1].change_id as string;
     
     for (const change of changes.results) {
        // Scope-level filtering logic would go here if needed per-user.
@@ -344,7 +344,7 @@ app.get('/sync2/hardened/pull', async (c) => {
   }
   
   const genRec = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key = 'sync_generation'").first();
-  const syncGeneration = 6; // BUMP TO 6 to force full re-sync from cursor 0
+  const syncGeneration = 7; // BUMP TO 7 to force full re-sync from cursor 0
   
   return c.json({
     changes: permittedChanges,
@@ -583,7 +583,7 @@ app.get('/debug/sample-tx', async (c) => {
 app.get('/debug/pull-test', async (c) => {
   try {
     const changes = await c.env.DB.prepare(
-      'SELECT change_id, type FROM sync_changes WHERE change_id > 500 ORDER BY change_id ASC LIMIT 5'
+      'SELECT change_id, type FROM sync_changes ORDER BY change_id ASC LIMIT 5'
     ).all();
     return c.json({ success: true, changes: changes.results });
   } catch (e: any) {
