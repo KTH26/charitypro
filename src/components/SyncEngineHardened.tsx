@@ -195,6 +195,16 @@ export const SyncEngineHardened: React.FC = () => {
         // cloud records merely by starting up.
         await enqueuePush();
         await processPushQueue();
+
+        // Scheduled occurrences run only after the browser has the latest
+        // server snapshot. Their deterministic IDs make concurrent processing
+        // by two online browsers idempotent.
+        const syncedStore = useStore.getState();
+        syncedStore.processRecurringExpenses();
+        syncedStore.processRecurringPayroll();
+        syncedStore.processRecurringPayments();
+        await enqueuePush();
+        await processPushQueue();
         
       } catch (e: any) {
         console.error('Initial sync failed', e);

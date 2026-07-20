@@ -504,6 +504,12 @@ export const uid = () => {
   return Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 };
 
+export const scheduledOccurrenceId = (
+  kind: 'payment' | 'expense' | 'payroll',
+  scheduleId: string,
+  occurrenceDate: string
+) => `scheduled-${kind}-${scheduleId}-${occurrenceDate}`;
+
 // System-reserved account ID for Undeposited Funds
 export const UNDEPOSITED_FUNDS_ID = 'sys-undeposited-funds';
 
@@ -1537,6 +1543,7 @@ export const useStore = create<AppState>()(
         const today = new Date().toISOString().split('T')[0];
         let updatedExpenses = [...state.recurringExpenses];
         let newBills = [...state.bills];
+        const existingBillIds = new Set(newBills.map(bill => bill.id));
         let hasChanges = false;
 
         updatedExpenses = updatedExpenses.map(rec => {
@@ -1545,17 +1552,21 @@ export const useStore = create<AppState>()(
           let generatedCount = 0;
 
           while (currentNextDate <= today && generatedCount < 12) {
-            newBills.push({
-              id: uid(),
-              vendor: rec.vendor,
-              amount: rec.amount,
-              currency: rec.currency || 'CAD',
-              dueDate: currentNextDate,
-              status: 'pending',
-              category: rec.category,
-              projectId: rec.projectId,
-              creditAccountId: rec.creditAccountId
-            });
+            const occurrenceId = scheduledOccurrenceId('expense', rec.id, currentNextDate);
+            if (!existingBillIds.has(occurrenceId)) {
+              newBills.push({
+                id: occurrenceId,
+                vendor: rec.vendor,
+                amount: rec.amount,
+                currency: rec.currency || 'CAD',
+                dueDate: currentNextDate,
+                status: 'pending',
+                category: rec.category,
+                projectId: rec.projectId,
+                creditAccountId: rec.creditAccountId
+              });
+              existingBillIds.add(occurrenceId);
+            }
 
             const d = new Date(currentNextDate);
             if (rec.frequency === 'weekly') d.setDate(d.getDate() + 7);
@@ -1576,6 +1587,7 @@ export const useStore = create<AppState>()(
       processRecurringPayments: () => set(state => {
         const today = new Date().toISOString().split('T')[0];
         let newTransactions = [...state.transactions];
+        const existingTransactionIds = new Set(newTransactions.map(transaction => transaction.id));
         let updatedSchedules = [...state.recurringPayments];
         let hasChanges = false;
 
@@ -1586,18 +1598,22 @@ export const useStore = create<AppState>()(
           let generatedCount = 0;
           
           while (currentNextDate <= today && generatedCount < 12) {
-            newTransactions.push({
-              id: uid(),
-              donorId: rec.donorId,
-              pledgeId: rec.pledgeId,
-              amount: rec.amount,
-              amountCAD: rec.amount,
-              date: currentNextDate,
-              type: 'pending',
-              method: rec.method,
-              currency: rec.currency,
-              notes: 'Auto-generated from schedule'
-            });
+            const occurrenceId = scheduledOccurrenceId('payment', rec.id, currentNextDate);
+            if (!existingTransactionIds.has(occurrenceId)) {
+              newTransactions.push({
+                id: occurrenceId,
+                donorId: rec.donorId,
+                pledgeId: rec.pledgeId,
+                amount: rec.amount,
+                amountCAD: rec.amount,
+                date: currentNextDate,
+                type: 'pending',
+                method: rec.method,
+                currency: rec.currency,
+                notes: 'Auto-generated from schedule'
+              });
+              existingTransactionIds.add(occurrenceId);
+            }
             
             const d = new Date(currentNextDate);
             if (rec.frequency === 'monthly') d.setUTCMonth(d.getUTCMonth() + 1);
@@ -1639,13 +1655,16 @@ export const useStore = create<AppState>()(
           set(draft => {
             const newState = { ...draft };
             duePayroll.forEach(p => {
+              const occurrenceDate = p.nextDate;
+              const occurrenceId = scheduledOccurrenceId('payroll', p.id, occurrenceDate);
+              const occurrenceExists = newState.bills.some(bill => bill.id === occurrenceId);
               let name = '';
               if (p.type === 'employee') {
                 const emp = newState.employees.find(e => e.id === p.entityId);
                 if (emp) name = emp.name;
               } else {
                 const fund = newState.fundraisers.find(f => f.id === p.entityId);
-                if (fund) {
+                if (fund && !occurrenceExists) {
                   name = fund.name;
                   newState.fundraisers = newState.fundraisers.map(f => f.id === p.entityId
                     ? { ...f, balanceOwed: f.balanceOwed + p.amount, internalAccountBalance: (f.internalAccountBalance || 0) + p.amount }
@@ -1654,14 +1673,14 @@ export const useStore = create<AppState>()(
               }
 
               // Create a payroll-only bill (visible on Payroll tab, hidden from Expenses page)
-              if (name) {
+              if (name && !occurrenceExists) {
                 const newBill: Bill = {
-                  id: uid(),
+                  id: occurrenceId,
                   vendor: `Payroll: ${name}`,
                   employeeId: p.entityId,
                   amount: p.amount,
                   currency: 'CAD',
-                  dueDate: today,
+                  dueDate: occurrenceDate,
                   status: 'pending',
                   category: 'Payroll Expense',
                   isPayroll: true,

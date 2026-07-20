@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { findExplicitDeletes, mergeServerRecords } from '../components/SyncEngineHardened';
-import { SYNC_REGISTRY, useStore, type AppState } from '../store';
+import { scheduledOccurrenceId, SYNC_REGISTRY, useStore, type AppState } from '../store';
 
 const stateWith = (overrides: Partial<AppState>): AppState => ({
   donors: [],
@@ -88,5 +88,12 @@ describe('SyncEngineHardened safety contract', () => {
     const offlineDonor = { id: 'donor-2', name: 'Created offline' };
 
     expect(mergeServerRecords('donors', [], [offlineDonor], {})).toEqual([offlineDonor]);
+  });
+
+  it('gives the same scheduled occurrence the same ID on every browser', () => {
+    expect(scheduledOccurrenceId('payment', 'schedule-1', '2026-07-20'))
+      .toBe('scheduled-payment-schedule-1-2026-07-20');
+    expect(scheduledOccurrenceId('payment', 'schedule-1', '2026-07-21'))
+      .not.toBe(scheduledOccurrenceId('payment', 'schedule-1', '2026-07-20'));
   });
 });

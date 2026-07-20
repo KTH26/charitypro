@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { getRequiredPermission, hasPermission } from '../functions/api/permissions';
 import { validatePayload } from '../functions/api/validation';
+import { isOperationAlreadyApplied } from '../functions/api/idempotency';
 
 describe('Backend API & Security Rules', () => {
   it('JWT Middleware - (To be implemented using miniflare)', () => {
@@ -62,6 +63,35 @@ describe('Backend API & Security Rules', () => {
       };
 
       expect(validatePayload('bills', bill).success).toBe(true);
+    });
+  });
+
+  describe('Idempotent concurrent operations', () => {
+    it('accepts an identical scheduled record already created by another browser', () => {
+      const data = { id: 'scheduled-payment-schedule-1-2026-07-20', amount: 50 };
+      expect(isOperationAlreadyApplied({
+        type: 'transactions',
+        revision: 1,
+        data: JSON.stringify(data),
+        is_deleted: 0
+      }, {
+        type: 'transactions',
+        operation: 'insert',
+        data
+      })).toBe(true);
+    });
+
+    it('does not hide a genuinely different concurrent edit', () => {
+      expect(isOperationAlreadyApplied({
+        type: 'transactions',
+        revision: 2,
+        data: JSON.stringify({ id: 'tx-1', amount: 75 }),
+        is_deleted: 0
+      }, {
+        type: 'transactions',
+        operation: 'update',
+        data: { id: 'tx-1', amount: 100 }
+      })).toBe(false);
     });
   });
 });

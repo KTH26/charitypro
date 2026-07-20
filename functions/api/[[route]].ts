@@ -3,6 +3,7 @@ import { handle } from 'hono/cloudflare-pages'
 import { requireAuth } from './middleware';
 import { getRequiredPermission, hasPermission } from './permissions';
 import { validatePayload } from './validation';
+import { isOperationAlreadyApplied } from './idempotency';
 
 const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string } }>().basePath('/api')
 
@@ -420,6 +421,23 @@ app.post('/sync2/hardened/push', async (c) => {
       const currentRecord: any = await c.env.DB.prepare(
         'SELECT type, revision, data, is_deleted FROM sync_records WHERE id = ?'
       ).bind(op.id).first();
+
+      // Two clients may independently produce the same deterministic scheduled
+      // occurrence. If the desired server state is already exact, treat the
+      // repeated operation as idempotent success rather than a conflict.
+      const alreadyApplied = isOperationAlreadyApplied(currentRecord, op);
+
+      if (alreadyApplied) {
+        results.push({
+          status: 'accepted',
+          operationId: opId,
+          recordId: op.id,
+          revision: currentRecord.revision,
+          alreadyApplied: true
+        });
+        continue;
+      }
+
       const matchesExpectedState = op.operation === 'insert'
         ? !currentRecord && op.baseRevision === 0
         : op.operation === 'restore'
