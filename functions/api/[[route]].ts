@@ -346,11 +346,19 @@ app.get('/sync2/hardened/pull', async (c) => {
   const genRec = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key = 'sync_generation'").first();
   const syncGeneration = 7; // BUMP TO 7 to force full re-sync from cursor 0
   
-  return c.json({
+  const jsonStr = JSON.stringify({
     changes: permittedChanges,
     hasMore,
     nextCursor,
     syncGeneration
+  });
+  
+  // Base64 encode to bypass strict transparent MITM internet filters (e.g. Geder/TechLoq)
+  const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
+  
+  return c.json({
+    _encoded: true,
+    payload: b64
   });
 });
 

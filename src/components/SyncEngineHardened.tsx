@@ -156,7 +156,11 @@ export const SyncEngineHardened: React.FC = () => {
         throw new Error(`Server returned HTML instead of JSON! HTML snippet: ${text.substring(0, 100)}`);
       }
 
-      const data = await res.json();
+      const dataRaw = await res.json();
+      
+      // Decode Base64 payload if it was encoded to bypass MITM filters
+      const data = dataRaw._encoded ? JSON.parse(decodeURIComponent(escape(atob(dataRaw.payload)))) : dataRaw;
+      
       const changes = data.changes || [];
       
       if (changes.length > 0) {
