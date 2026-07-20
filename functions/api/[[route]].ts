@@ -575,4 +575,9 @@ app.get('/debug/types2', async (c) => {
   return c.json(res.results);
 });
 
+app.get('/debug/sample-tx', async (c) => {
+  const res = await c.env.DB.prepare("SELECT * FROM sync_changes WHERE type = 'transactions' LIMIT 1").first();
+  return c.json(res);
+});
+
 export const onRequest = handle(app)
