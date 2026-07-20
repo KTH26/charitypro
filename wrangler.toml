@@ -13,4 +13,4 @@ database_id = "210266c7-283d-4410-b4b3-33ad43d2131e"
 [[env.preview.d1_databases]]
 binding = "DB"
 database_name = "charity-db-staging"
-database_id = "8dc00c00-be06-42f9-80b6-3787bc919cd4"
+database_id = "c99534d9-9fb8-481e-a27a-4fe4781194f1"
