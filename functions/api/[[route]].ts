@@ -4,7 +4,7 @@ import { requireAuth } from './middleware';
 import { getRequiredPermission, hasPermission } from './permissions';
 import { validatePayload } from './validation';
 
-const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string } }>().basePath('/api')
+const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string } }>().basePath('/api')
 
 app.use('*', requireAuth);
 
@@ -377,6 +377,9 @@ app.post('/sync2/hardened/push', async (c) => {
 
     const results: any[] = [];
     const serverTime = Date.now();
+    const ledgerColumns = await c.env.DB.prepare('PRAGMA table_info(sync_changes)').all();
+    const ledgerColumnNames = new Set((ledgerColumns.results || []).map((column: any) => column.name));
+    const usesHardenedLedger = ledgerColumnNames.has('mutation_id') && ledgerColumnNames.has('operation_id');
     
     // Check if entire mutation is already processed (Idempotency)
     const existingMut = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id = ?').bind(mutation_id).first();
@@ -411,10 +414,48 @@ app.post('/sync2/hardened/push', async (c) => {
          results.push({ status: 'forbidden', operationId: opId, error: `Forbidden: Missing permission ${reqPerm}` });
          continue;
       }
+
+      // Never report success for an operation that matched zero rows. Verify the
+      // expected revision and tombstone state before constructing the batch.
+      const currentRecord: any = await c.env.DB.prepare(
+        'SELECT type, revision, data, is_deleted FROM sync_records WHERE id = ?'
+      ).bind(op.id).first();
+      const matchesExpectedState = op.operation === 'insert'
+        ? !currentRecord && op.baseRevision === 0
+        : op.operation === 'restore'
+          ? currentRecord && currentRecord.type === op.type && currentRecord.revision === op.baseRevision && currentRecord.is_deleted === 1
+          : currentRecord && currentRecord.type === op.type && currentRecord.revision === op.baseRevision && currentRecord.is_deleted === 0;
+
+      if (!matchesExpectedState) {
+        results.push({
+          status: 'conflict',
+          operationId: opId,
+          mutationId: mutation_id,
+          recordId: op.id,
+          recordType: op.type,
+          operation: op.operation,
+          baseRevision: op.baseRevision,
+          serverRevision: currentRecord?.revision ?? null,
+          serverData: currentRecord?.data ? JSON.parse(currentRecord.data as string) : null,
+          serverIsDeleted: currentRecord ? currentRecord.is_deleted === 1 : true,
+          detectedAt: serverTime
+        });
+        continue;
+      }
       
       // Build Atomic Batch
       const stmts: any[] = [];
       let nextRev = 1;
+      if (usesHardenedLedger && op.operation !== 'insert') {
+        const expectedDeleted = op.operation === 'restore' ? 1 : 0;
+        stmts.push(c.env.DB.prepare(`
+          INSERT INTO sync_batch_assertions (id, assertion_value)
+          SELECT ?, CASE WHEN EXISTS (
+            SELECT 1 FROM sync_records
+            WHERE id = ? AND type = ? AND revision = ? AND is_deleted = ?
+          ) THEN 1 ELSE 0 END
+        `).bind(opId, op.id, op.type, op.baseRevision, expectedDeleted));
+      }
       
       if (op.operation === 'delete') {
           nextRev = op.baseRevision + 1;
@@ -444,20 +485,30 @@ app.post('/sync2/hardened/push', async (c) => {
           `).bind(JSON.stringify(op.data), serverTime, op.id, op.baseRevision));
       }
 
-      const dataStr = op.operation === 'delete' ? '{}' : JSON.stringify(op.data || {});
-      const changeId = 'chg_' + serverTime + '_' + opId;
-
-      stmts.push(c.env.DB.prepare(`
-          INSERT INTO sync_changes (change_id, record_id, type, revision, operation, data, changed_at)
-          SELECT ?, id, type, revision, ?, data, updated_at
-          FROM sync_records WHERE id = ? AND revision = ?
-      `).bind(changeId, op.operation, op.id, nextRev));
+      if (usesHardenedLedger) {
+        stmts.push(c.env.DB.prepare(`
+            INSERT INTO sync_changes (record_id, type, revision, operation, data, changed_at, mutation_id, operation_id)
+            SELECT id, type, revision, ?, data, updated_at, ?, ?
+            FROM sync_records WHERE id = ? AND revision = ?
+        `).bind(op.operation, mutation_id, opId, op.id, nextRev));
+      } else {
+        const changeId = 'chg_' + serverTime + '_' + opId;
+        stmts.push(c.env.DB.prepare(`
+            INSERT INTO sync_changes (change_id, record_id, type, revision, operation, data, changed_at)
+            SELECT ?, id, type, revision, ?, data, updated_at
+            FROM sync_records WHERE id = ? AND revision = ?
+        `).bind(changeId, op.operation, op.id, nextRev));
+      }
 
       stmts.push(c.env.DB.prepare(`
           INSERT INTO audit_log (record_id, record_type, action, old_revision, new_revision, old_data, new_data, changed_by_user_id, changed_by_email, changed_at, mutation_id, request_id, reason)
           SELECT id, type, ?, ?, revision, '', data, ?, ?, updated_at, ?, ?, ?
           FROM sync_records WHERE id = ? AND revision = ?
       `).bind(op.operation, op.baseRevision, userId, userEmail, mutation_id, opId, op.reason || '', op.id, nextRev));
+
+      if (usesHardenedLedger && op.operation !== 'insert') {
+        stmts.push(c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id = ?').bind(opId));
+      }
 
       const successResult = { status: 'accepted', operationId: opId, recordId: op.id, revision: nextRev };
 
@@ -521,6 +572,9 @@ app.get('/debug/count', async (c) => {
 });
 
 app.get('/debug/fix-sync-changes', async (c) => {
+  if (c.env.ENABLE_SYNC_REPAIR_ENDPOINTS !== 'true') {
+    return c.json({ success: false, error: 'Repair endpoint disabled.' }, 404);
+  }
   try {
     await c.env.DB.prepare('DELETE FROM sync_changes').run();
     await c.env.DB.prepare(`
@@ -571,6 +625,9 @@ app.get('/debug/sample-tx', async (c) => {
 });
 
 app.get('/debug/super-fix', async (c) => {
+  if (c.env.ENABLE_SYNC_REPAIR_ENDPOINTS !== 'true') {
+    return c.json({ success: false, error: 'Repair endpoint disabled.' }, 404);
+  }
   try {
     await c.env.DB.prepare(
       "UPDATE sync_changes SET change_id = 'mig-' || substr('0000000000' || rowid, -10, 10)"

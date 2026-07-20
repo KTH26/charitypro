@@ -39,6 +39,7 @@ describe('Backend API & Security Rules', () => {
 
     it('Accepts strictly typed valid objects', () => {
       const goodDonor = {
+        id: 'donor-1',
         name: 'John Doe',
         email: 'john@example.com',
         address: '123 Main St',
@@ -47,6 +48,20 @@ describe('Backend API & Security Rules', () => {
       };
       const res = validatePayload('donors', goodDonor);
       expect(res.success).toBe(true);
+    });
+
+    it('accepts the bill shape produced by the application', () => {
+      const bill = {
+        id: 'bill-1',
+        vendor: 'Office Supply Company',
+        amount: 125.50,
+        currency: 'CAD',
+        dueDate: '2026-08-01',
+        status: 'pending',
+        category: 'office-expense'
+      };
+
+      expect(validatePayload('bills', bill).success).toBe(true);
     });
   });
 });

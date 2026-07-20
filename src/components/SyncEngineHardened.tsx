@@ -8,6 +8,7 @@ export const SERVER_CURSOR_KEY = 'v2_sync_cursor';
 export const SERVER_REVISIONS_KEY = 'v2_server_revisions';
 export const SYNC_LOCK_KEY = 'v2_sync_lock'; // Lease for multi-tab pushing
 export const CLIENT_GENERATION_KEY = 'v2_client_generation';
+export const DELETE_INTENTS_KEY = 'v2_delete_intents';
 
 type SyncOperation = {
   operationId: string;
@@ -30,11 +31,20 @@ export type PendingMutation = {
   lastError?: string;
 };
 
+export type DeleteIntent = {
+  id: string;
+  type: string;
+  createdAt: number;
+  reason: string;
+};
+
 let syncTimeout: ReturnType<typeof setTimeout> | null = null;
 let isPushing = false;
 let needsPush = false;
 let isPulling = false;
 let pullInterval: ReturnType<typeof setInterval> | null = null;
+let isApplyingServerState = false;
+let deleteIntentWrite: Promise<void> = Promise.resolve();
 
 const getSyncedKeys = (classification: PersistenceClassification): PersistedStateKey[] => {
   return (Object.keys(SYNC_REGISTRY) as PersistedStateKey[]).filter(k => SYNC_REGISTRY[k].classification === classification);
@@ -49,6 +59,39 @@ const cloneState = (state: AppState) => {
     clone[key] = (state as any)[key];
   }
   return JSON.parse(JSON.stringify(clone));
+};
+
+export const findExplicitDeletes = (state: AppState, prevState: AppState): DeleteIntent[] => {
+  const removed: DeleteIntent[] = [];
+  for (const key of RECORD_KEYS) {
+    const previous = ((prevState as any)[key] || []) as Array<{ id?: string }>;
+    const currentIds = new Set(
+      (((state as any)[key] || []) as Array<{ id?: string }>).map(item => item?.id).filter(Boolean)
+    );
+    for (const item of previous) {
+      if (item?.id && !currentIds.has(item.id)) {
+        removed.push({
+          id: item.id,
+          type: key,
+          createdAt: Date.now(),
+          reason: 'Explicit local removal'
+        });
+      }
+    }
+  }
+
+  return removed;
+};
+
+const captureExplicitDeletes = (state: AppState, prevState: AppState) => {
+  const removed = findExplicitDeletes(state, prevState);
+  if (removed.length === 0) return;
+  deleteIntentWrite = deleteIntentWrite.then(async () => {
+    const existing = await idbGet<DeleteIntent[]>(DELETE_INTENTS_KEY) || [];
+    const byRecord = new Map(existing.map(intent => [`${intent.type}_${intent.id}`, intent]));
+    for (const intent of removed) byRecord.set(`${intent.type}_${intent.id}`, intent);
+    await idbSet(DELETE_INTENTS_KEY, [...byRecord.values()]);
+  });
 };
 
 export const SyncEngineHardened: React.FC = () => {
@@ -100,6 +143,13 @@ export const SyncEngineHardened: React.FC = () => {
         
         // 5. Process any legacy pending queue from offline edits
         await processPushQueue();
+
+        // Reconcile records that exist locally but were never confirmed by the
+        // cloud. This is intentionally insert/update-only unless an explicit
+        // deletion intent was captured; an incomplete browser can never erase
+        // cloud records merely by starting up.
+        await enqueuePush();
+        await processPushQueue();
         
       } catch (e: any) {
         console.error('Initial sync failed', e);
@@ -120,6 +170,8 @@ export const SyncEngineHardened: React.FC = () => {
     pullInterval = setInterval(() => pullFromCloud(), 15000);
 
     const unsub = useStore.subscribe((state, prevState) => {
+      if (isApplyingServerState) return;
+      captureExplicitDeletes(state, prevState);
       let changed = false;
       for (const key of [...RECORD_KEYS, ...SINGLETON_KEYS]) {
         if ((state as any)[key] !== (prevState as any)[key]) {
@@ -258,7 +310,12 @@ export const SyncEngineHardened: React.FC = () => {
             (mergedState as any)[k] = newArr;
         }
         
-        useStore.setState(mergedState);
+        isApplyingServerState = true;
+        try {
+          useStore.setState(mergedState);
+        } finally {
+          isApplyingServerState = false;
+        }
         
         totalDownloaded += changes.length;
         if (isInitial) {
@@ -271,6 +328,12 @@ export const SyncEngineHardened: React.FC = () => {
     }
     
     // Finalize generation setup
+    const savedServerState = await idbGet<string>(SERVER_STATE_KEY);
+    if (!savedServerState || savedServerState === '{}') {
+      const emptyServerState = RECORD_KEYS.reduce((acc, key) => ({ ...acc, [key]: [] }), {});
+      for (const key of SINGLETON_KEYS) (emptyServerState as any)[key] = (useStore.getState() as any)[key];
+      await idbSet(SERVER_STATE_KEY, JSON.stringify(emptyServerState));
+    }
     await idbSet(SERVER_CURSOR_KEY, currentCursor);
     await idbSet(CLIENT_GENERATION_KEY, currentGen);
     if (isInitial) setSyncStatus('online');
@@ -298,9 +361,6 @@ export const SyncEngineHardened: React.FC = () => {
   };
 
   const enqueuePush = async () => {
-    // FIX: Clean up any V1 legacy duplicates in the local store before we push them to V2 cloud
-    useStore.getState().deduplicateDonors();
-
     const savedServerStateStr = await idbGet<string>(SERVER_STATE_KEY);
     if (!savedServerStateStr) return;
     const serverState = JSON.parse(savedServerStateStr);
@@ -310,6 +370,10 @@ export const SyncEngineHardened: React.FC = () => {
     const operations: SyncOperation[] = [];
     const opPrefix = crypto.randomUUID();
     let idx = 0;
+    const pending = await idbGet<PendingMutation[]>(PENDING_MUTATIONS_KEY) || [];
+    const alreadyQueued = new Set(
+      pending.flatMap(mutation => mutation.operations.map(op => `${op.type}_${op.id}`))
+    );
     
     for (const key of RECORD_KEYS) {
       const currentArr = (currentState as any)[key] as any[] || [];
@@ -321,6 +385,7 @@ export const SyncEngineHardened: React.FC = () => {
       for (const item of currentArr) {
         if (!item || !item.id) continue;
         const syncId = `${key}_${item.id}`;
+        if (alreadyQueued.has(syncId)) continue;
         const serverItem = serverMap.get(item.id);
         if (!serverItem) {
           operations.push({ operationId: `${opPrefix}-${idx++}`, id: item.id, type: key, operation: 'insert', data: item, baseRevision: 0 });
@@ -329,19 +394,30 @@ export const SyncEngineHardened: React.FC = () => {
         }
       }
       
-      // Deletes
-      for (const item of serverArr) {
-        if (!item || !item.id) continue;
-        const syncId = `${key}_${item.id}`;
-        if (!currentMap.has(item.id)) {
-           operations.push({ operationId: `${opPrefix}-${idx++}`, id: item.id, type: key, operation: 'delete', data: {}, baseRevision: serverRevisions[syncId] || 0, reason: 'User requested deletion' });
-        }
-      }
+    }
+
+    // A missing local record is never enough evidence to delete cloud data.
+    // Only removals observed as an explicit local state transition are uploaded.
+    await deleteIntentWrite;
+    const deleteIntents = await idbGet<DeleteIntent[]>(DELETE_INTENTS_KEY) || [];
+    for (const intent of deleteIntents) {
+      const syncId = `${intent.type}_${intent.id}`;
+      if (alreadyQueued.has(syncId)) continue;
+      const serverArr = ((serverState as any)[intent.type] || []) as Array<{ id?: string }>;
+      if (!serverArr.some(item => item?.id === intent.id)) continue;
+      operations.push({
+        operationId: `${opPrefix}-${idx++}`,
+        id: intent.id,
+        type: intent.type,
+        operation: 'delete',
+        data: {},
+        baseRevision: serverRevisions[syncId] || 0,
+        reason: intent.reason
+      });
     }
     
     if (operations.length === 0) return;
 
-    let pending = await idbGet<PendingMutation[]>(PENDING_MUTATIONS_KEY) || [];
     pending.push({
       mutationId: crypto.randomUUID(),
       createdAt: Date.now(),
@@ -352,7 +428,6 @@ export const SyncEngineHardened: React.FC = () => {
       operations
     });
     
-    await idbSet(SERVER_STATE_KEY, JSON.stringify(cloneState(currentState)));
     await idbSet(PENDING_MUTATIONS_KEY, pending);
 
     processPushQueue();
@@ -401,33 +476,48 @@ export const SyncEngineHardened: React.FC = () => {
           }
           const data = await res.json();
           
-          let hasConflict = false;
+          let terminalStatus: PendingMutation['status'] | null = null;
+          let acceptedAny = false;
           const serverRevisions = JSON.parse(await idbGet<string>(SERVER_REVISIONS_KEY) || '{}');
+          const remainingOperations: SyncOperation[] = [];
           
           for (const result of data.results || []) {
+             const operation = next.operations.find(op => op.operationId === result.operationId);
+             if (!operation) continue;
              if (result.status === 'accepted') {
-                serverRevisions[`${next.operations.find(op => op.operationId === result.operationId)?.type}_${result.recordId}`] = result.revision;
+                acceptedAny = true;
+                serverRevisions[`${operation.type}_${result.recordId}`] = result.revision;
+                if (operation.operation === 'delete') {
+                  const intents = await idbGet<DeleteIntent[]>(DELETE_INTENTS_KEY) || [];
+                  await idbSet(DELETE_INTENTS_KEY, intents.filter(intent => !(intent.id === operation.id && intent.type === operation.type)));
+                }
              } else if (result.status === 'conflict') {
                 console.warn('Conflict received!', result);
-                hasConflict = true;
+                terminalStatus = 'conflict';
+                remainingOperations.push(operation);
                 const conflicts = useStore.getState().syncConflicts;
-                useStore.setState({ syncConflicts: [...conflicts, { id: result.recordId, type: result.recordType, localData: next.operations.find(op => op.operationId === result.operationId)?.data, serverData: result.serverData }] });
+                useStore.setState({ syncConflicts: [...conflicts, { id: result.recordId, type: result.recordType, localData: operation.data, serverData: result.serverData }] });
              } else {
                 console.warn(`Operation failed: ${result.status}`, result);
+                const status = result.status as PendingMutation['status'];
+                terminalStatus = ['invalid', 'forbidden', 'integrity_error'].includes(status) ? status : 'failed';
+                remainingOperations.push(operation);
              }
           }
           
           await idbSet(SERVER_REVISIONS_KEY, JSON.stringify(serverRevisions));
           
-          if (hasConflict) {
-             next.status = 'conflict';
-             // We do NOT clear the queue on conflict. The conflict is recorded in the store. 
-             // We drop the mutation from pending so the user can manually resolve it using the UI.
-          }
-          
           pending = await idbGet<PendingMutation[]>(PENDING_MUTATIONS_KEY) || [];
-          pending = pending.filter((p: PendingMutation) => p.mutationId !== next.mutationId);
+          if (remainingOperations.length === 0) {
+            pending = pending.filter((p: PendingMutation) => p.mutationId !== next.mutationId);
+          } else {
+            pending = pending.map((mutation: PendingMutation) => mutation.mutationId === next.mutationId
+              ? { ...mutation, operations: remainingOperations, status: terminalStatus || 'failed', updatedAt: Date.now(), lastError: `Synchronization requires attention: ${terminalStatus || 'failed'}` }
+              : mutation
+            );
+          }
           await idbSet(PENDING_MUTATIONS_KEY, pending);
+          if (acceptedAny) await pullFromCloud();
           
         } catch (e) {
           console.error(e);

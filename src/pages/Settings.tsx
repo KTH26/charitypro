@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useStore, type DonorSortKey, dualStorage } from '../store';
+import { useStore, type DonorSortKey, dualStorage, SYNC_REGISTRY } from '../store';
+import { get as idbGet } from 'idb-keyval';
 import { Globe, DollarSign, Layout, Receipt, RefreshCw, Check, Users, Link, X, Download, AlertTriangle, Cloud, Database, FolderDot, Edit2, Trash2, Plus, Calculator } from 'lucide-react';
 import { useT } from '../i18n';
 
@@ -202,28 +203,39 @@ export const Settings: React.FC = () => {
             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem', flex: 1, lineHeight: 1.5 }}>
               {isRtl 
                 ? 'אראפקאפיע א קאפיע פון דיין גאנצע דאַטאַבייס (דאָנאָרס, פיימענטס, און סעטטינגס) ווי א פייל צו דיין קאָמפּיוטער. פערפעקט פאר מאַכן זיכערהייט קאפיעס.' 
-                : 'Download a complete copy of your entire database (donors, payments, and settings) as a file to your computer for safe keeping.'}
+                : 'Download a complete copy of all registered local data, including linked records and synchronization recovery fields, for safe keeping. Store this file securely because it may contain private information.'}
             </p>
-            <button className="btn btn-primary" onClick={() => {
+            <button className="btn btn-primary" onClick={async () => {
               const state = useStore.getState();
-              // Create a safe copy of the state without non-serializable elements
+              // Export every registered serializable state field so the backup can
+              // preserve relationships and recovery metadata. Store functions and
+              // other unregistered implementation details are intentionally excluded.
+              const backupState = Object.fromEntries(
+                Object.keys(SYNC_REGISTRY).map((key) => [key, (state as any)[key]])
+              );
               const backup = {
-                donors: state.donors,
-                transactions: state.transactions,
-                accounts: state.accounts,
-                fundraisers: state.fundraisers,
-                recurringPayments: state.recurringPayments,
-                currency: state.currency,
-                exchangeRate: state.exchangeRate,
-                isRtl: state.isRtl
+                format: 'charitypro-complete-backup',
+                version: 2,
+                createdAt: new Date().toISOString(),
+                state: backupState,
+                syncRecovery: {
+                  pendingMutations: await idbGet('v2_pending_mutations') ?? [],
+                  deleteIntents: await idbGet('v2_delete_intents') ?? [],
+                  serverState: await idbGet('v2_server_state') ?? null,
+                  serverCursor: await idbGet('v2_sync_cursor') ?? null,
+                  serverRevisions: await idbGet('v2_server_revisions') ?? null,
+                  clientGeneration: await idbGet('v2_client_generation') ?? null
+                }
               };
-              const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 2));
+              const backupBlob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+              const backupUrl = URL.createObjectURL(backupBlob);
               const downloadAnchorNode = document.createElement('a');
-              downloadAnchorNode.setAttribute("href", dataStr);
+              downloadAnchorNode.setAttribute("href", backupUrl);
               downloadAnchorNode.setAttribute("download", `charity_backup_${new Date().toISOString().split('T')[0]}.json`);
               document.body.appendChild(downloadAnchorNode);
               downloadAnchorNode.click();
               downloadAnchorNode.remove();
+              URL.revokeObjectURL(backupUrl);
             }} style={{ whiteSpace: 'nowrap' }}>
               <Download size={16} /> {isRtl ? 'סעיוו באַקאַפּ' : 'Save Backup File'}
             </button>

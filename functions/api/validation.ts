@@ -20,11 +20,12 @@ export const TransactionSchema = z.object({
 
 export const BillSchema = z.object({
   id: z.string().min(1),
-  vendorId: z.string().min(1),
+  vendor: z.string().min(1),
   amount: MoneyAmountSchema,
-  currency: z.enum(['CAD', 'USD']),
-  date: z.string().min(1),
-  status: z.enum(['pending', 'approved', 'paid', 'voided', 'declined', 'reversed']).optional()
+  currency: z.enum(['CAD', 'USD']).optional(),
+  dueDate: z.string().min(1),
+  status: z.enum(['pending', 'urgent', 'paid', 'scheduled']),
+  category: z.string()
 }).passthrough();
 
 export const validatePayload = (type: string, data: any) => {
