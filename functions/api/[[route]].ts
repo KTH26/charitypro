@@ -419,8 +419,8 @@ app.post('/sync2/hardened/push', async (c) => {
       // Never report success for an operation that matched zero rows. Verify the
       // expected revision and tombstone state before constructing the batch.
       const currentRecord: any = await c.env.DB.prepare(
-        'SELECT type, revision, data, is_deleted FROM sync_records WHERE id = ?'
-      ).bind(op.id).first();
+        'SELECT type, revision, data, is_deleted FROM sync_records WHERE id = ? AND type = ?'
+      ).bind(op.id, op.type).first();
 
       // Two clients may independently produce the same deterministic scheduled
       // occurrence. If the desired server state is already exact, treat the
@@ -480,15 +480,15 @@ app.post('/sync2/hardened/push', async (c) => {
           stmts.push(c.env.DB.prepare(`
               UPDATE sync_records 
               SET is_deleted = 1, revision = revision + 1, updated_at = ?
-              WHERE id = ? AND revision = ? AND is_deleted = 0
-          `).bind(serverTime, op.id, op.baseRevision));
+              WHERE id = ? AND type = ? AND revision = ? AND is_deleted = 0
+          `).bind(serverTime, op.id, op.type, op.baseRevision));
       } else if (op.operation === 'restore') {
           nextRev = op.baseRevision + 1;
           stmts.push(c.env.DB.prepare(`
               UPDATE sync_records 
               SET is_deleted = 0, data = ?, revision = revision + 1, updated_at = ?
-              WHERE id = ? AND revision = ? AND is_deleted = 1
-          `).bind(JSON.stringify(op.data || {}), serverTime, op.id, op.baseRevision));
+              WHERE id = ? AND type = ? AND revision = ? AND is_deleted = 1
+          `).bind(JSON.stringify(op.data || {}), serverTime, op.id, op.type, op.baseRevision));
       } else if (op.operation === 'insert' && op.baseRevision === 0) {
           stmts.push(c.env.DB.prepare(`
               INSERT INTO sync_records (id, type, data, updated_at, revision, is_deleted)
@@ -499,30 +499,30 @@ app.post('/sync2/hardened/push', async (c) => {
           stmts.push(c.env.DB.prepare(`
               UPDATE sync_records
               SET data = ?, revision = revision + 1, updated_at = ?
-              WHERE id = ? AND revision = ? AND is_deleted = 0
-          `).bind(JSON.stringify(op.data), serverTime, op.id, op.baseRevision));
+              WHERE id = ? AND type = ? AND revision = ? AND is_deleted = 0
+          `).bind(JSON.stringify(op.data), serverTime, op.id, op.type, op.baseRevision));
       }
 
       if (usesHardenedLedger) {
         stmts.push(c.env.DB.prepare(`
             INSERT INTO sync_changes (record_id, type, revision, operation, data, changed_at, mutation_id, operation_id)
             SELECT id, type, revision, ?, data, updated_at, ?, ?
-            FROM sync_records WHERE id = ? AND revision = ?
-        `).bind(op.operation, mutation_id, opId, op.id, nextRev));
+            FROM sync_records WHERE id = ? AND type = ? AND revision = ?
+        `).bind(op.operation, mutation_id, opId, op.id, op.type, nextRev));
       } else {
         const changeId = 'chg_' + serverTime + '_' + opId;
         stmts.push(c.env.DB.prepare(`
             INSERT INTO sync_changes (change_id, record_id, type, revision, operation, data, changed_at)
             SELECT ?, id, type, revision, ?, data, updated_at
-            FROM sync_records WHERE id = ? AND revision = ?
-        `).bind(changeId, op.operation, op.id, nextRev));
+            FROM sync_records WHERE id = ? AND type = ? AND revision = ?
+        `).bind(changeId, op.operation, op.id, op.type, nextRev));
       }
 
       stmts.push(c.env.DB.prepare(`
           INSERT INTO audit_log (record_id, record_type, action, old_revision, new_revision, old_data, new_data, changed_by_user_id, changed_by_email, changed_at, mutation_id, request_id, reason)
           SELECT id, type, ?, ?, revision, '', data, ?, ?, updated_at, ?, ?, ?
-          FROM sync_records WHERE id = ? AND revision = ?
-      `).bind(op.operation, op.baseRevision, userId, userEmail, mutation_id, opId, op.reason || '', op.id, nextRev));
+          FROM sync_records WHERE id = ? AND type = ? AND revision = ?
+      `).bind(op.operation, op.baseRevision, userId, userEmail, mutation_id, opId, op.reason || '', op.id, op.type, nextRev));
 
       if (usesHardenedLedger && op.operation !== 'insert') {
         stmts.push(c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id = ?').bind(opId));
@@ -536,7 +536,7 @@ app.post('/sync2/hardened/push', async (c) => {
       } catch (err: any) {
         if (err.message.includes('CHECK constraint failed') || err.message.includes('UNIQUE constraint failed')) {
            // It's a true OCC Conflict!
-           const current = await c.env.DB.prepare('SELECT revision, data, is_deleted FROM sync_records WHERE id = ?').bind(op.id).first();
+           const current = await c.env.DB.prepare('SELECT revision, data, is_deleted FROM sync_records WHERE id = ? AND type = ?').bind(op.id, op.type).first();
            const conflictPayload = {
               status: 'conflict',
               operationId: opId,

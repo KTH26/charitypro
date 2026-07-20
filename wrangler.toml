@@ -3,10 +3,14 @@ pages_build_output_dir = "dist"
 compatibility_date = "2024-03-20"
 
 # PRODUCTION ENVIRONMENT
+[vars]
+CF_ACCESS_ISSUER = "https://gentle-forest-7be4.cloudflareaccess.com"
+CF_ACCESS_AUDIENCE = "90007633ab3ca91383397a3ca3987ec0f228a4ff7f44216acdc1df53036970a2"
+
 [[d1_databases]]
 binding = "DB"
-database_name = "charity-db"
-database_id = "210266c7-283d-4410-b4b3-33ad43d2131e"
+database_name = "charity-db-online"
+database_id = "4bca1331-8fb3-49ac-9180-7747228b16b6"
 
 # STAGING ENVIRONMENT (Phase 1)
 [env.preview]

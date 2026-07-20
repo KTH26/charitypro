@@ -1,6 +1,5 @@
--- CharityPro staging-only bootstrap schema.
--- Safe to run repeatedly against a NEW/EMPTY staging D1 database.
--- Do not use this file as a production migration.
+-- CharityPro bootstrap schema for a new, empty D1 database.
+-- Safe to run repeatedly only before the database begins serving live data.
 
 CREATE TABLE IF NOT EXISTS sync_metadata (
   key TEXT PRIMARY KEY,
@@ -9,13 +8,14 @@ CREATE TABLE IF NOT EXISTS sync_metadata (
 );
 
 CREATE TABLE IF NOT EXISTS sync_records (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   type TEXT NOT NULL,
   data TEXT NOT NULL,
   updated_at INTEGER NOT NULL,
   revision INTEGER NOT NULL DEFAULT 1,
   is_deleted INTEGER NOT NULL DEFAULT 0,
-  last_operation_id TEXT
+  last_operation_id TEXT,
+  PRIMARY KEY (type, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_records_updated ON sync_records(updated_at);

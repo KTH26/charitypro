@@ -2,8 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { getRequiredPermission, hasPermission } from '../functions/api/permissions';
 import { validatePayload } from '../functions/api/validation';
 import { isOperationAlreadyApplied } from '../functions/api/idempotency';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('Backend API & Security Rules', () => {
+  it('keys cloud records by both type and ID', () => {
+    const schema = readFileSync(join(process.cwd(), 'scripts', 'staging-schema.sql'), 'utf8');
+    expect(schema).toContain('PRIMARY KEY (type, id)');
+  });
   it('JWT Middleware - (To be implemented using miniflare)', () => {
     // A complete integration test of the Cloudflare Worker would use Miniflare,
     // but here we verify the logic modules directly.
