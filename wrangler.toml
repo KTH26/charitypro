@@ -2,11 +2,11 @@ name = "charity-app"
 pages_build_output_dir = "dist"
 compatibility_date = "2024-03-20"
 
-# PRODUCTION ENVIRONMENT (Temporarily pointing to Staging for Phase 6 Testing)
+# PRODUCTION ENVIRONMENT
 [[d1_databases]]
 binding = "DB"
 database_name = "charity-db"
-database_id = "c99534d9-9fb8-481e-a27a-4fe4781194f1"
+database_id = "210266c7-283d-4410-b4b3-33ad43d2131e"
 
 # STAGING ENVIRONMENT (Phase 1)
 [env.preview]
