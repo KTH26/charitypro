@@ -544,20 +544,8 @@ export const dualStorage: StateStorage = {
       await idbSet(name, legacyLocal); // Migrate it
       return legacyLocal;
     }
-
-    // 2. No local data → first-ever load → pull from cloud
-    try {
-      const res = await fetch('/api/sync');
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (data.value) {
-        // Seed IndexedDB so the next reload is instant
-        await idbSet(name, data.value);
-      }
-      return data.value ?? null;
-    } catch (e) {
-      return null;
-    }
+    // 2. No local data -> first-ever load. Return null and let SyncEngineHardened handle the initial pull.
+    return null;
   },
 
   setItem: async (name, value): Promise<void> => {
