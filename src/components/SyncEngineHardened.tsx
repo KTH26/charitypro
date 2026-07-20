@@ -57,6 +57,8 @@ export const SyncEngineHardened: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('');
 
   // Initial Sync Barrier and Startup Flow
+  const [isInitialSync, setIsInitialSync] = useState(false);
+
   useEffect(() => {
     const initializeSync = async () => {
       // 1. Wait for hydration
@@ -78,6 +80,7 @@ export const SyncEngineHardened: React.FC = () => {
         // 3. Handle Generation Mismatch
         if (cursor === undefined || serverGen !== localGen) {
           isInitial = true;
+          setIsInitialSync(true);
           setSyncStatus('initializing');
           console.warn(`Sync generation mismatch (Local: ${localGen}, Server: ${serverGen}). Rebuilding full snapshot...`);
           await idbSet(SERVER_CURSOR_KEY, 0); // Drop cursor entirely
@@ -88,6 +91,7 @@ export const SyncEngineHardened: React.FC = () => {
 
         // 4. Complete initial pull
         if (isInitial || cursor === 0) {
+          setIsInitialSync(true);
           await fullPullFromCloud(true, serverGen);
         } else {
           setSyncStatus('online');
@@ -97,10 +101,13 @@ export const SyncEngineHardened: React.FC = () => {
         // 5. Process any legacy pending queue from offline edits
         await processPushQueue();
         
-      } catch (e) {
+      } catch (e: any) {
         console.error('Initial sync failed', e);
-        setSyncStatus('error');
+        alert(`SYNC CRASHED: ${e.message || e}`);
+        useStore.setState({ syncStatus: 'error' });
         setErrorMsg('Failed to connect to the server.');
+      } finally {
+        setIsInitialSync(false);
       }
     };
     initializeSync();
@@ -428,7 +435,7 @@ export const SyncEngineHardened: React.FC = () => {
     }
   };
 
-  if (syncStatus === 'initializing' || syncStatus === 'error' || (syncStatus === 'syncing' && isInitial)) {
+  if (syncStatus === 'initializing' || syncStatus === 'error' || (syncStatus === 'syncing' && isInitialSync)) {
     return (
       <div style={{
         position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
