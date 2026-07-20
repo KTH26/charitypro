@@ -545,4 +545,9 @@ app.get('/debug/fix-sync-changes', async (c) => {
   }
 });
 
+app.get('/debug/types', async (c) => {
+  const types = await c.env.DB.prepare('SELECT type, count(*) as c FROM sync_changes GROUP BY type').all();
+  return c.json({ types: types.results });
+});
+
 export const onRequest = handle(app)
