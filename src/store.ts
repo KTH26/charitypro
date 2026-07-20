@@ -500,12 +500,6 @@ export interface AppState {
   removeExpenseFromQueue: (id: string) => void;
 }
 
-const mockTasks: Task[] = [
-  { id: 'task1', donorId: '2', title: 'Follow up on pending check', notes: 'Check #1042 from Yitzchok Cohen has not cleared yet.', dueDate: '2025-06-28', priority: 'high', type: 'call', completed: false, createdAt: '2025-06-22' },
-  { id: 'task2', donorId: '3', title: 'Collect outstanding balance $1,200', notes: 'Chaim has an open balance from March pledge.', dueDate: '2025-07-05', priority: 'high', type: 'call', completed: false, createdAt: '2025-06-20' },
-  { id: 'task3', donorId: '1', title: 'Send thank you for $1,000 donation', dueDate: '2025-06-25', priority: 'low', type: 'email', completed: false, createdAt: '2025-06-21' },
-];
-
 export const uid = () => {
   return Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 };
@@ -587,7 +581,7 @@ export const useStore = create<AppState>()(
         }
       ],
       bills: [],
-      tasks: mockTasks,
+      tasks: [],
       uploadedExpenseQueue: [],
       accountTransfers: [],
       matchedBankTransactions: [],

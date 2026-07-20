@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { findExplicitDeletes } from '../components/SyncEngineHardened';
-import { SYNC_REGISTRY, type AppState } from '../store';
+import { SYNC_REGISTRY, useStore, type AppState } from '../store';
 
 const stateWith = (overrides: Partial<AppState>): AppState => ({
   donors: [],
@@ -45,6 +45,10 @@ describe('SyncEngineHardened safety contract', () => {
       'recurringExpenses',
       'recurringPayroll'
     ]));
+  });
+
+  it('does not seed sample tasks into a fresh installation', () => {
+    expect(useStore.getState().tasks).toEqual([]);
   });
 
   it('creates a deletion intent only for a record removed in a local transition', () => {

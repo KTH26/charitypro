@@ -94,6 +94,30 @@ const captureExplicitDeletes = (state: AppState, prevState: AppState) => {
   });
 };
 
+const clearServerConfirmedConflicts = async () => {
+  const state = useStore.getState();
+  if (state.syncConflicts.length === 0) return;
+
+  const serverStateRaw = await idbGet<string>(SERVER_STATE_KEY);
+  if (!serverStateRaw) return;
+  const serverState = JSON.parse(serverStateRaw);
+  const remaining = state.syncConflicts.filter(conflict => {
+    const collection = (serverState as any)[conflict.type];
+    if (!Array.isArray(collection) || !conflict.localData) return true;
+    const confirmed = collection.find((record: any) => record?.id === conflict.id);
+    return !confirmed || JSON.stringify(confirmed) !== JSON.stringify(conflict.localData);
+  });
+
+  if (remaining.length !== state.syncConflicts.length) {
+    isApplyingServerState = true;
+    try {
+      useStore.setState({ syncConflicts: remaining });
+    } finally {
+      isApplyingServerState = false;
+    }
+  }
+};
+
 export const SyncEngineHardened: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<'initializing' | 'offline' | 'online' | 'conflict' | 'error' | 'syncing'>('initializing');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
@@ -334,6 +358,7 @@ export const SyncEngineHardened: React.FC = () => {
       for (const key of SINGLETON_KEYS) (emptyServerState as any)[key] = (useStore.getState() as any)[key];
       await idbSet(SERVER_STATE_KEY, JSON.stringify(emptyServerState));
     }
+    await clearServerConfirmedConflicts();
     await idbSet(SERVER_CURSOR_KEY, currentCursor);
     await idbSet(CLIENT_GENERATION_KEY, currentGen);
     if (isInitial) setSyncStatus('online');
