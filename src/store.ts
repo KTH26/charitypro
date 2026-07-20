@@ -1983,12 +1983,12 @@ methodsToWrap.forEach(method => {
       if (!isRemote.current) {
         // Auto-generate IDs for single 'add' methods if missing so the event matches the local state
         if (method.startsWith('add') && args[0] && typeof args[0] === 'object' && !args[0].id) {
-            args[0].id = require('./store').uid();
+            args[0].id = uid();
         }
 
         if (method === 'bulkAddTransactions' && Array.isArray(args[0])) {
           const txs = args[0];
-          txs.forEach((tx: any) => { if (!tx.id) tx.id = require('./store').uid(); });
+          txs.forEach((tx: any) => { if (!tx.id) tx.id = uid(); });
           for (let i = 0; i < txs.length; i += 500) {
             pushEvent('bulkAddTransactions', [txs.slice(i, i + 500)]);
           }
