@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findExplicitDeletes } from '../components/SyncEngineHardened';
+import { findExplicitDeletes, mergeServerRecords } from '../components/SyncEngineHardened';
 import { SYNC_REGISTRY, useStore, type AppState } from '../store';
 
 const stateWith = (overrides: Partial<AppState>): AppState => ({
@@ -74,5 +74,19 @@ describe('SyncEngineHardened safety contract', () => {
     const current = stateWith({ donors: [{ id: 'donor-1', name: 'After' } as any] });
 
     expect(findExplicitDeletes(current, previous)).toEqual([]);
+  });
+
+  it('does not resurrect a server-deleted record from a stale browser', () => {
+    const staleLocalDonor = { id: 'donor-1', name: 'Already deleted' };
+
+    expect(mergeServerRecords('donors', [], [staleLocalDonor], {
+      'donors_donor-1': 2
+    })).toEqual([]);
+  });
+
+  it('preserves a genuinely local-only record the server has never seen', () => {
+    const offlineDonor = { id: 'donor-2', name: 'Created offline' };
+
+    expect(mergeServerRecords('donors', [], [offlineDonor], {})).toEqual([offlineDonor]);
   });
 });

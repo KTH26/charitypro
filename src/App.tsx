@@ -38,17 +38,11 @@ function App() {
       const unsub = useStore.persist.onFinishHydration(() => {
         setHasHydrated(true);
         useStore.getState().checkSystemAccounts();
-        useStore.getState().processRecurringExpenses();
-        useStore.getState().processRecurringPayroll();
-        useStore.getState().processRecurringPayments();
         useStore.getState().recalculateBalances(); // always recompute from source of truth
       });
       if (useStore.persist.hasHydrated()) {
         setHasHydrated(true);
         useStore.getState().checkSystemAccounts();
-        useStore.getState().processRecurringExpenses();
-        useStore.getState().processRecurringPayroll();
-        useStore.getState().processRecurringPayments();
         useStore.getState().recalculateBalances(); // always recompute from source of truth
       }
       return unsub;

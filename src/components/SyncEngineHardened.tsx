@@ -83,6 +83,27 @@ export const findExplicitDeletes = (state: AppState, prevState: AppState): Delet
   return removed;
 };
 
+export const mergeServerRecords = <T extends { id: string }>(
+  collection: string,
+  serverRecords: T[],
+  localRecords: T[],
+  serverRevisions: Record<string, number>
+): T[] => {
+  const serverMap = new Map(serverRecords.map(record => [record.id, record]));
+  const merged = [...serverRecords];
+
+  for (const localRecord of localRecords) {
+    // A revision without an active server record means the server has seen and
+    // deleted it. Only records truly unknown to the server are local-only.
+    const syncId = `${collection}_${localRecord.id}`;
+    if (!serverMap.has(localRecord.id) && serverRevisions[syncId] === undefined) {
+      merged.push(localRecord);
+    }
+  }
+
+  return merged;
+};
+
 const captureExplicitDeletes = (state: AppState, prevState: AppState) => {
   const removed = findExplicitDeletes(state, prevState);
   if (removed.length === 0) return;
@@ -322,16 +343,7 @@ export const SyncEngineHardened: React.FC = () => {
             const localArr = (currentLocalState as any)[k] as any[] || [];
             const serverArr = (serverState as any)[k] as any[] || [];
             
-            const serverMap = new Map(serverArr.map(x => [x.id, x]));
-            const newArr = [...serverArr]; // Start with absolute truth from server
-            
-            // Re-append any local records that the server has never seen
-            for (const localRec of localArr) {
-                if (!serverMap.has(localRec.id)) {
-                    newArr.push(localRec);
-                }
-            }
-            (mergedState as any)[k] = newArr;
+            (mergedState as any)[k] = mergeServerRecords(k, serverArr, localArr, serverRevisions);
         }
         
         isApplyingServerState = true;
