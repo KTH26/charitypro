@@ -17,9 +17,19 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.get('/v3/accounts'");
     expect(source).toContain("app.post('/v3/payments'");
     expect(source).toContain("app.delete('/v3/payments/:id'");
+    expect(source).toContain('AS calculated_balance');
+    expect(source).toContain('WITH exchange_rate AS');
+    expect(source).toContain('LEFT JOIN tx_source');
     expect(source).toContain('processed_mutations');
     expect(source).toContain('audit_log');
     expect(source).toContain('LIMIT ? OFFSET ?');
+  });
+  it('keeps online pages independent from the local synchronization engine', () => {
+    const appSource = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8');
+    const accountsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineAccounts.tsx'), 'utf8');
+    expect(appSource).toContain("window.location.pathname.startsWith('/online/')");
+    expect(appSource).toContain('path="/online/accounts"');
+    expect(accountsSource).toContain("fetch('/api/v3/accounts')");
   });
   it('JWT Middleware - (To be implemented using miniflare)', () => {
     // A complete integration test of the Cloudflare Worker would use Miniflare,

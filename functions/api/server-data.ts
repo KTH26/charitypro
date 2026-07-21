@@ -137,12 +137,76 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
     const result = await c.env.DB.prepare(`
-      SELECT id,data,revision,updated_at
-      FROM sync_records
-      WHERE type='accounts' AND is_deleted=0
-      ORDER BY json_extract(data,'$.type'), lower(json_extract(data,'$.name'))
+      WITH exchange_rate AS (
+        SELECT COALESCE((SELECT CAST(json_extract(data,'$') AS REAL) FROM sync_records WHERE type='exchangeRate' AND is_deleted=0 LIMIT 1),1.35) AS value
+      ), tx_source AS (
+        SELECT a.id AS account_id, SUM(
+          CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN -1 ELSE 1 END *
+          CASE WHEN json_extract(a.data,'$.currency')='CAD' AND json_extract(t.data,'$.currency')='USD'
+            THEN COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)
+            ELSE COALESCE(json_extract(t.data,'$.amount'),0) END) AS amount
+        FROM sync_records t JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(t.data,'$.sourceAccountId') AND a.is_deleted=0
+        WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved'
+          AND NOT (a.id='sys-undeposited-funds' AND json_extract(t.data,'$.depositStatus')='deposited')
+        GROUP BY a.id
+      ), tx_offset AS (
+        SELECT a.id AS account_id, SUM(
+          CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN 1 ELSE -1 END *
+          CASE WHEN json_extract(a.data,'$.currency')='CAD' AND json_extract(t.data,'$.currency')='USD'
+            THEN COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)
+            ELSE COALESCE(json_extract(t.data,'$.amount'),0) END) AS amount
+        FROM sync_records t JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(t.data,'$.offsetAccountId') AND a.is_deleted=0
+        WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved'
+        GROUP BY a.id
+      ), bill_source AS (
+        SELECT a.id AS account_id, SUM(
+          CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN 1 ELSE -1 END *
+          COALESCE(json_extract(b.data,'$.amount'),0) * CASE WHEN json_extract(a.data,'$.currency')='CAD' AND json_extract(b.data,'$.currency')='USD' THEN er.value ELSE 1 END) AS amount
+        FROM sync_records b JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(b.data,'$.sourceAccountId') AND a.is_deleted=0 CROSS JOIN exchange_rate er
+        WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid'
+        GROUP BY a.id
+      ), bill_credit AS (
+        SELECT a.id AS account_id, SUM(
+          CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN -1 ELSE 1 END *
+          COALESCE(json_extract(b.data,'$.amount'),0) * CASE WHEN json_extract(a.data,'$.currency')='CAD' AND json_extract(b.data,'$.currency')='USD' THEN er.value ELSE 1 END) AS amount
+        FROM sync_records b JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(b.data,'$.creditAccountId') AND a.is_deleted=0 CROSS JOIN exchange_rate er
+        WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid'
+        GROUP BY a.id
+      ), bill_category AS (
+        SELECT a.id AS account_id, SUM(
+          CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN -1 ELSE 1 END *
+          COALESCE(json_extract(b.data,'$.amount'),0) * CASE WHEN json_extract(a.data,'$.currency')='CAD' AND json_extract(b.data,'$.currency')='USD' THEN er.value ELSE 1 END) AS amount
+        FROM sync_records b JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(b.data,'$.category') AND a.is_deleted=0 CROSS JOIN exchange_rate er
+        WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid'
+        GROUP BY a.id
+      ), transfer_from AS (
+        SELECT a.id AS account_id, SUM(CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN 1 ELSE -1 END * COALESCE(json_extract(x.data,'$.amount'),0)) AS amount
+        FROM sync_records x JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(x.data,'$.fromAccountId') AND a.is_deleted=0
+        WHERE x.type='accountTransfers' AND x.is_deleted=0
+        GROUP BY a.id
+      ), transfer_to AS (
+        SELECT a.id AS account_id, SUM(CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN -1 ELSE 1 END * COALESCE(json_extract(x.data,'$.amount'),0)) AS amount
+        FROM sync_records x JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(x.data,'$.toAccountId') AND a.is_deleted=0
+        WHERE x.type='accountTransfers' AND x.is_deleted=0
+        GROUP BY a.id
+      )
+      SELECT a.id,a.data,a.revision,a.updated_at,
+        CAST(COALESCE(json_extract(a.data,'$.startingBalance'),0) AS REAL)
+        + COALESCE(ts.amount,0) + COALESCE(txo.amount,0)
+        + COALESCE(bs.amount,0) + COALESCE(bc.amount,0) + COALESCE(bcat.amount,0)
+        + COALESCE(tf.amount,0) + COALESCE(tt.amount,0) AS calculated_balance
+      FROM sync_records a
+      LEFT JOIN tx_source ts ON ts.account_id=a.id
+      LEFT JOIN tx_offset txo ON txo.account_id=a.id
+      LEFT JOIN bill_source bs ON bs.account_id=a.id
+      LEFT JOIN bill_credit bc ON bc.account_id=a.id
+      LEFT JOIN bill_category bcat ON bcat.account_id=a.id
+      LEFT JOIN transfer_from tf ON tf.account_id=a.id
+      LEFT JOIN transfer_to tt ON tt.account_id=a.id
+      WHERE a.type='accounts' AND a.is_deleted=0
+      ORDER BY json_extract(a.data,'$.type'), lower(json_extract(a.data,'$.name'))
     `).all();
-    return c.json({ success: true, items: result.results.map(parseRecord) });
+    return c.json({ success: true, items: result.results.map((row: any) => ({ ...parseRecord(row), balance: Number(row.calculated_balance || 0) })) });
   });
 
   app.post('/v3/payments', async (c: any) => {
