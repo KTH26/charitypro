@@ -31,7 +31,7 @@ export const OnlinePaymentForm: React.FC<{
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/v3/accounts', { signal: controller.signal })
+    fetch('/api/v3/accounts?limit=100', { signal: controller.signal })
       .then(async response => {
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load accounts.');

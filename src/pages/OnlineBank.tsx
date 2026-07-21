@@ -65,7 +65,7 @@ export const OnlineBank: React.FC = () => {
   useEffect(() => { void loadState(); }, [loadState]);
   useEffect(() => { const interval = window.setInterval(() => void loadState(true), 3000); return () => window.clearInterval(interval); }, [loadState]);
   useEffect(() => { if (selectedBank) void loadFeed(); }, [selectedBank]);
-  useEffect(() => { fetch('/api/v3/accounts').then(response => response.json()).then(data => { if (data.success) setAllAccounts(data.items); }).catch(() => undefined); }, []);
+  useEffect(() => { fetch('/api/v3/accounts?limit=100').then(response => response.json()).then(data => { if (data.success) setAllAccounts(data.items); }).catch(() => undefined); }, []);
 
   const openDepositMatch = async (transaction: BankTransaction) => {
     setMatching(transaction); setSelectedIds([]); setCandidates([]); setError(''); setNotice('');

@@ -1,4 +1,5 @@
 import type { Hono } from 'hono';
+import { validatePayload } from './validation';
 
 const parseRecord = (row: any) => ({
   ...JSON.parse(String(row.data)),
@@ -9,6 +10,20 @@ const parseRecord = (row: any) => ({
 
 const boundedLimit = (raw?: string) => Math.min(100, Math.max(1, Number.parseInt(raw || '50', 10) || 50));
 const boundedPage = (raw?: string) => Math.max(1, Number.parseInt(raw || '1', 10) || 1);
+
+const genericCollections: Record<string, { read: string; create: string; update: string; delete: string }> = {
+  pledges: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
+  recurringPayments: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
+  vendors: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
+  tasks: { read: 'system.manage', create: 'system.manage', update: 'system.manage', delete: 'system.manage' },
+  projects: { read: 'system.manage', create: 'system.manage', update: 'system.manage', delete: 'system.manage' },
+  fundraisers: { read: 'donors.read', create: 'donors.create', update: 'donors.update', delete: 'donors.delete' },
+  employees: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
+  t4aSlips: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
+  recurringPayroll: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
+  recurringExpenses: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
+  accountTransfers: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' }
+};
 
 export const depositCandidateWindow = (bankDate: string) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(bankDate)) return null;
@@ -58,6 +73,151 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       payments: paymentSummary.results[0] || {},
       latestChangeId: latestChange.results[0]?.latest_change_id || 0
     });
+  });
+
+  app.get('/v3/records/:type', async (c: any) => {
+    const type = String(c.req.param('type') || '');
+    const permissions = genericCollections[type];
+    if (!permissions) return c.json({ success: false, error: 'Unsupported cloud record type.' }, 404);
+    const denied = requirePermission(c, permissions.read);
+    if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit'));
+    const page = boundedPage(c.req.query('page'));
+    const offset = (page - 1) * limit;
+    const search = String(c.req.query('search') || '').trim().toLowerCase();
+    const condition = search ? ' AND lower(data) LIKE ?' : '';
+    const bindings = search ? [`%${search}%`] : [];
+    const [listResult, countResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE type=? AND is_deleted=0${condition} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`).bind(type, ...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE type=? AND is_deleted=0${condition}`).bind(type, ...bindings)
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    return c.json({ success: true, items: listResult.results.map(parseRecord), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.post('/v3/records/:type', async (c: any) => {
+    const type = String(c.req.param('type') || '');
+    const permissions = genericCollections[type];
+    if (!permissions) return c.json({ success: false, error: 'Unsupported cloud record type.' }, 404);
+    const denied = requirePermission(c, permissions.create);
+    if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-record-create-${type}-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data)) return c.json({ success: false, error: 'Record data is required.' }, 400);
+    const id = String(body.data.id || crypto.randomUUID()).trim();
+    if (!id || id.length > 200) return c.json({ success: false, error: 'A valid record ID is required.' }, 400);
+    const record = { ...body.data, id };
+    const validation = validatePayload(type, record);
+    if (!validation.success) return c.json({ success: false, error: 'The record contains invalid data.' }, 400);
+    const now = Date.now();
+    const data = JSON.stringify(record);
+    const operationId = `${mutationId}-insert`;
+    const response = { success: true, item: { ...record, revision: 1, updatedAt: now } };
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?, ?,1,0,?)').bind(id, type, data, now, operationId),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(id, type, data, now, mutationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, type, data, userId, userEmail, now, mutationId, operationId, 'Created through generic server-driven record API'),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response, 201);
+    } catch (error: any) {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: `Unable to create cloud record: ${error.message}` }, 409);
+    }
+  });
+
+  app.put('/v3/records/:type/:id', async (c: any) => {
+    const type = String(c.req.param('type') || '');
+    const id = String(c.req.param('id') || '');
+    const permissions = genericCollections[type];
+    if (!permissions) return c.json({ success: false, error: 'Unsupported cloud record type.' }, 404);
+    const denied = requirePermission(c, permissions.update);
+    if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-record-update-${type}-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare('SELECT data,revision FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(type, id).first();
+    if (!current) return c.json({ success: false, error: 'Cloud record not found.' }, 404);
+    const expectedRevision = Number(body.revision);
+    if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
+    if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data)) return c.json({ success: false, error: 'Record data is required.' }, 400);
+    const existing = JSON.parse(String(current.data));
+    const record = { ...existing, ...body.data, id };
+    const validation = validatePayload(type, record);
+    if (!validation.success) return c.json({ success: false, error: 'The record contains invalid data.' }, 400);
+    const now = Date.now();
+    const nextRevision = expectedRevision + 1;
+    const data = JSON.stringify(record);
+    const operationId = `${mutationId}-update`;
+    const response = { success: true, item: { ...record, revision: nextRevision, updatedAt: now } };
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type=? AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END').bind(operationId, type, id, expectedRevision),
+        c.env.DB.prepare('UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(data, nextRevision, now, operationId, type, id, expectedRevision),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(mutationId, operationId, type, id, nextRevision),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',?,revision,?,data,?,?,updated_at,?,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(expectedRevision, current.data, userId, userEmail, mutationId, operationId, 'Updated through generic server-driven record API', type, id, nextRevision),
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response);
+    } catch (error: any) {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: `This record was changed by another user. The latest version has been reloaded. (${error.message})`, conflict: true }, 409);
+    }
+  });
+
+  app.delete('/v3/records/:type/:id', async (c: any) => {
+    const type = String(c.req.param('type') || '');
+    const id = String(c.req.param('id') || '');
+    const permissions = genericCollections[type];
+    if (!permissions) return c.json({ success: false, error: 'Unsupported cloud record type.' }, 404);
+    const denied = requirePermission(c, permissions.delete);
+    if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-record-delete-${type}-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare('SELECT data,revision FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(type, id).first();
+    if (!current) return c.json({ success: true, deleted: true, alreadyDeleted: true });
+    const expectedRevision = Number(body.revision);
+    if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
+    const now = Date.now();
+    const nextRevision = expectedRevision + 1;
+    const operationId = `${mutationId}-delete`;
+    const response = { success: true, deleted: true, id, revision: nextRevision };
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type=? AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END').bind(operationId, type, id, expectedRevision),
+        c.env.DB.prepare('UPDATE sync_records SET is_deleted=1,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(nextRevision, now, operationId, type, id, expectedRevision),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'delete','{}',updated_at,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(mutationId, operationId, type, id, nextRevision),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'delete',?,revision,?,NULL,?,?,updated_at,?,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(expectedRevision, current.data, userId, userEmail, mutationId, operationId, 'Deleted through generic server-driven record API', type, id, nextRevision),
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response);
+    } catch (error: any) {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: `This record was changed by another user. The latest version has been reloaded. (${error.message})`, conflict: true }, 409);
+    }
   });
 
   app.get('/v3/payments', async (c: any) => {
@@ -669,6 +829,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/accounts', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit'));
+    const page = boundedPage(c.req.query('page'));
+    const offset = (page - 1) * limit;
+    const search = String(c.req.query('search') || '').trim().toLowerCase();
     const result = await c.env.DB.prepare(`
       WITH exchange_rate AS (
         SELECT COALESCE((SELECT CAST(json_extract(data,'$') AS REAL) FROM sync_records WHERE type='exchangeRate' AND is_deleted=0 LIMIT 1),1.35) AS value
@@ -737,9 +901,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       LEFT JOIN transfer_from tf ON tf.account_id=a.id
       LEFT JOIN transfer_to tt ON tt.account_id=a.id
       WHERE a.type='accounts' AND a.is_deleted=0
+        AND (?='' OR lower(COALESCE(json_extract(a.data,'$.name'),'')) LIKE ?)
       ORDER BY json_extract(a.data,'$.type'), lower(json_extract(a.data,'$.name'))
-    `).all();
-    return c.json({ success: true, items: result.results.map((row: any) => ({ ...parseRecord(row), balance: Number(row.calculated_balance || 0) })) });
+      LIMIT ? OFFSET ?
+    `).bind(search, `%${search}%`, limit, offset).all();
+    const countResult: any = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='accounts' AND is_deleted=0 AND (?='' OR lower(COALESCE(json_extract(data,'$.name'),'')) LIKE ?)").bind(search, `%${search}%`).first();
+    const total = Number(countResult?.count || 0);
+    return c.json({ success: true, items: result.results.map((row: any) => ({ ...parseRecord(row), balance: Number(row.calculated_balance || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.post('/v3/payments', async (c: any) => {

@@ -4,21 +4,25 @@ type Account = { id: string; name: string; type: string; subType?: string; curre
 
 export const OnlineAccounts: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
     try {
-      const response = await fetch('/api/v3/accounts');
+      const response = await fetch(`/api/v3/accounts?page=${page}&limit=50&search=${encodeURIComponent(search)}`);
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || `Request failed (${response.status})`);
       setAccounts(data.items);
+      setTotalPages(Math.max(1, Number(data.totalPages || 1)));
     } catch (e: any) {
       if (!silent) setError(e.message || 'Unable to load accounts.');
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [page, search]);
   useEffect(() => {
     void load();
     const interval = window.setInterval(() => void load(true), 3000);
@@ -36,6 +40,7 @@ export const OnlineAccounts: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
           <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Chart of Accounts</h1><div style={{ color: 'var(--text-muted)' }}>Balances calculated directly from cloud payments, bills, and transfers. Updates automatically every 3 seconds.</div></div>
         </div>
+        <section className="card" style={{ padding: 16, marginBottom: 18 }}><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search accounts" /></section>
         {error && <div className="card" style={{ padding: 16, color: 'var(--red)' }}>{error}</div>}
         {loading ? <div className="card" style={{ padding: 40, textAlign: 'center' }}>Calculating cloud balances…</div> : (
           <div style={{ display: 'grid', gap: 18 }}>
@@ -49,6 +54,7 @@ export const OnlineAccounts: React.FC = () => {
             ))}
           </div>
         )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14 }}><span>Page {page} of {totalPages} · 50 accounts maximum per page</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
       </div>
     </main>
   );

@@ -25,6 +25,10 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.post('/v3/bank/match-deposit'");
     expect(source).toContain("app.get('/v3/bank/bill-candidates'");
     expect(source).toContain("app.post('/v3/bank/match-outgoing'");
+    expect(source).toContain("app.get('/v3/records/:type'");
+    expect(source).toContain("app.post('/v3/records/:type'");
+    expect(source).toContain("app.put('/v3/records/:type/:id'");
+    expect(source).toContain("app.delete('/v3/records/:type/:id'");
     expect(source).toContain("app.get('/v3/accounts'");
     expect(source).toContain("app.post('/v3/payments'");
     expect(source).toContain("app.delete('/v3/payments/:id'");
@@ -56,7 +60,9 @@ describe('Backend API & Security Rules', () => {
     expect(layoutSource).not.toContain("from '../store'");
     expect(appSource).toContain('path="*" element={<Navigate to="/" replace />}');
     expect(appSource).toContain('path="/online/accounts"');
-    expect(accountsSource).toContain("fetch('/api/v3/accounts')");
+    expect(accountsSource).toContain('limit=50');
+    expect(accountsSource).toContain('Previous');
+    expect(accountsSource).toContain('Next');
     expect(accountsSource).toContain('window.setInterval');
     const donorsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineDonors.tsx'), 'utf8');
     expect(appSource).toContain('path="/online/donors"');

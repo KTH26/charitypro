@@ -138,4 +138,28 @@ describe('server-driven bank deposit matching', () => {
     expect(transferData.toAccountId).toBe('cash-1');
     expect(transferData.bankTransactionId).toBe('bank-transfer-1');
   });
+
+  it('creates, updates, and deletes a generic cloud record with revisions and audit history', async () => {
+    const db = new MockD1(); databases.push(db);
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const pledge = { id: 'pledge-1', donorId: 'donor-1', amount: 100, currency: 'CAD', date: '2026-07-21' };
+    const created = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'create-pledge' }, body: JSON.stringify({ data: pledge }) }, { DB: db } as any);
+    expect(created.status).toBe(201);
+    expect((await created.json() as any).item.revision).toBe(1);
+
+    const updated = await app.request('/v3/records/pledges/pledge-1', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'update-pledge' }, body: JSON.stringify({ revision: 1, data: { amount: 125 } }) }, { DB: db } as any);
+    const updatedBody = await updated.json() as any;
+    if (!updated.ok) throw new Error(JSON.stringify(updatedBody));
+    expect(updated.status).toBe(200);
+    expect(updatedBody.item.amount).toBe(125);
+
+    const removed = await app.request('/v3/records/pledges/pledge-1', { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'delete-pledge' }, body: JSON.stringify({ revision: 2 }) }, { DB: db } as any);
+    expect(removed.status).toBe(200);
+    const row: any = db.database.prepare("SELECT revision,is_deleted FROM sync_records WHERE type='pledges' AND id='pledge-1'").get();
+    expect(Number(row.revision)).toBe(3);
+    expect(Number(row.is_deleted)).toBe(1);
+    expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='pledges'").get() as any).count)).toBe(3);
+  });
 });

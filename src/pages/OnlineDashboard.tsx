@@ -11,12 +11,12 @@ export const OnlineDashboard: React.FC = () => {
       fetch('/api/v3/donors?limit=1').then(response => response.json()),
       fetch('/api/v3/payments?limit=1&status=approved').then(response => response.json()),
       fetch('/api/v3/bills?limit=1&status=open').then(response => response.json()),
-      fetch('/api/v3/accounts').then(response => response.json())
+      fetch('/api/v3/accounts?limit=1').then(response => response.json())
     ]).then(([donors, payments, expenses, accounts]) => setSummary({
       donors: Number(donors.total || 0),
       payments: Number(payments.total || 0),
       expenses: Number(expenses.total || 0),
-      assets: Array.isArray(accounts.items) ? accounts.items.filter((account: any) => account.type === 'asset').reduce((sum: number, account: any) => sum + Number(account.calculatedBalanceCAD || 0), 0) : 0
+      assets: Number(accounts.total || 0)
     })).catch(() => setError('The cloud summary could not be loaded. Your records were not changed.'));
   }, []);
 
@@ -24,7 +24,7 @@ export const OnlineDashboard: React.FC = () => {
     { label: 'Donors', value: summary.donors.toLocaleString(), href: '/donors' },
     { label: 'Approved Payments', value: summary.payments.toLocaleString(), href: '/payments' },
     { label: 'Open Expenses', value: summary.expenses.toLocaleString(), href: '/expenses' },
-    { label: 'Asset Balance', value: `$${summary.assets.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, href: '/chart-of-accounts' }
+    { label: 'Accounts', value: summary.assets.toLocaleString(), href: '/chart-of-accounts' }
   ];
 
   return <main style={{ minHeight: 'calc(100vh - 76px)', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}><div style={{ maxWidth: 1400, margin: '0 auto' }}>

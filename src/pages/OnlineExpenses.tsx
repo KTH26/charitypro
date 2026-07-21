@@ -39,7 +39,7 @@ export const OnlineExpenses: React.FC = () => {
   }, [page, search, status]);
 
   useEffect(() => {
-    fetch('/api/v3/accounts').then(response => response.json()).then(data => { if (data.success) setAccounts(data.items); }).catch(() => undefined);
+    fetch('/api/v3/accounts?limit=100').then(response => response.json()).then(data => { if (data.success) setAccounts(data.items); }).catch(() => undefined);
   }, []);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const interval = window.setInterval(() => void load(true), 3000); return () => window.clearInterval(interval); }, [load]);
