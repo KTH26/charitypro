@@ -3,10 +3,7 @@ pages_build_output_dir = "dist"
 compatibility_date = "2024-03-20"
 
 # PRODUCTION ENVIRONMENT
-[vars]
-CF_ACCESS_ISSUER = "https://gentle-forest-7be4.cloudflareaccess.com"
-CF_ACCESS_AUDIENCE = "139dcc327d61b3b154cf69decb5302f112adfd4d4bc48ed4f225f0bcffb5b44d"
-
+# Cloudflare Access values are configured directly as production Pages secrets.
 [[d1_databases]]
 binding = "DB"
 database_name = "charity-db-online"
