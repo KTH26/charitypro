@@ -338,7 +338,7 @@ export const SYNC_REGISTRY = {
   tasks: { classification: 'synced-record', permission: 'tasks.read' },
   uploadedExpenseQueue: { classification: 'device-local' },
   accountTransfers: { classification: 'synced-record', permission: 'accountTransfers.read' },
-  matchedBankTransactions: { classification: 'device-local' },
+  matchedBankTransactions: { classification: 'synced-singleton', permission: 'accounts.read' },
   needsReviewBankTransactions: { classification: 'device-local' },
   googleSheetSyncUrl: { classification: 'server-secret' },
   solaApiKey: { classification: 'server-secret' },
@@ -635,7 +635,10 @@ export const useStore = create<AppState>()(
           : [...state.dismissedSolaRefs, ref] 
       })),
       setDonorSortBy: (key) => set({ donorSortBy: key }),
-      setBankFeed: (accountId, feed) => set(state => ({ bankFeeds: { ...state.bankFeeds, [accountId]: feed } })),
+      setBankFeed: (accountId, feed) => {
+        set(state => ({ bankFeeds: { ...state.bankFeeds, [accountId]: feed } }));
+        get().autoMatchBankTransactions();
+      },
 
       addDonor: (donor) => set(state => {
         const nextNum = 1001 + state.donors.length;
@@ -1733,61 +1736,64 @@ export const useStore = create<AppState>()(
         const currentBankIds = new Set<string>();
         Object.values(newState.bankFeeds).forEach(feed => feed.forEach((t: any) => currentBankIds.add(t.id)));
 
-        // Clean orphaned IDs
-        newState.bills = newState.bills.map(b => (b.bankTransactionId && !currentBankIds.has(b.bankTransactionId) ? { ...b, bankTransactionId: undefined } : b));
-        newState.accountTransfers = newState.accountTransfers.map(tr => (tr.bankTransactionId && !currentBankIds.has(tr.bankTransactionId) ? { ...tr, bankTransactionId: undefined } : tr));
-        newState.transactions = newState.transactions.map(tx => (tx.bankTransactionId && !currentBankIds.has(tx.bankTransactionId) ? { ...tx, bankTransactionId: undefined } : tx));
-
         Object.keys(newState.bankFeeds).forEach(accountId => {
           newState.bankFeeds[accountId].forEach((t: any) => {
             if (!newMatched.has(t.id)) {
               if (t.amount < 0) {
-                const matchingBill = newState.bills.find(b => 
+                const matchingBills = newState.bills.filter(b =>
                   b.status === 'paid' && 
                   b.sourceAccountId === accountId && 
                   b.amount === Math.abs(t.amount) &&
                   (b.dueDate === t.date || b.paidDate === t.date) &&
-                  !b.bankTransactionId
+                  (!b.bankTransactionId || !currentBankIds.has(b.bankTransactionId))
                 );
-                if (matchingBill) {
+                if (matchingBills.length === 1) {
+                  const matchingBill = matchingBills[0];
+                  if (matchingBill.bankTransactionId) newMatched.delete(matchingBill.bankTransactionId);
                   matchingBill.bankTransactionId = t.id;
                   newMatched.add(t.id);
                   return;
                 }
-                const matchingTransfer = newState.accountTransfers.find(tr =>
+                const matchingTransfers = newState.accountTransfers.filter(tr =>
                   tr.fromAccountId === accountId &&
                   tr.amount === Math.abs(t.amount) &&
                   tr.date === t.date &&
-                  !tr.bankTransactionId
+                  (!tr.bankTransactionId || !currentBankIds.has(tr.bankTransactionId))
                 );
-                if (matchingTransfer) {
+                if (matchingTransfers.length === 1) {
+                  const matchingTransfer = matchingTransfers[0];
+                  if (matchingTransfer.bankTransactionId) newMatched.delete(matchingTransfer.bankTransactionId);
                   matchingTransfer.bankTransactionId = t.id;
                   newMatched.add(t.id);
                   return;
                 }
               } else {
-                const matchingTx = newState.transactions.find(tx =>
+                const matchingTransactions = newState.transactions.filter(tx =>
                   tx.type === 'approved' &&
                   tx.sourceAccountId === accountId &&
                   tx.amount === Math.abs(t.amount) &&
                   tx.date === t.date &&
-                  !tx.bankTransactionId &&
+                  (!tx.bankTransactionId || !currentBankIds.has(tx.bankTransactionId)) &&
                   !tx.isBatch
                 );
-                if (matchingTx) {
+                if (matchingTransactions.length === 1) {
+                  const matchingTx = matchingTransactions[0];
+                  if (matchingTx.bankTransactionId) newMatched.delete(matchingTx.bankTransactionId);
                   matchingTx.bankTransactionId = t.id;
                   newMatched.add(t.id);
                   return;
                 }
                 // Batch deposit
-                const matchingBatch = newState.transactions.find(tx =>
+                const matchingBatches = newState.transactions.filter(tx =>
                   tx.isBatch &&
                   tx.sourceAccountId === accountId &&
                   tx.amount === Math.abs(t.amount) &&
                   tx.date === t.date &&
-                  !tx.bankTransactionId
+                  (!tx.bankTransactionId || !currentBankIds.has(tx.bankTransactionId))
                 );
-                if (matchingBatch) {
+                if (matchingBatches.length === 1) {
+                  const matchingBatch = matchingBatches[0];
+                  if (matchingBatch.bankTransactionId) newMatched.delete(matchingBatch.bankTransactionId);
                   matchingBatch.bankTransactionId = t.id;
                   newMatched.add(t.id);
                   return;

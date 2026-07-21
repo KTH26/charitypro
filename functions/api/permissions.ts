@@ -49,6 +49,12 @@ export const getRequiredPermission = (collection: string, operation: 'insert' | 
       if (operation === 'update') return 'transactions.approve'; // Simplified for now
       if (operation === 'delete') return 'transactions.reverse';
       break;
+    case 'matchedBankTransactions':
+      if ((operation as string) === 'read') return 'transactions.read';
+      if (operation === 'insert') return 'transactions.create';
+      if (operation === 'update') return 'transactions.approve';
+      if (operation === 'delete') return 'transactions.reverse';
+      break;
     case 'bills':
     case 'vendors':
       if (operation === 'insert') return 'bills.create';

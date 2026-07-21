@@ -34,6 +34,16 @@ describe('Backend API & Security Rules', () => {
   });
 
   describe('Zod Payload Validation', () => {
+    it('accepts synchronized bank-match history as a string array', () => {
+      expect(validatePayload('matchedBankTransactions', ['bank-tx-1', 'bank-tx-2']).success).toBe(true);
+      expect(validatePayload('matchedBankTransactions', ['bank-tx-1', '']).success).toBe(false);
+    });
+
+    it('accepts only a positive finite exchange rate', () => {
+      expect(validatePayload('exchangeRate', 1.35).success).toBe(true);
+      expect(validatePayload('exchangeRate', 0).success).toBe(false);
+    });
+
     it('Rejects invalid money amounts (NaN, string, infinity)', () => {
       const badTx = { amount: NaN, date: '2026-07-17', accountId: 'acc1', type: 'expense' };
       const res1 = validatePayload('transactions', badTx);

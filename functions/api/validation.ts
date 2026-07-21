@@ -36,6 +36,10 @@ export const validatePayload = (type: string, data: any) => {
       return TransactionSchema.safeParse(data);
     case 'bills':
       return BillSchema.safeParse(data);
+    case 'exchangeRate':
+      return z.number().finite().positive().safeParse(data);
+    case 'matchedBankTransactions':
+      return z.array(z.string().min(1)).safeParse(data);
     default:
       // If no strict schema defined yet, allow it but ensure it's an object
       return z.object({}).passthrough().safeParse(data);

@@ -14,7 +14,7 @@ export const DELETE_INTENTS_KEY = 'v2_delete_intents';
 // Increment only when the browser-side rebuild algorithm changes. Keeping this
 // separate from the server generation prevents an older cached JavaScript
 // bundle from falsely marking a newer recovery algorithm as completed.
-const RECOVERY_VERSION = 2;
+const RECOVERY_VERSION = 3;
 
 type SyncOperation = {
   operationId: string;
@@ -484,6 +484,18 @@ export const SyncEngineHardened: React.FC = () => {
         }
       }
       
+    }
+
+    for (const key of SINGLETON_KEYS) {
+      const syncId = `${key}_${key}`;
+      if (alreadyQueued.has(syncId)) continue;
+      const localValue = (currentState as any)[key];
+      const hasServerValue = Object.prototype.hasOwnProperty.call(serverState, key);
+      if (!hasServerValue) {
+        operations.push({ operationId: `${opPrefix}-${idx++}`, id: key, type: key, operation: 'insert', data: localValue, baseRevision: 0 });
+      } else if (JSON.stringify(serverState[key]) !== JSON.stringify(localValue)) {
+        operations.push({ operationId: `${opPrefix}-${idx++}`, id: key, type: key, operation: 'update', data: localValue, baseRevision: serverRevisions[syncId] || 0 });
+      }
     }
 
     // A missing local record is never enough evidence to delete cloud data.
