@@ -8,7 +8,13 @@ export const SERVER_CURSOR_KEY = 'v2_sync_cursor';
 export const SERVER_REVISIONS_KEY = 'v2_server_revisions';
 export const SYNC_LOCK_KEY = 'v2_sync_lock'; // Lease for multi-tab pushing
 export const CLIENT_GENERATION_KEY = 'v2_client_generation';
+export const CLIENT_RECOVERY_VERSION_KEY = 'v2_client_recovery_version';
 export const DELETE_INTENTS_KEY = 'v2_delete_intents';
+
+// Increment only when the browser-side rebuild algorithm changes. Keeping this
+// separate from the server generation prevents an older cached JavaScript
+// bundle from falsely marking a newer recovery algorithm as completed.
+const RECOVERY_VERSION = 1;
 
 type SyncOperation = {
   operationId: string;
@@ -168,6 +174,7 @@ export const SyncEngineHardened: React.FC = () => {
       try {
         let cursor = await idbGet<string>(SERVER_CURSOR_KEY);
         const localGen = await idbGet<number>(CLIENT_GENERATION_KEY) || 1;
+        const localRecoveryVersion = await idbGet<number>(CLIENT_RECOVERY_VERSION_KEY) || 0;
         
         // 2. Fetch server generation
         const genCheckRes = await fetch(`/api/sync2/hardened/pull?after=0&limit=1`);
@@ -177,7 +184,7 @@ export const SyncEngineHardened: React.FC = () => {
         
         let isInitial = false;
         // 3. Handle Generation Mismatch
-        if (cursor === undefined || serverGen !== localGen) {
+        if (cursor === undefined || serverGen !== localGen || localRecoveryVersion !== RECOVERY_VERSION) {
           isInitial = true;
           setIsInitialSync(true);
           setSyncStatus('initializing');
@@ -402,6 +409,7 @@ export const SyncEngineHardened: React.FC = () => {
     await clearServerConfirmedConflicts();
     await idbSet(SERVER_CURSOR_KEY, currentCursor);
     await idbSet(CLIENT_GENERATION_KEY, currentGen);
+    if (isInitial) await idbSet(CLIENT_RECOVERY_VERSION_KEY, RECOVERY_VERSION);
     if (isInitial) setSyncStatus('online');
   };
 
