@@ -25,7 +25,8 @@ const genericCollections: Record<string, { read: string; create: string; update:
   t4aSlips: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
   recurringPayroll: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
   recurringExpenses: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
-  accountTransfers: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' }
+  accountTransfers: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
+  reconciliations: { read: 'transactions.read', create: 'transactions.approve', update: 'transactions.approve', delete: 'transactions.reverse' }
 };
 
 export const depositCandidateWindow = (bankDate: string) => {

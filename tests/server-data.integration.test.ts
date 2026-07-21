@@ -174,6 +174,8 @@ describe('server-driven bank deposit matching', () => {
       const response = await app.request(`/v3/records/${type}/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `edit-${type}` }, body: JSON.stringify({ revision: 1, data }) }, { DB: db } as any);
       expect(response.status).toBe(200); expect((await response.json() as any).item.revision).toBe(2);
     }
+    const reconciled = await app.request('/v3/records/reconciliations', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'reconcile-account' }, body: JSON.stringify({ data: { accountId: 'editable-account', systemBalance: 0, statementBalance: 0, difference: 0, statementDate: '2026-07-21' } }) }, { DB: db } as any);
+    expect(reconciled.status).toBe(201);
   });
 
   it('searches donors with a bounded server-side page', async () => {

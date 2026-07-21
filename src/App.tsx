@@ -17,6 +17,7 @@ import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
+const OnlineReconciliation = React.lazy(() => import('./pages/OnlineReconciliation').then(module => ({ default: module.OnlineReconciliation })));
 
 /**
  * Production is cloud-only. Local-store pages and synchronization engines are
@@ -44,7 +45,7 @@ function App() {
         <Route path="/write-checks" element={cloudPage(<OnlineWriteChecks />)} />
         <Route path="/transactions" element={cloudPage(<OnlineTransactions />)} />
         <Route path="/payroll" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading payroll...</div>}><OnlinePayroll /></React.Suspense>)} />
-        <Route path="/reconciliation" element={waitingPage('Reconciliation')} />
+        <Route path="/reconciliation" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reconciliation...</div>}><OnlineReconciliation /></React.Suspense>)} />
         <Route path="/sola-sync" element={waitingPage('Sola Payments Sync')} />
         <Route path="/reports" element={waitingPage('Fundraising Reports')} />
         <Route path="/profit-loss" element={waitingPage('Profit & Loss')} />
