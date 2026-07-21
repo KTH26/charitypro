@@ -61,6 +61,17 @@ const cloneState = (state: AppState) => {
   return JSON.parse(JSON.stringify(clone));
 };
 
+const syncResponseError = async (response: Response, context: string) => {
+  let detail = '';
+  try {
+    const payload = await response.json();
+    detail = typeof payload?.error === 'string' ? payload.error : '';
+  } catch {
+    detail = '';
+  }
+  return new Error(`${context} (HTTP ${response.status})${detail ? `: ${detail}` : ''}`);
+};
+
 export const findExplicitDeletes = (state: AppState, prevState: AppState): DeleteIntent[] => {
   const removed: DeleteIntent[] = [];
   for (const key of RECORD_KEYS) {
@@ -160,7 +171,7 @@ export const SyncEngineHardened: React.FC = () => {
         
         // 2. Fetch server generation
         const genCheckRes = await fetch(`/api/sync2/hardened/pull?after=0&limit=1`);
-        if (!genCheckRes.ok) throw new Error('Failed to verify sync generation');
+        if (!genCheckRes.ok) throw await syncResponseError(genCheckRes, 'Failed to verify sync generation');
         const genCheckData = await genCheckRes.json();
         const serverGen = genCheckData.syncGeneration || 1;
         
