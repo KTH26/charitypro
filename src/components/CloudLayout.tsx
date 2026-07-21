@@ -25,10 +25,10 @@ const categories: NavCategory[] = [
   { label: 'EXPENSES', items: [
     { path: '/vendors', label: 'Vendors', icon: Store, ready: true },
     { path: '/expenses', label: 'Bills & Expenses', icon: FileText, ready: true },
-    { path: '/write-checks', label: 'Write Checks', icon: Printer }
+    { path: '/write-checks', label: 'Write Checks', icon: Printer, ready: true }
   ] },
   { label: 'ACCOUNTING', items: [
-    { path: '/transactions', label: 'Transactions', icon: Wallet },
+    { path: '/transactions', label: 'Transactions', icon: Wallet, ready: true },
     { path: '/chart-of-accounts', label: 'Chart of Accounts', icon: List, ready: true },
     { path: '/bank-feed', label: 'Bank Feed', icon: Building, ready: true },
     { path: '/payroll', label: 'Payroll & T4A', icon: Users },

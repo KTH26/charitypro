@@ -367,6 +367,31 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     });
   });
 
+  app.get('/v3/ledger', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read');
+    if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    const search = String(c.req.query('search') || '').trim().toLowerCase(); const kind = String(c.req.query('kind') || 'all'); const account = String(c.req.query('account') || ''); const status = String(c.req.query('status') || ''); const method = String(c.req.query('method') || ''); const from = String(c.req.query('from') || ''); const to = String(c.req.query('to') || '');
+    const conditions = ["r.type IN ('transactions','bills','accountTransfers')", 'r.is_deleted=0', "(r.type<>'transactions' OR json_extract(r.data,'$.batchTransactionId') IS NULL)"]; const bindings: any[] = [];
+    if (kind === 'payment') conditions.push("r.type='transactions'"); else if (kind === 'bill') conditions.push("r.type='bills'"); else if (kind === 'transfer') conditions.push("r.type='accountTransfers'");
+    if (search) { conditions.push("lower(r.data) LIKE ?"); bindings.push(`%${search}%`); }
+    if (account) { conditions.push("(json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.offsetAccountId')=? OR json_extract(r.data,'$.fromAccountId')=? OR json_extract(r.data,'$.toAccountId')=? OR json_extract(r.data,'$.category')=?)"); bindings.push(account, account, account, account, account); }
+    if (status) { conditions.push("(json_extract(r.data,'$.type')=? OR json_extract(r.data,'$.status')=?)"); bindings.push(status, status); }
+    if (method) { conditions.push("json_extract(r.data,'$.method')=?"); bindings.push(method); }
+    const dateExpression = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.paidDate'),json_extract(r.data,'$.dueDate'),'')";
+    if (from) { conditions.push(`${dateExpression}>=?`); bindings.push(from); } if (to) { conditions.push(`${dateExpression}<=?`); bindings.push(to); }
+    const where = conditions.join(' AND ');
+    const joins = `LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0
+      LEFT JOIN sync_records src ON src.type='accounts' AND src.id=COALESCE(json_extract(r.data,'$.sourceAccountId'),json_extract(r.data,'$.fromAccountId')) AND src.is_deleted=0
+      LEFT JOIN sync_records off ON off.type='accounts' AND off.id=COALESCE(json_extract(r.data,'$.offsetAccountId'),json_extract(r.data,'$.toAccountId'),json_extract(r.data,'$.category')) AND off.is_deleted=0`;
+    const [listResult, countResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT r.id,r.type AS record_type,r.data,r.revision,r.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(src.data,'$.name') AS source_name,json_extract(off.data,'$.name') AS offset_name FROM sync_records r ${joins} WHERE ${where} ORDER BY ${dateExpression} DESC,r.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records r WHERE ${where}`).bind(...bindings)
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), recordType: row.record_type, donorName: row.donor_name || '', sourceName: row.source_name || '', offsetName: row.offset_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
   app.get('/v3/donors', async (c: any) => {
     const denied = requirePermission(c, 'donors.read');
     if (denied) return denied;
@@ -600,6 +625,19 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     });
   });
 
+  app.get('/v3/checks', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read');
+    if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const status = String(c.req.query('status') || 'queued');
+    const joins = `LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0 LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0`;
+    const [listResult, countResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.printStatus')=? ORDER BY json_extract(b.data,'$.dueDate'),b.id LIMIT ? OFFSET ?`).bind(status, limit, offset),
+      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.printStatus')=?").bind(status)
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
   app.post('/v3/bills', async (c: any) => {
     const denied = requirePermission(c, 'bills.create');
     if (denied) return denied;
@@ -638,6 +676,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (sourceAccountId) record.sourceAccountId = sourceAccountId;
     if (creditAccountId) record.creditAccountId = creditAccountId;
     if (body.projectId) record.projectId = String(body.projectId);
+    if (body.checkNumber) record.checkNumber = String(body.checkNumber).trim().slice(0, 100);
+    if (body.printStatus === 'queued' || body.printStatus === 'printed') record.printStatus = body.printStatus;
+    if (body.method) record.method = String(body.method).trim().slice(0, 100);
     if (status === 'paid') { record.paidDate = String(body.paidDate || new Date().toISOString().slice(0, 10)); record.offsetAccountId = category; }
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;
@@ -655,7 +696,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     } catch (error: any) {
       const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
       if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
-      return c.json({ success: false, error: `Unable to create expense: ${error.message}` }, 409);
+      return c.json({ success: false, error: 'Unable to create expense. No record was saved; you can safely try again.' }, 409);
     }
   });
 

@@ -236,4 +236,28 @@ describe('server-driven bank deposit matching', () => {
     expect(detail.summary).toEqual({ billCount: 2, totalPaid: 40, totalOwed: 60 });
     expect(detail.bills[0].categoryName).toBe('Office Expense');
   });
+
+  it('loads a bounded unified ledger with editable payments, bills, and transfers', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'ledger-donor', { id: 'ledger-donor', name: 'Ledger Donor' });
+    seedRecord(db, 'accounts', 'ledger-bank', { id: 'ledger-bank', name: 'Ledger Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'ledger-revenue', { id: 'ledger-revenue', name: 'Donation Revenue', type: 'revenue', currency: 'CAD' });
+    seedRecord(db, 'transactions', 'ledger-payment', { id: 'ledger-payment', donorId: 'ledger-donor', amount: 20, currency: 'CAD', date: '2026-07-21', type: 'approved', method: 'cash', sourceAccountId: 'ledger-bank', offsetAccountId: 'ledger-revenue' });
+    seedRecord(db, 'bills', 'ledger-bill', { id: 'ledger-bill', vendor: 'Ledger Vendor', amount: 10, currency: 'CAD', dueDate: '2026-07-20', status: 'pending', category: 'ledger-revenue' });
+    seedRecord(db, 'accountTransfers', 'ledger-transfer', { id: 'ledger-transfer', amount: 5, currency: 'CAD', date: '2026-07-19', fromAccountId: 'ledger-bank', toAccountId: 'ledger-revenue' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/ledger?limit=50', {}, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.total).toBe(3); expect(body.items.map((item: any) => item.recordType)).toEqual(['transactions', 'bills', 'accountTransfers']); expect(body.items[0].donorName).toBe('Ledger Donor'); expect(body.items[0].sourceName).toBe('Ledger Bank');
+  });
+
+  it('loads only the bounded cloud check-print queue', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'check-category', { id: 'check-category', name: 'Programs', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'check-bank', { id: 'check-bank', name: 'Checking', type: 'asset', subType: 'checking', currency: 'CAD' });
+    seedRecord(db, 'bills', 'queued-check', { id: 'queued-check', vendor: 'Payee', amount: 30, currency: 'CAD', dueDate: '2026-07-21', status: 'paid', category: 'check-category', sourceAccountId: 'check-bank', checkNumber: 'To Print', printStatus: 'queued', method: 'check' });
+    seedRecord(db, 'bills', 'printed-check', { id: 'printed-check', vendor: 'Old Payee', amount: 20, currency: 'CAD', dueDate: '2026-07-20', status: 'paid', category: 'check-category', sourceAccountId: 'check-bank', checkNumber: '100', printStatus: 'printed', method: 'check' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/checks?limit=50&status=queued', {}, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.total).toBe(1); expect(body.items[0]).toMatchObject({ id: 'queued-check', categoryName: 'Programs', sourceName: 'Checking' });
+  });
 });

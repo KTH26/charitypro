@@ -10,6 +10,8 @@ import { OnlinePayments } from './pages/OnlinePayments';
 import { OnlinePledges } from './pages/OnlinePledges';
 import { OnlineSchedules } from './pages/OnlineSchedules';
 import { OnlineVendors } from './pages/OnlineVendors';
+import { OnlineTransactions } from './pages/OnlineTransactions';
+import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
 import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 /**
@@ -35,8 +37,8 @@ function App() {
         <Route path="/pledges" element={cloudPage(<OnlinePledges />)} />
         <Route path="/schedules" element={cloudPage(<OnlineSchedules />)} />
         <Route path="/vendors" element={cloudPage(<OnlineVendors />)} />
-        <Route path="/write-checks" element={waitingPage('Write Checks')} />
-        <Route path="/transactions" element={waitingPage('Transactions')} />
+        <Route path="/write-checks" element={cloudPage(<OnlineWriteChecks />)} />
+        <Route path="/transactions" element={cloudPage(<OnlineTransactions />)} />
         <Route path="/payroll" element={waitingPage('Payroll & T4A')} />
         <Route path="/reconciliation" element={waitingPage('Reconciliation')} />
         <Route path="/sola-sync" element={waitingPage('Sola Payments Sync')} />

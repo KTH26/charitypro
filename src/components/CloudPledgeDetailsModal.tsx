@@ -63,6 +63,6 @@ export const CloudPledgeDetailsModal: React.FC<{ pledgeId: string; onClose: () =
         </div>
       </div>
     </div>
-    {selectedPayment && <CloudPaymentDetailsModal payment={{ ...selectedPayment, donorName: details?.pledge.donorName }} onClose={() => setSelectedPayment(null)} />}
+    {selectedPayment && <CloudPaymentDetailsModal payment={{ ...selectedPayment, donorName: details?.pledge.donorName }} onClose={() => setSelectedPayment(null)} onUpdated={payment => { setSelectedPayment(payment); setDetails(current => current ? { ...current, payments: current.payments.map(item => item.id === payment.id ? payment : item) } : current); }} />}
   </>;
 };

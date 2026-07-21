@@ -163,7 +163,7 @@ export const OnlinePayments: React.FC = () => {
           </div>
         </section>
       </div>
-      {selectedPayment && <CloudPaymentDetailsModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />}
+      {selectedPayment && <CloudPaymentDetailsModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} onUpdated={payment => { setSelectedPayment(payment); void load(true); }} />}
     </main>
   );
 };
