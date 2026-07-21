@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { getRequiredPermission, hasPermission } from '../functions/api/permissions';
 import { validatePayload } from '../functions/api/validation';
 import { isOperationAlreadyApplied } from '../functions/api/idempotency';
+import { depositCandidateWindow } from '../functions/api/server-data';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -19,6 +20,9 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.get('/v3/bills'");
     expect(source).toContain("app.post('/v3/bills'");
     expect(source).toContain("app.patch('/v3/bills/:id/pay'");
+    expect(source).toContain("app.get('/v3/bank/state'");
+    expect(source).toContain("app.get('/v3/bank/deposit-candidates'");
+    expect(source).toContain("app.post('/v3/bank/match-deposit'");
     expect(source).toContain("app.get('/v3/accounts'");
     expect(source).toContain("app.post('/v3/payments'");
     expect(source).toContain("app.delete('/v3/payments/:id'");
@@ -45,6 +49,10 @@ describe('Backend API & Security Rules', () => {
     expect(appSource).toContain('path="/online/expenses"');
     expect(expensesSource).toContain("fetch('/api/v3/bills'");
     expect(expensesSource).toContain('window.setInterval');
+    const bankSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineBank.tsx'), 'utf8');
+    expect(appSource).toContain('path="/online/bank"');
+    expect(bankSource).toContain("fetch('/api/v3/bank/match-deposit'");
+    expect(bankSource).toContain('Exact match');
     const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
     expect(formSource).toContain("fetch('/api/v3/payments'");
     expect(formSource).toContain('pendingRequestId');
@@ -147,6 +155,16 @@ describe('Backend API & Security Rules', () => {
         operation: 'update',
         data: { id: 'tx-1', amount: 100 }
       })).toBe(false);
+    });
+  });
+
+  describe('Bank deposit candidate dates', () => {
+    it('uses the previous day for a normal weekday deposit', () => {
+      expect(depositCandidateWindow('2026-07-21')).toEqual({ start: '2026-07-20', end: '2026-07-20' });
+    });
+
+    it('uses Friday through Sunday for a Monday deposit', () => {
+      expect(depositCandidateWindow('2026-07-20')).toEqual({ start: '2026-07-17', end: '2026-07-19' });
     });
   });
 });

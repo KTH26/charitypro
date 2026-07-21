@@ -29,6 +29,7 @@ import { OnlinePayments } from './pages/OnlinePayments';
 import { OnlineAccounts } from './pages/OnlineAccounts';
 import { OnlineDonors } from './pages/OnlineDonors';
 import { OnlineExpenses } from './pages/OnlineExpenses';
+import { OnlineBank } from './pages/OnlineBank';
 
 import { SyncEngineHardened } from './components/SyncEngineHardened';
 const SYNC_ENGINE_VERSION = import.meta.env.VITE_SYNC_ENGINE_VERSION ?? 'v2_hardened';
@@ -66,6 +67,7 @@ function App() {
         <Route path="/online/accounts" element={<OnlineAccounts />} />
         <Route path="/online/donors" element={<OnlineDonors />} />
         <Route path="/online/expenses" element={<OnlineExpenses />} />
+        <Route path="/online/bank" element={<OnlineBank />} />
         <Route path="/" element={<Layout><Dashboard /></Layout>} />
         <Route path="/donors" element={<Layout><Donors /></Layout>} />
         <Route path="/fundraisers" element={<Layout><Fundraisers /></Layout>} />
