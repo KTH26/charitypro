@@ -37,17 +37,19 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain('sync_batch_assertions');
     expect(source).toContain('LIMIT ? OFFSET ?');
   });
-  it('makes the normal daily-work routes cloud-owned and preserves explicit legacy routes', () => {
+  it('runs production as cloud-only with no local store or synchronization engine', () => {
     const appSource = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8');
     const accountsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineAccounts.tsx'), 'utf8');
-    expect(appSource).toContain('const CLOUD_ROUTES = new Set');
-    expect(appSource).toContain('if (isServerRoute) return;');
     expect(appSource).toContain('path="/payments" element={<OnlinePayments />}');
     expect(appSource).toContain('path="/donors" element={<OnlineDonors />}');
     expect(appSource).toContain('path="/expenses" element={<OnlineExpenses />}');
     expect(appSource).toContain('path="/chart-of-accounts" element={<OnlineAccounts />}');
     expect(appSource).toContain('path="/bank-feed" element={<OnlineBank />}');
-    expect(appSource).toContain('path="/legacy/payments" element={<Layout><Payments /></Layout>}');
+    expect(appSource).not.toContain("from './store'");
+    expect(appSource).not.toContain("from './components/SyncEngine'");
+    expect(appSource).not.toContain('SyncEngineHardened');
+    expect(appSource).not.toContain('path="/legacy/');
+    expect(appSource).toContain('path="*" element={<Navigate to="/payments" replace />}');
     expect(appSource).toContain('path="/online/accounts"');
     expect(accountsSource).toContain("fetch('/api/v3/accounts')");
     expect(accountsSource).toContain('window.setInterval');
