@@ -164,6 +164,18 @@ describe('server-driven bank deposit matching', () => {
     expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='pledges'").get() as any).count)).toBe(3);
   });
 
+  it('allows the live payment, bill, and account edit popups to save through revision-safe routes', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'transactions', 'editable-payment', { id: 'editable-payment', donorId: 'donor-1', amount: 20, currency: 'CAD', date: '2026-07-21' });
+    seedRecord(db, 'bills', 'editable-bill', { id: 'editable-bill', vendor: 'Vendor', amount: 15, currency: 'CAD', dueDate: '2026-07-21', status: 'pending', category: 'expense-1' });
+    seedRecord(db, 'accounts', 'editable-account', { id: 'editable-account', name: 'Checking', type: 'asset', currency: 'CAD', startingBalance: 0 });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    for (const [type, id, data] of [['transactions', 'editable-payment', { amount: 25 }], ['bills', 'editable-bill', { memo: 'Updated' }], ['accounts', 'editable-account', { name: 'Main Checking' }]] as const) {
+      const response = await app.request(`/v3/records/${type}/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `edit-${type}` }, body: JSON.stringify({ revision: 1, data }) }, { DB: db } as any);
+      expect(response.status).toBe(200); expect((await response.json() as any).item.revision).toBe(2);
+    }
+  });
+
   it('searches donors with a bounded server-side page', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'donor-search-1', { id: 'donor-search-1', name: 'Sarah Smith', firstName: 'Sarah', lastName: 'Smith', phone: '555-0100', email: 'sarah@example.com', displayId: 'D-100' });

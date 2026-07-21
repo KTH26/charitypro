@@ -12,6 +12,9 @@ const boundedLimit = (raw?: string) => Math.min(100, Math.max(1, Number.parseInt
 const boundedPage = (raw?: string) => Math.max(1, Number.parseInt(raw || '1', 10) || 1);
 
 const genericCollections: Record<string, { read: string; create: string; update: string; delete: string }> = {
+  transactions: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
+  bills: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
+  accounts: { read: 'transactions.read', create: 'system.manage', update: 'system.manage', delete: 'system.manage' },
   pledges: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
   recurringPayments: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
   vendors: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
