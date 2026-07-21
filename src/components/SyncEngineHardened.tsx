@@ -14,7 +14,7 @@ export const DELETE_INTENTS_KEY = 'v2_delete_intents';
 // Increment only when the browser-side rebuild algorithm changes. Keeping this
 // separate from the server generation prevents an older cached JavaScript
 // bundle from falsely marking a newer recovery algorithm as completed.
-const RECOVERY_VERSION = 1;
+const RECOVERY_VERSION = 2;
 
 type SyncOperation = {
   operationId: string;
@@ -363,30 +363,29 @@ export const SyncEngineHardened: React.FC = () => {
         await idbSet(SERVER_STATE_KEY, JSON.stringify(serverState));
         await idbSet(SERVER_REVISIONS_KEY, JSON.stringify(serverRevisions));
         
-        // Safely merge server changes into local store WITHOUT deleting local-only data
-        const currentLocalState = useStore.getState();
-        const mergedState = { ...currentLocalState };
-        
-        for (const k of RECORD_KEYS) {
+        // Incremental pulls can be applied immediately. A full rebuild must be
+        // accumulated completely before touching the persisted Zustand store:
+        // applying every 500-record page creates concurrent async persistence
+        // writes that can finish out of order and leave a partial snapshot.
+        if (!isInitial) {
+          const currentLocalState = useStore.getState();
+          const mergedState: any = {};
+
+          for (const k of RECORD_KEYS) {
             const localArr = (currentLocalState as any)[k] as any[] || [];
             const serverArr = (serverState as any)[k] as any[] || [];
-            
-            // A generation rebuild is an explicit recovery from an obsolete or
-            // corrupt local snapshot. In that mode the completed cloud ledger
-            // is authoritative; preserving an incomplete local collection can
-            // leave two devices showing permanently different totals. Offline
-            // edits remain protected separately in PENDING_MUTATIONS_KEY and
-            // are processed only after the cloud snapshot has been restored.
-            (mergedState as any)[k] = isInitial
-              ? [...serverArr]
-              : mergeServerRecords(k, serverArr, localArr, serverRevisions);
-        }
-        
-        isApplyingServerState = true;
-        try {
-          useStore.setState(mergedState);
-        } finally {
-          isApplyingServerState = false;
+            mergedState[k] = mergeServerRecords(k, serverArr, localArr, serverRevisions);
+          }
+          for (const k of SINGLETON_KEYS) {
+            if (Object.prototype.hasOwnProperty.call(serverState, k)) mergedState[k] = serverState[k];
+          }
+
+          isApplyingServerState = true;
+          try {
+            useStore.setState(mergedState);
+          } finally {
+            isApplyingServerState = false;
+          }
         }
         
         totalDownloaded += changes.length;
@@ -405,6 +404,22 @@ export const SyncEngineHardened: React.FC = () => {
       const emptyServerState = RECORD_KEYS.reduce((acc, key) => ({ ...acc, [key]: [] }), {});
       for (const key of SINGLETON_KEYS) (emptyServerState as any)[key] = (useStore.getState() as any)[key];
       await idbSet(SERVER_STATE_KEY, JSON.stringify(emptyServerState));
+    }
+    if (isInitial) {
+      const completeServerState = JSON.parse(await idbGet<string>(SERVER_STATE_KEY) || '{}');
+      const authoritativeState: any = {};
+      for (const key of RECORD_KEYS) authoritativeState[key] = [...(completeServerState[key] || [])];
+      for (const key of SINGLETON_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(completeServerState, key)) authoritativeState[key] = completeServerState[key];
+      }
+
+      isApplyingServerState = true;
+      try {
+        useStore.setState(authoritativeState);
+        useStore.getState().recalculateBalances();
+      } finally {
+        isApplyingServerState = false;
+      }
     }
     await clearServerConfirmedConflicts();
     await idbSet(SERVER_CURSOR_KEY, currentCursor);

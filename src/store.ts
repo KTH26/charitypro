@@ -532,6 +532,7 @@ const LOCAL_KEY = 'charity-store';
  * fires setItem and overwrites the real cloud data with an empty donors array.
  */
 export let syncTimeout: ReturnType<typeof setTimeout> | null = null;
+let persistenceWrite: Promise<void> = Promise.resolve();
 
 export const dualStorage: StateStorage = {
   getItem: async (name): Promise<string | null> => {
@@ -550,14 +551,22 @@ export const dualStorage: StateStorage = {
   },
 
   setItem: async (name, value): Promise<void> => {
-    // Always write to IndexedDB immediately (supports massive data sizes)
-    await idbSet(name, value);
+    // IndexedDB writes from rapid Zustand updates must finish in creation
+    // order. Without this queue, a slower partial snapshot can complete after
+    // the newest full snapshot and silently roll the browser back.
+    persistenceWrite = persistenceWrite
+      .catch(() => undefined)
+      .then(() => idbSet(name, value));
+    await persistenceWrite;
 
     // V2 Sync Engine is now responsible for pushing changes via store subscription.
   },
 
   removeItem: async (name): Promise<void> => {
-    await idbDel(name);
+    persistenceWrite = persistenceWrite
+      .catch(() => undefined)
+      .then(() => idbDel(name));
+    await persistenceWrite;
     localStorage.removeItem(name); // Clean up legacy
   },
 };

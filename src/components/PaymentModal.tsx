@@ -75,8 +75,20 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
   };
 
   const handleOneTime = async () => {
-    if (!amount || isNaN(+amount)) return;
     setError('');
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setError('Please enter a payment amount greater than zero.');
+      return;
+    }
+    if (!sourceAccountId) {
+      setError('Please choose the account receiving this payment.');
+      return;
+    }
+    if (!offsetAccountId) {
+      setError('Please choose the income or offset account for this payment.');
+      return;
+    }
 
     let finalNotes = notes;
     let finalType = method === 'check' ? 'pending' : 'approved';
@@ -716,7 +728,7 @@ export const PaymentModal: React.FC<Props> = ({ donorId, onClose }) => {
 
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
-              {tab === 'one_time' && <button className="btn btn-primary" onClick={handleOneTime} disabled={!amount || loading || !sourceAccountId || !offsetAccountId}>{loading ? 'Processing...' : '✅ Process Payment'}</button>}
+              {tab === 'one_time' && <button className="btn btn-primary" onClick={handleOneTime} disabled={loading}>{loading ? 'Processing...' : '✅ Process Payment'}</button>}
               {tab === 'pledge' && <button className="btn btn-primary" onClick={handlePledge} disabled={!amount || loading} style={{ background: 'linear-gradient(135deg, var(--gold-light), var(--gold))' }}>📋 Record Pledge</button>}
               {tab === 'recurring' && <button className="btn btn-primary" onClick={handleRecurring} disabled={!recAmount || loading}>{loading ? 'Processing...' : '🔁 Activate Recurring'}</button>}
             </div>
