@@ -99,7 +99,7 @@ export const OnlinePayments: React.FC = () => {
             <div style={{ color: 'var(--green)', fontWeight: 700 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
             <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 3 }}>Live cloud data — updates automatically every 3 seconds</div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button><a className="btn btn-secondary" href="/online/accounts">Online Accounts</a><a className="btn btn-secondary" href="/payments">Current CharityPro</a></div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button><a className="btn btn-secondary" href="/online/donors">Online Donors</a><a className="btn btn-secondary" href="/online/accounts">Online Accounts</a><a className="btn btn-secondary" href="/payments">Current CharityPro</a></div>
         </div>
 
         {showCreate && <OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {

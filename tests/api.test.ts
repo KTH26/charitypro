@@ -14,6 +14,8 @@ describe('Backend API & Security Rules', () => {
     const source = readFileSync(join(process.cwd(), 'functions', 'api', 'server-data.ts'), 'utf8');
     expect(source).toContain("app.get('/v3/payments'");
     expect(source).toContain("app.get('/v3/donors'");
+    expect(source).toContain("app.post('/v3/donors'");
+    expect(source).toContain("app.put('/v3/donors/:id'");
     expect(source).toContain("app.get('/v3/accounts'");
     expect(source).toContain("app.post('/v3/payments'");
     expect(source).toContain("app.delete('/v3/payments/:id'");
@@ -23,6 +25,7 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("currency === 'USD' ? amount * exchangeRate : amount");
     expect(source).toContain('processed_mutations');
     expect(source).toContain('audit_log');
+    expect(source).toContain('sync_batch_assertions');
     expect(source).toContain('LIMIT ? OFFSET ?');
   });
   it('keeps online pages independent from the local synchronization engine', () => {
@@ -32,6 +35,9 @@ describe('Backend API & Security Rules', () => {
     expect(appSource).toContain('path="/online/accounts"');
     expect(accountsSource).toContain("fetch('/api/v3/accounts')");
     expect(accountsSource).toContain('window.setInterval');
+    const donorsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineDonors.tsx'), 'utf8');
+    expect(appSource).toContain('path="/online/donors"');
+    expect(donorsSource).toContain('window.setInterval');
     const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
     expect(formSource).toContain("fetch('/api/v3/payments'");
     expect(formSource).toContain('pendingRequestId');

@@ -27,6 +27,7 @@ import { SolaSync } from './pages/SolaSync';
 import { Payroll } from './pages/Payroll';
 import { OnlinePayments } from './pages/OnlinePayments';
 import { OnlineAccounts } from './pages/OnlineAccounts';
+import { OnlineDonors } from './pages/OnlineDonors';
 
 import { SyncEngineHardened } from './components/SyncEngineHardened';
 const SYNC_ENGINE_VERSION = import.meta.env.VITE_SYNC_ENGINE_VERSION ?? 'v2_hardened';
@@ -62,6 +63,7 @@ function App() {
       <Routes>
         <Route path="/online/payments" element={<OnlinePayments />} />
         <Route path="/online/accounts" element={<OnlineAccounts />} />
+        <Route path="/online/donors" element={<OnlineDonors />} />
         <Route path="/" element={<Layout><Dashboard /></Layout>} />
         <Route path="/donors" element={<Layout><Donors /></Layout>} />
         <Route path="/fundraisers" element={<Layout><Fundraisers /></Layout>} />

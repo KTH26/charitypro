@@ -122,15 +122,133 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const offset = (page - 1) * limit;
     const search = (c.req.query('search') || '').trim().toLowerCase();
     const condition = search
-      ? `AND (lower(COALESCE(json_extract(data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(data,'$.email'),'')) LIKE ? OR COALESCE(json_extract(data,'$.phone'),'') LIKE ?)`
+      ? `AND (lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.email'),'')) LIKE ? OR COALESCE(json_extract(d.data,'$.phone'),'') LIKE ? OR lower(COALESCE(json_extract(d.data,'$.hebFirstName'),'')) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.hebLastName'),'')) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.displayId'),'')) LIKE ?)`
       : '';
-    const searchBindings = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
+    const searchBindings = search ? Array(6).fill(`%${search}%`) : [];
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE type='donors' AND is_deleted=0 ${condition} ORDER BY lower(json_extract(data,'$.name')) LIMIT ? OFFSET ?`).bind(...searchBindings, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE type='donors' AND is_deleted=0 ${condition}`).bind(...searchBindings)
+      c.env.DB.prepare(`
+        WITH donor_totals AS (
+          SELECT json_extract(data,'$.donorId') AS donor_id,
+            SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) AS total_given
+          FROM sync_records
+          WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved'
+            AND COALESCE(json_extract(data,'$.isBatch'),0)=0
+          GROUP BY json_extract(data,'$.donorId')
+        )
+        SELECT d.id,d.data,d.revision,d.updated_at,COALESCE(dt.total_given,0) AS total_given
+        FROM sync_records d LEFT JOIN donor_totals dt ON dt.donor_id=d.id
+        WHERE d.type='donors' AND d.is_deleted=0 ${condition}
+        ORDER BY lower(json_extract(d.data,'$.name')) LIMIT ? OFFSET ?
+      `).bind(...searchBindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records d WHERE d.type='donors' AND d.is_deleted=0 ${condition}`).bind(...searchBindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
-    return c.json({ success: true, items: listResult.results.map(parseRecord), page, limit, total, totalPages: Math.ceil(total / limit) });
+    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), totalGiven: Number(row.total_given || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.post('/v3/donors', async (c: any) => {
+    const denied = requirePermission(c, 'donors.create');
+    if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'requestId is required.' }, 400);
+    const mutationId = `v3-donor-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+
+    const firstName = String(body.firstName || '').trim();
+    const lastName = String(body.lastName || '').trim();
+    const phone = String(body.phone || '').trim();
+    const email = String(body.email || '').trim();
+    if (!firstName || !lastName || !phone) return c.json({ success: false, error: 'First name, last name, and phone are required.' }, 400);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ success: false, error: 'Enter a valid email address.' }, 400);
+
+    const id = crypto.randomUUID();
+    const displayId = String(body.displayId || '').trim() || `D-${id.slice(0, 8).toUpperCase()}`;
+    const duplicate = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND is_deleted=0 AND lower(json_extract(data,'$.displayId'))=lower(?) LIMIT 1").bind(displayId).first();
+    if (duplicate) return c.json({ success: false, error: 'That donor ID is already in use.' }, 409);
+    const text = (field: string, max = 500) => String(body[field] || '').trim().slice(0, max);
+    const record = {
+      id, displayId, firstName, lastName, name: `${firstName} ${lastName}`.trim(), email, phone,
+      address: text('address'), notes: text('notes', 2000), totalGiven: 0, balanceOwed: 0,
+      preTitle: text('preTitle'), hebFirstName: text('hebFirstName'), hebLastName: text('hebLastName'),
+      title: text('title'), postTitle: text('postTitle'), homePhone: text('homePhone'), mobilePhone: text('mobilePhone'),
+      cards: [], sponsorshipDays: []
+    };
+    const now = Date.now();
+    const data = JSON.stringify(record);
+    const operationId = `${mutationId}-insert`;
+    const response = { success: true, item: { ...record, revision: 1, updatedAt: now } };
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare(`INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'donors',?,?,1,0,?)`).bind(id, data, now, operationId),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'donors',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'donors','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created through server-driven donor API'),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response, 201);
+    } catch (error: any) {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: `Unable to create donor: ${error.message}` }, 409);
+    }
+  });
+
+  app.put('/v3/donors/:id', async (c: any) => {
+    const denied = requirePermission(c, 'donors.update');
+    if (denied) return denied;
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-donor-update-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(id).first();
+    if (!current) return c.json({ success: false, error: 'Donor not found.' }, 404);
+    const expectedRevision = Number(body.revision);
+    if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) {
+      return c.json({ success: false, error: 'This donor was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
+    }
+
+    const existing = JSON.parse(String(current.data));
+    const firstName = String(body.firstName ?? existing.firstName ?? '').trim();
+    const lastName = String(body.lastName ?? existing.lastName ?? '').trim();
+    const phone = String(body.phone ?? existing.phone ?? '').trim();
+    const email = String(body.email ?? existing.email ?? '').trim();
+    if (!firstName || !lastName || !phone) return c.json({ success: false, error: 'First name, last name, and phone are required.' }, 400);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ success: false, error: 'Enter a valid email address.' }, 400);
+    const textFields = ['address','notes','preTitle','hebFirstName','hebLastName','title','postTitle','homePhone','mobilePhone'];
+    const next: any = { ...existing, firstName, lastName, name: `${firstName} ${lastName}`.trim(), phone, email };
+    for (const field of textFields) if (body[field] !== undefined) next[field] = String(body[field] || '').trim().slice(0, field === 'notes' ? 2000 : 500);
+    if (body.displayId !== undefined) next.displayId = String(body.displayId || '').trim() || existing.displayId || `D-${id.slice(0, 8).toUpperCase()}`;
+    const duplicate = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id<>? AND is_deleted=0 AND lower(json_extract(data,'$.displayId'))=lower(?) LIMIT 1").bind(id, next.displayId).first();
+    if (duplicate) return c.json({ success: false, error: 'That donor ID is already in use.' }, 409);
+
+    const now = Date.now();
+    const nextRevision = expectedRevision + 1;
+    const data = JSON.stringify(next);
+    const operationId = `${mutationId}-update`;
+    const response = { success: true, item: { ...next, revision: nextRevision, updatedAt: now } };
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare(`INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='donors' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END`).bind(operationId, id, expectedRevision),
+        c.env.DB.prepare(`UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='donors' AND id=? AND revision=? AND is_deleted=0`).bind(data, nextRevision, now, operationId, id, expectedRevision),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='donors' AND id=? AND revision=?`).bind(mutationId, operationId, id, nextRevision),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',?,revision,?,data,?,?,updated_at,?,?,? FROM sync_records WHERE type='donors' AND id=? AND revision=?`).bind(expectedRevision, current.data, userId, userEmail, mutationId, operationId, 'Updated through server-driven donor API', id, nextRevision),
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response);
+    } catch (error: any) {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: 'This donor was changed by another user. Reloaded the latest version.', conflict: true }, 409);
+    }
   });
 
   app.get('/v3/accounts', async (c: any) => {
