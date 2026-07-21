@@ -9,6 +9,7 @@ import { OnlineExpenses } from './pages/OnlineExpenses';
 import { OnlinePayments } from './pages/OnlinePayments';
 import { OnlinePledges } from './pages/OnlinePledges';
 import { OnlineSchedules } from './pages/OnlineSchedules';
+import { OnlineVendors } from './pages/OnlineVendors';
 import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 /**
@@ -33,7 +34,7 @@ function App() {
         <Route path="/calendar" element={waitingPage('Calendar')} />
         <Route path="/pledges" element={cloudPage(<OnlinePledges />)} />
         <Route path="/schedules" element={cloudPage(<OnlineSchedules />)} />
-        <Route path="/vendors" element={waitingPage('Vendors')} />
+        <Route path="/vendors" element={cloudPage(<OnlineVendors />)} />
         <Route path="/write-checks" element={waitingPage('Write Checks')} />
         <Route path="/transactions" element={waitingPage('Transactions')} />
         <Route path="/payroll" element={waitingPage('Payroll & T4A')} />

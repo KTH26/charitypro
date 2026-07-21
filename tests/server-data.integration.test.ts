@@ -214,4 +214,26 @@ describe('server-driven bank deposit matching', () => {
     expect(ledger.items).toHaveLength(1);
     expect(ledger.items[0].recordType).toBe('transactions');
   });
+
+  it('loads paginated vendor totals and original-style vendor bill details', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'vendors', 'vendor-1', { id: 'vendor-1', name: 'Office Supply', phone: '555-0199' });
+    seedRecord(db, 'accounts', 'expense-office', { id: 'expense-office', name: 'Office Expense', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'bank-main', { id: 'bank-main', name: 'Main Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'bills', 'vendor-bill-paid', { id: 'vendor-bill-paid', vendor: 'Office Supply', amount: 40, currency: 'CAD', dueDate: '2026-07-19', paidDate: '2026-07-20', status: 'paid', category: 'expense-office', sourceAccountId: 'bank-main' });
+    seedRecord(db, 'bills', 'vendor-bill-open', { id: 'vendor-bill-open', vendor: 'Office Supply', amount: 60, currency: 'CAD', dueDate: '2026-07-21', status: 'pending', category: 'expense-office' });
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const listResponse = await app.request('/v3/vendors?limit=50&search=office', {}, { DB: db } as any);
+    const list = await listResponse.json() as any;
+    expect(listResponse.status).toBe(200);
+    expect(list.items).toEqual([{ name: 'Office Supply', billCount: 2, totalBilled: 100, balanceOwed: 60 }]);
+    const detailResponse = await app.request('/v3/vendors/details?name=Office%20Supply', {}, { DB: db } as any);
+    const detail = await detailResponse.json() as any;
+    expect(detailResponse.status).toBe(200);
+    expect(detail.vendor.phone).toBe('555-0199');
+    expect(detail.summary).toEqual({ billCount: 2, totalPaid: 40, totalOwed: 60 });
+    expect(detail.bills[0].categoryName).toBe('Office Expense');
+  });
 });

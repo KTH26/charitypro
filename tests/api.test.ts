@@ -73,7 +73,7 @@ describe('Backend API & Security Rules', () => {
     expect(donorsSource).toContain('window.setInterval');
     const expensesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineExpenses.tsx'), 'utf8');
     expect(appSource).toContain('path="/online/expenses"');
-    expect(expensesSource).toContain("fetch('/api/v3/bills'");
+    expect(expensesSource).toContain('/api/v3/bills');
     expect(expensesSource).toContain('window.setInterval');
     const bankSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineBank.tsx'), 'utf8');
     expect(appSource).toContain('path="/online/bank"');

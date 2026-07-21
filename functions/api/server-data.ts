@@ -560,6 +560,46 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     });
   });
 
+  app.get('/v3/vendors', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read');
+    if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit'));
+    const page = boundedPage(c.req.query('page'));
+    const offset = (page - 1) * limit;
+    const search = String(c.req.query('search') || '').trim().toLowerCase();
+    const condition = search ? " AND lower(COALESCE(json_extract(data,'$.vendor'),'')) LIKE ?" : '';
+    const bindings = search ? [`%${search}%`] : [];
+    const base = "type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.isPayroll'),0)=0 AND trim(COALESCE(json_extract(data,'$.vendor'),''))<>''";
+    const [listResult, countResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT json_extract(data,'$.vendor') AS vendor,COUNT(*) AS bill_count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS total_billed,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS balance_owed FROM sync_records WHERE ${base}${condition} GROUP BY json_extract(data,'$.vendor') ORDER BY lower(json_extract(data,'$.vendor')) LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM (SELECT 1 FROM sync_records WHERE ${base}${condition} GROUP BY json_extract(data,'$.vendor'))`).bind(...bindings)
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    return c.json({ success: true, items: listResult.results.map((row: any) => ({ name: row.vendor, billCount: Number(row.bill_count || 0), totalBilled: Number(row.total_billed || 0), balanceOwed: Number(row.balance_owed || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.get('/v3/vendors/details', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read');
+    if (denied) return denied;
+    const name = String(c.req.query('name') || '').trim();
+    if (!name) return c.json({ success: false, error: 'Vendor name is required.' }, 400);
+    const joins = `LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
+      LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0`;
+    const [vendor, bills, summary] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='vendors' AND is_deleted=0 AND lower(json_extract(data,'$.name'))=lower(?) LIMIT 1").bind(name),
+      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE b.type='bills' AND b.is_deleted=0 AND lower(json_extract(b.data,'$.vendor'))=lower(?) ORDER BY json_extract(b.data,'$.dueDate') DESC,b.id DESC LIMIT 50`).bind(name),
+      c.env.DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')='paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS total_paid,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS total_owed FROM sync_records WHERE type='bills' AND is_deleted=0 AND lower(json_extract(data,'$.vendor'))=lower(?)").bind(name)
+    ]);
+    const vendorRow: any = vendor.results[0];
+    const stats: any = summary.results[0] || {};
+    return c.json({
+      success: true,
+      vendor: vendorRow ? parseRecord(vendorRow) : { name },
+      bills: bills.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '' })),
+      summary: { billCount: Number(stats.count || 0), totalPaid: Number(stats.total_paid || 0), totalOwed: Number(stats.total_owed || 0) }
+    });
+  });
+
   app.post('/v3/bills', async (c: any) => {
     const denied = requirePermission(c, 'bills.create');
     if (denied) return denied;

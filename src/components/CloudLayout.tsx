@@ -23,7 +23,7 @@ const categories: NavCategory[] = [
     { path: '/schedules', label: 'Schedules', icon: CalendarClock, ready: true }
   ] },
   { label: 'EXPENSES', items: [
-    { path: '/vendors', label: 'Vendors', icon: Store },
+    { path: '/vendors', label: 'Vendors', icon: Store, ready: true },
     { path: '/expenses', label: 'Bills & Expenses', icon: FileText, ready: true },
     { path: '/write-checks', label: 'Write Checks', icon: Printer }
   ] },
