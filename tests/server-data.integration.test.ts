@@ -270,4 +270,19 @@ describe('server-driven bank deposit matching', () => {
     const response = await app.request('/v3/tasks?limit=50&status=pending', {}, { DB: db } as any); const body = await response.json() as any;
     expect(response.status).toBe(200); expect(body.total).toBe(1); expect(body.limit).toBe(50); expect(body.items[0]).toMatchObject({ id: 'task-high', donorName: 'Task Donor', priority: 'high' }); expect(body.summary).toEqual({ total: 2, pending: 1, high: 1 });
   });
+
+  it('creates, edits, lists, and deletes sponsorship days with donor revisions', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'calendar-donor', { id: 'calendar-donor', name: 'Calendar Donor', sponsorshipDays: [] }, 2);
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const created = await app.request('/v3/sponsorship-days', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'calendar-create' }, body: JSON.stringify({ donorId: 'calendar-donor', revision: 2, date: '07-21', note: 'Yahrzeit', year: 2026 }) }, { DB: db } as any); const createdBody = await created.json() as any;
+    expect(created.status).toBe(201); expect(createdBody.donorRevision).toBe(3);
+    const listResponse = await app.request('/v3/sponsorship-days?month=07&limit=50', {}, { DB: db } as any); const list = await listResponse.json() as any;
+    expect(listResponse.status).toBe(200); expect(list.total).toBe(1); expect(list.items[0]).toMatchObject({ donorName: 'Calendar Donor', donorRevision: 3, note: 'Yahrzeit' });
+    const dayId = list.items[0].id;
+    const updated = await app.request(`/v3/sponsorship-days/calendar-donor/${dayId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'calendar-update' }, body: JSON.stringify({ revision: 3, date: '07-22', note: 'Anniversary', year: 2026 }) }, { DB: db } as any);
+    expect(updated.status).toBe(200); expect((await updated.json() as any).donorRevision).toBe(4);
+    const removed = await app.request(`/v3/sponsorship-days/calendar-donor/${dayId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'calendar-delete' }, body: JSON.stringify({ revision: 4 }) }, { DB: db } as any);
+    expect(removed.status).toBe(200); expect(Number((db.database.prepare("SELECT revision FROM sync_records WHERE type='donors' AND id='calendar-donor'").get() as any).revision)).toBe(5); expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='donors'").get() as any).count)).toBe(3);
+  });
 });

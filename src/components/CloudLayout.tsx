@@ -12,7 +12,7 @@ type NavCategory = { label: string; items: NavItem[] };
 const categories: NavCategory[] = [
   { label: 'HOME', items: [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard, ready: true },
-    { path: '/calendar', label: 'Calendar', icon: Calendar }
+    { path: '/calendar', label: 'Calendar', icon: Calendar, ready: true }
   ] },
   { label: 'CONTACTS', items: [
     { path: '/donors', label: 'Donors', icon: Users, ready: true }

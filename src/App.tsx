@@ -15,6 +15,8 @@ import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
 import { OnlineTasks } from './pages/OnlineTasks';
 import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
+const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
+
 /**
  * Production is cloud-only. Local-store pages and synchronization engines are
  * intentionally not imported or mounted here. Their source remains in project
@@ -34,7 +36,7 @@ function App() {
         <Route path="/expenses" element={cloudPage(<OnlineExpenses />)} />
         <Route path="/chart-of-accounts" element={cloudPage(<OnlineAccounts />)} />
         <Route path="/bank-feed" element={cloudPage(<OnlineBank />)} />
-        <Route path="/calendar" element={waitingPage('Calendar')} />
+        <Route path="/calendar" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading calendar...</div>}><OnlineCalendar /></React.Suspense>)} />
         <Route path="/pledges" element={cloudPage(<OnlinePledges />)} />
         <Route path="/schedules" element={cloudPage(<OnlineSchedules />)} />
         <Route path="/vendors" element={cloudPage(<OnlineVendors />)} />

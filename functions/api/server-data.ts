@@ -409,6 +409,77 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit), summary: { total: Number(summary.total || 0), pending: Number(summary.pending || 0), high: Number(summary.high || 0) } });
   });
 
+  app.get('/v3/sponsorship-days', async (c: any) => {
+    const denied = requirePermission(c, 'donors.read');
+    if (denied) return denied;
+    const month = String(c.req.query('month') || '').padStart(2, '0');
+    if (!/^(0[1-9]|1[0-2])$/.test(month)) return c.json({ success: false, error: 'Choose a valid calendar month.' }, 400);
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    const dayRows = `FROM sync_records d JOIN json_each(CASE WHEN json_type(d.data,'$.sponsorshipDays')='array' THEN json_extract(d.data,'$.sponsorshipDays') ELSE '[]' END) day WHERE d.type='donors' AND d.is_deleted=0`;
+    const fields = "SELECT d.id AS donor_id,d.revision AS donor_revision,json_extract(d.data,'$.name') AS donor_name,day.key AS day_index,day.value AS day_data";
+    const [monthResult, monthCountResult, upcomingResult, upcomingCountResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`${fields} ${dayRows} AND json_extract(day.value,'$.date') LIKE ? ORDER BY json_extract(day.value,'$.date'),lower(json_extract(d.data,'$.name')) LIMIT ? OFFSET ?`).bind(`${month}-%`, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count ${dayRows} AND json_extract(day.value,'$.date') LIKE ?`).bind(`${month}-%`),
+      c.env.DB.prepare(`${fields} ${dayRows} ORDER BY json_extract(day.value,'$.date'),lower(json_extract(d.data,'$.name')) LIMIT 50`),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count ${dayRows}`)
+    ]);
+    const mapDay = (row: any) => { const day = JSON.parse(String(row.day_data)); return { ...day, id: String(day.id || `legacy-${row.day_index}`), donorId: String(row.donor_id), donorRevision: Number(row.donor_revision), donorName: String(row.donor_name || 'Unknown Donor') }; };
+    const total = Number(monthCountResult.results[0]?.count || 0);
+    return c.json({ success: true, items: monthResult.results.map(mapDay), upcoming: upcomingResult.results.map(mapDay), page, limit, total, totalPages: Math.ceil(total / limit), upcomingTotal: Number(upcomingCountResult.results[0]?.count || 0) });
+  });
+
+  const mutateSponsorshipDay = async (c: any, action: 'create' | 'update' | 'delete') => {
+    const denied = requirePermission(c, action === 'delete' ? 'donors.delete' : action === 'create' ? 'donors.create' : 'donors.update');
+    if (denied) return denied;
+    const body = await c.req.json();
+    const donorId = String(action === 'create' ? body.donorId || '' : c.req.param('donorId') || '');
+    const dayId = String(action === 'create' ? '' : c.req.param('dayId') || '');
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-sponsorship-${action}-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();
+    if (!current) return c.json({ success: false, error: 'Donor not found.' }, 404);
+    const expectedRevision = Number(body.revision);
+    if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This donor was changed by another user. The latest calendar has been reloaded.', conflict: true }, 409);
+    const existing = JSON.parse(String(current.data));
+    const days: any[] = Array.isArray(existing.sponsorshipDays) ? [...existing.sponsorshipDays] : [];
+    let index = action === 'create' ? -1 : days.findIndex(day => String(day?.id || '') === dayId);
+    if (index < 0 && /^legacy-\d+$/.test(dayId)) index = Number(dayId.slice(7));
+    if (action !== 'create' && (index < 0 || index >= days.length)) return c.json({ success: false, error: 'Sponsorship day not found.' }, 404);
+    let changedDay: any = null;
+    if (action !== 'delete') {
+      const date = String(body.date || '').trim(); const note = String(body.note || '').trim(); const year = Number(body.year || new Date().getUTCFullYear());
+      const match = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.exec(date); const check = match ? new Date(Date.UTC(2024, Number(match[1]) - 1, Number(match[2]))) : null;
+      if (!match || !check || check.getUTCMonth() !== Number(match[1]) - 1 || !note || note.length > 500 || !Number.isInteger(year) || year < 1900 || year > 2200) return c.json({ success: false, error: 'Enter a valid month-day, year, and occasion.' }, 400);
+      changedDay = { ...(action === 'update' ? days[index] : {}), id: action === 'create' ? crypto.randomUUID() : String(days[index]?.id || crypto.randomUUID()), date, note, year };
+      if (action === 'create') days.push(changedDay); else days[index] = changedDay;
+    } else days.splice(index, 1);
+    const next = { ...existing, sponsorshipDays: days }; const now = Date.now(); const nextRevision = expectedRevision + 1; const data = JSON.stringify(next); const operationId = `${mutationId}-update`;
+    const response = { success: true, item: changedDay, donorId, donorRevision: nextRevision, updatedAt: now };
+    const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='donors' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(operationId, donorId, expectedRevision),
+        c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='donors' AND id=? AND revision=? AND is_deleted=0").bind(data, nextRevision, now, operationId, donorId, expectedRevision),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='donors' AND id=? AND revision=?").bind(mutationId, operationId, donorId, nextRevision),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',?,revision,?,data,?,?,updated_at,?,?,? FROM sync_records WHERE type='donors' AND id=? AND revision=?").bind(expectedRevision, current.data, userId, userEmail, mutationId, operationId, `Sponsorship day ${action}`, donorId, nextRevision),
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response, action === 'create' ? 201 : 200);
+    } catch (error: any) {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: 'This donor was changed by another user. The latest calendar has been reloaded.', conflict: true }, 409);
+    }
+  };
+
+  app.post('/v3/sponsorship-days', (c: any) => mutateSponsorshipDay(c, 'create'));
+  app.put('/v3/sponsorship-days/:donorId/:dayId', (c: any) => mutateSponsorshipDay(c, 'update'));
+  app.delete('/v3/sponsorship-days/:donorId/:dayId', (c: any) => mutateSponsorshipDay(c, 'delete'));
+
   app.get('/v3/donors', async (c: any) => {
     const denied = requirePermission(c, 'donors.read');
     if (denied) return denied;
