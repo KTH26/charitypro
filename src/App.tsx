@@ -1,10 +1,13 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { CloudLayout } from './components/CloudLayout';
 import { OnlineAccounts } from './pages/OnlineAccounts';
 import { OnlineBank } from './pages/OnlineBank';
+import { OnlineDashboard } from './pages/OnlineDashboard';
 import { OnlineDonors } from './pages/OnlineDonors';
 import { OnlineExpenses } from './pages/OnlineExpenses';
 import { OnlinePayments } from './pages/OnlinePayments';
+import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 /**
  * Production is cloud-only. Local-store pages and synchronization engines are
@@ -13,15 +16,31 @@ import { OnlinePayments } from './pages/OnlinePayments';
  * against server-owned APIs.
  */
 function App() {
+  const cloudPage = (page: React.ReactNode) => <CloudLayout>{page}</CloudLayout>;
+  const waitingPage = (title: string) => cloudPage(<OnlineUnavailable title={title} />);
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/payments" replace />} />
-        <Route path="/payments" element={<OnlinePayments />} />
-        <Route path="/donors" element={<OnlineDonors />} />
-        <Route path="/expenses" element={<OnlineExpenses />} />
-        <Route path="/chart-of-accounts" element={<OnlineAccounts />} />
-        <Route path="/bank-feed" element={<OnlineBank />} />
+        <Route path="/" element={cloudPage(<OnlineDashboard />)} />
+        <Route path="/payments" element={cloudPage(<OnlinePayments />)} />
+        <Route path="/donors" element={cloudPage(<OnlineDonors />)} />
+        <Route path="/expenses" element={cloudPage(<OnlineExpenses />)} />
+        <Route path="/chart-of-accounts" element={cloudPage(<OnlineAccounts />)} />
+        <Route path="/bank-feed" element={cloudPage(<OnlineBank />)} />
+        <Route path="/calendar" element={waitingPage('Calendar')} />
+        <Route path="/pledges" element={waitingPage('Pledges')} />
+        <Route path="/schedules" element={waitingPage('Schedules')} />
+        <Route path="/vendors" element={waitingPage('Vendors')} />
+        <Route path="/write-checks" element={waitingPage('Write Checks')} />
+        <Route path="/transactions" element={waitingPage('Transactions')} />
+        <Route path="/payroll" element={waitingPage('Payroll & T4A')} />
+        <Route path="/reconciliation" element={waitingPage('Reconciliation')} />
+        <Route path="/sola-sync" element={waitingPage('Sola Payments Sync')} />
+        <Route path="/reports" element={waitingPage('Fundraising Reports')} />
+        <Route path="/profit-loss" element={waitingPage('Profit & Loss')} />
+        <Route path="/tasks" element={waitingPage('Tasks')} />
+        <Route path="/settings" element={waitingPage('Settings')} />
 
         {/* Temporary aliases for bookmarks created during the migration. */}
         <Route path="/online/payments" element={<Navigate to="/payments" replace />} />
@@ -30,7 +49,7 @@ function App() {
         <Route path="/online/accounts" element={<Navigate to="/chart-of-accounts" replace />} />
         <Route path="/online/bank" element={<Navigate to="/bank-feed" replace />} />
 
-        <Route path="*" element={<Navigate to="/payments" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

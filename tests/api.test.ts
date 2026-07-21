@@ -40,16 +40,21 @@ describe('Backend API & Security Rules', () => {
   it('runs production as cloud-only with no local store or synchronization engine', () => {
     const appSource = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8');
     const accountsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineAccounts.tsx'), 'utf8');
-    expect(appSource).toContain('path="/payments" element={<OnlinePayments />}');
-    expect(appSource).toContain('path="/donors" element={<OnlineDonors />}');
-    expect(appSource).toContain('path="/expenses" element={<OnlineExpenses />}');
-    expect(appSource).toContain('path="/chart-of-accounts" element={<OnlineAccounts />}');
-    expect(appSource).toContain('path="/bank-feed" element={<OnlineBank />}');
+    expect(appSource).toContain('path="/payments" element={cloudPage(<OnlinePayments />)}');
+    expect(appSource).toContain('path="/donors" element={cloudPage(<OnlineDonors />)}');
+    expect(appSource).toContain('path="/expenses" element={cloudPage(<OnlineExpenses />)}');
+    expect(appSource).toContain('path="/chart-of-accounts" element={cloudPage(<OnlineAccounts />)}');
+    expect(appSource).toContain('path="/bank-feed" element={cloudPage(<OnlineBank />)}');
     expect(appSource).not.toContain("from './store'");
     expect(appSource).not.toContain("from './components/SyncEngine'");
     expect(appSource).not.toContain('SyncEngineHardened');
     expect(appSource).not.toContain('path="/legacy/');
-    expect(appSource).toContain('path="*" element={<Navigate to="/payments" replace />}');
+    const layoutSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudLayout.tsx'), 'utf8');
+    expect(layoutSource).toContain("label: 'DONATIONS'");
+    expect(layoutSource).toContain("label: 'ACCOUNTING'");
+    expect(layoutSource).toContain("label: 'REPORTS'");
+    expect(layoutSource).not.toContain("from '../store'");
+    expect(appSource).toContain('path="*" element={<Navigate to="/" replace />}');
     expect(appSource).toContain('path="/online/accounts"');
     expect(accountsSource).toContain("fetch('/api/v3/accounts')");
     expect(accountsSource).toContain('window.setInterval');
