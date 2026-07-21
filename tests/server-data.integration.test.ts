@@ -183,6 +183,16 @@ describe('server-driven bank deposit matching', () => {
     expect(profileResponse.status).toBe(200);
     expect(profile.summary.approvedTotal).toBe(40);
     expect(profile.summary.pledgedTotal).toBe(100);
+
+    seedRecord(db, 'transactions', 'linked-payment-1', { id: 'linked-payment-1', donorId: 'donor-search-1', pledgeId: 'donor-pledge-1', amount: 25, amountCAD: 25, currency: 'CAD', date: '2026-07-21', type: 'approved', method: 'cash' });
+    seedRecord(db, 'recurringPayments', 'linked-schedule-1', { id: 'linked-schedule-1', donorId: 'donor-search-1', pledgeId: 'donor-pledge-1', amount: 10, currency: 'CAD', frequency: 'monthly', nextDate: '2026-08-01', active: true });
+    const pledgeResponse = await app.request('/v3/pledges/donor-pledge-1/details', {}, { DB: db } as any);
+    const pledgeDetails = await pledgeResponse.json() as any;
+    expect(pledgeResponse.status).toBe(200);
+    expect(pledgeDetails.pledge.donorName).toBe('Sarah Smith');
+    expect(pledgeDetails.summary).toMatchObject({ amount: 100, paid: 25, scheduled: 10, balance: 65 });
+    expect(pledgeDetails.payments).toHaveLength(1);
+    expect(pledgeDetails.schedules).toHaveLength(1);
   });
 
   it('loads bounded account choices used by the payment form', async () => {

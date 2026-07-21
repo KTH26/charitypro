@@ -176,7 +176,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     } catch (error: any) {
       const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
       if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
-      return c.json({ success: false, error: `This record was changed by another user. The latest version has been reloaded. (${error.message})`, conflict: true }, 409);
+      return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
     }
   });
 
@@ -216,7 +216,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     } catch (error: any) {
       const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
       if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
-      return c.json({ success: false, error: `This record was changed by another user. The latest version has been reloaded. (${error.message})`, conflict: true }, 409);
+      return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
     }
   });
 
@@ -236,6 +236,43 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor' })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.get('/v3/pledges/:id/details', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read');
+    if (denied) return denied;
+    const id = String(c.req.param('id') || '');
+    const pledge: any = await c.env.DB.prepare(`
+      SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name
+      FROM sync_records p
+      LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0
+      WHERE p.type='pledges' AND p.id=? AND p.is_deleted=0
+    `).bind(id).first();
+    if (!pledge) return c.json({ success: false, error: 'Pledge not found.' }, 404);
+    const [payments, paymentSummary, schedules, scheduleSummary] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.pledgeId')=? ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT 50").bind(id),
+      c.env.DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(data,'$.type')='approved' THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END),0) AS paid FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.pledgeId')=?").bind(id),
+      c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.pledgeId')=? ORDER BY json_extract(data,'$.nextDate'),id LIMIT 50").bind(id),
+      c.env.DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN COALESCE(json_extract(data,'$.active'),0)=1 THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END),0) AS scheduled FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.pledgeId')=?").bind(id)
+    ]);
+    const item = { ...parseRecord(pledge), donorName: pledge.donor_name || 'Unknown Donor' };
+    const amount = Number(item.amountCAD ?? item.amount ?? 0);
+    const paid = Number(paymentSummary.results[0]?.paid || 0);
+    const scheduled = Number(scheduleSummary.results[0]?.scheduled || 0);
+    return c.json({
+      success: true,
+      pledge: item,
+      payments: payments.results.map(parseRecord),
+      schedules: schedules.results.map(parseRecord),
+      summary: {
+        paymentCount: Number(paymentSummary.results[0]?.count || 0),
+        scheduleCount: Number(scheduleSummary.results[0]?.count || 0),
+        amount,
+        paid,
+        scheduled,
+        balance: amount - paid - scheduled
+      }
+    });
   });
 
   app.get('/v3/schedules', async (c: any) => {
