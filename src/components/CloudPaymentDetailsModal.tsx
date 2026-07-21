@@ -1,0 +1,15 @@
+import React from 'react';
+import { X } from 'lucide-react';
+
+export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => void }> = ({ payment, onClose }) => (
+  <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 650, width: '90%' }}>
+    <div className="modal-header"><h2 style={{ margin: 0 }}>Transaction Details</h2><button className="modal-close" onClick={onClose}><X size={20} /></button></div>
+    <div className="modal-body">
+      <div style={{ textAlign: 'center', padding: '8px 0 22px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}><div style={{ color: 'var(--text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Payment Amount</div><div style={{ color: 'var(--green)', fontSize: 30, fontWeight: 900 }}>{payment.currency} ${Number(payment.amount).toLocaleString('en-CA', { minimumFractionDigits: 2 })}</div>{payment.currency === 'USD' && payment.amountCAD != null && <div style={{ color: 'var(--text-muted)' }}>CAD ${Number(payment.amountCAD).toFixed(2)} at rate {payment.exchangeRate || 'saved rate'}</div>}</div>
+      <section style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16, marginBottom: 16 }}><h3 style={{ margin: '0 0 12px', color: 'var(--navy)' }}>Payment Details</h3><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><Detail label="Donor" value={payment.donorName} /><Detail label="Date" value={payment.date} /><Detail label="Status" value={payment.type} /><Detail label="Method" value={String(payment.method || '').replaceAll('_', ' ')} /><Detail label="Deposit status" value={payment.depositStatus || 'Direct'} /><Detail label="Check number" value={payment.checkNumber || '—'} /><Detail label="Asset Account" value={payment.sourceName || payment.sourceAccountId || '—'} /><Detail label="Revenue Account" value={payment.offsetName || payment.offsetAccountId || '—'} /></div></section>
+      <section style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}><h3 style={{ margin: '0 0 10px', color: 'var(--navy)' }}>Reference Information</h3><Detail label="Notes" value={payment.notes || '—'} /><div style={{ marginTop: 10 }}><Detail label="Transaction ID" value={payment.id} /></div>{payment.bankTransactionId && <div style={{ marginTop: 10 }}><Detail label="Bank transaction" value={payment.bankTransactionId} /></div>}{payment.pledgeId && <div style={{ marginTop: 10 }}><Detail label="Pledge ID" value={payment.pledgeId} /></div>}</section>
+    </div><div className="modal-footer"><button className="btn btn-secondary" onClick={onClose}>Close</button></div>
+  </div></div>
+);
+
+const Detail: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => <div><div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', marginBottom: 3 }}>{label}</div><div style={{ fontWeight: 700, overflowWrap: 'anywhere', textTransform: label === 'Status' || label === 'Method' ? 'capitalize' : undefined }}>{value}</div></div>;

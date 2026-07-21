@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { OnlinePaymentForm } from '../components/OnlinePaymentForm';
+import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
 
 type OnlinePayment = {
   id: string;
@@ -12,6 +13,9 @@ type OnlinePayment = {
   currency: 'CAD' | 'USD';
   type: 'approved' | 'pending';
   notes?: string;
+  sourceName?: string;
+  offsetName?: string;
+  [key: string]: any;
 };
 
 type PaymentResponse = {
@@ -45,6 +49,7 @@ export const OnlinePayments: React.FC = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState<OnlinePayment | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
@@ -134,14 +139,14 @@ export const OnlinePayments: React.FC = () => {
                 <thead><tr><th>Date</th><th>Donor</th><th>Status</th><th>Method</th><th>Notes</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead>
                 <tbody>
                   {items.map(payment => (
-                    <tr key={payment.id}>
+                    <tr key={payment.id} onClick={() => setSelectedPayment(payment)} style={{ cursor: 'pointer' }}>
                       <td>{payment.date}</td>
                       <td style={{ fontWeight: 700 }}>{payment.donorName}</td>
                       <td>{payment.type === 'pending' ? 'Pending' : 'Received'}</td>
                       <td>{methodLabel[payment.method] || payment.method}</td>
                       <td style={{ color: 'var(--text-muted)', maxWidth: 420 }}>{payment.notes || ''}</td>
                       <td style={{ textAlign: 'right', fontWeight: 800 }}>{payment.currency} ${payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => void removePayment(payment)}>Delete</button></td>
+                      <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={event => { event.stopPropagation(); void removePayment(payment); }}>Delete</button></td>
                     </tr>
                   ))}
                   {items.length === 0 && <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center' }}>No matching payments.</td></tr>}
@@ -158,6 +163,7 @@ export const OnlinePayments: React.FC = () => {
           </div>
         </section>
       </div>
+      {selectedPayment && <CloudPaymentDetailsModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />}
     </main>
   );
 };

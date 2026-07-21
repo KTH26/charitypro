@@ -7,6 +7,8 @@ import { OnlineDashboard } from './pages/OnlineDashboard';
 import { OnlineDonors } from './pages/OnlineDonors';
 import { OnlineExpenses } from './pages/OnlineExpenses';
 import { OnlinePayments } from './pages/OnlinePayments';
+import { OnlinePledges } from './pages/OnlinePledges';
+import { OnlineSchedules } from './pages/OnlineSchedules';
 import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 /**
@@ -29,8 +31,8 @@ function App() {
         <Route path="/chart-of-accounts" element={cloudPage(<OnlineAccounts />)} />
         <Route path="/bank-feed" element={cloudPage(<OnlineBank />)} />
         <Route path="/calendar" element={waitingPage('Calendar')} />
-        <Route path="/pledges" element={waitingPage('Pledges')} />
-        <Route path="/schedules" element={waitingPage('Schedules')} />
+        <Route path="/pledges" element={cloudPage(<OnlinePledges />)} />
+        <Route path="/schedules" element={cloudPage(<OnlineSchedules />)} />
         <Route path="/vendors" element={waitingPage('Vendors')} />
         <Route path="/write-checks" element={waitingPage('Write Checks')} />
         <Route path="/transactions" element={waitingPage('Transactions')} />

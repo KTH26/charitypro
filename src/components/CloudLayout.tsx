@@ -18,9 +18,9 @@ const categories: NavCategory[] = [
     { path: '/donors', label: 'Donors', icon: Users, ready: true }
   ] },
   { label: 'DONATIONS', items: [
-    { path: '/pledges', label: 'Pledges', icon: HeartHandshake },
+    { path: '/pledges', label: 'Pledges', icon: HeartHandshake, ready: true },
     { path: '/payments', label: 'Payments', icon: Wallet, ready: true },
-    { path: '/schedules', label: 'Schedules', icon: CalendarClock }
+    { path: '/schedules', label: 'Schedules', icon: CalendarClock, ready: true }
   ] },
   { label: 'EXPENSES', items: [
     { path: '/vendors', label: 'Vendors', icon: Store },

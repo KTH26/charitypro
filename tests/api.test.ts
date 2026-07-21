@@ -29,6 +29,10 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.post('/v3/records/:type'");
     expect(source).toContain("app.put('/v3/records/:type/:id'");
     expect(source).toContain("app.delete('/v3/records/:type/:id'");
+    expect(source).toContain("app.get('/v3/pledges'");
+    expect(source).toContain("app.get('/v3/schedules'");
+    expect(source).toContain("app.get('/v3/donors/:id/profile'");
+    expect(source).toContain("app.get('/v3/accounts/:id/ledger'");
     expect(source).toContain("app.get('/v3/accounts'");
     expect(source).toContain("app.post('/v3/payments'");
     expect(source).toContain("app.delete('/v3/payments/:id'");
@@ -76,6 +80,17 @@ describe('Backend API & Security Rules', () => {
     expect(bankSource).toContain("fetch('/api/v3/bank/match-deposit'");
     expect(bankSource).toContain("fetch('/api/v3/bank/match-outgoing'");
     expect(bankSource).toContain('Exact match');
+    const pledgesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePledges.tsx'), 'utf8');
+    const schedulesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineSchedules.tsx'), 'utf8');
+    expect(pledgesSource).toContain('limit=50');
+    expect(pledgesSource).toContain("'/api/v3/records/pledges'");
+    expect(schedulesSource).toContain('limit=50');
+    expect(schedulesSource).toContain("'/api/v3/records/recurringPayments'");
+    const donorProfileSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudDonorProfileModal.tsx'), 'utf8');
+    const accountDetailsSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudAccountDetailsModal.tsx'), 'utf8');
+    expect(donorProfileSource).toContain('Donor Profile');
+    expect(donorProfileSource).toContain("['overview','Overview']");
+    expect(accountDetailsSource).toContain('limit=50');
     const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
     expect(formSource).toContain("fetch('/api/v3/payments'");
     expect(formSource).toContain('pendingRequestId');
@@ -149,6 +164,12 @@ describe('Backend API & Security Rules', () => {
       };
 
       expect(validatePayload('bills', bill).success).toBe(true);
+    });
+
+    it('validates cloud pledge and recurring schedule amounts', () => {
+      expect(validatePayload('pledges', { id: 'p1', donorId: 'd1', amount: 50, currency: 'CAD', date: '2026-07-21' }).success).toBe(true);
+      expect(validatePayload('pledges', { id: 'p1', donorId: 'd1', amount: 0, currency: 'CAD', date: '2026-07-21' }).success).toBe(false);
+      expect(validatePayload('recurringPayments', { id: 'r1', donorId: 'd1', amount: 25, currency: 'USD', frequency: 'monthly', nextDate: '2026-08-01', method: 'credit_card', active: true }).success).toBe(true);
     });
   });
 

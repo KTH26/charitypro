@@ -51,6 +51,7 @@ export const OnlinePaymentForm: React.FC<{
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoadingDonors(true);
+      setError('');
       try {
         const response = await fetch(`/api/v3/donors?limit=25&search=${encodeURIComponent(query)}`, { signal: controller.signal });
         const data = await response.json();

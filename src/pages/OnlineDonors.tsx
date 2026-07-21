@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { OnlineDonorForm, type OnlineDonor } from '../components/OnlineDonorForm';
+import { CloudDonorProfileModal } from '../components/CloudDonorProfileModal';
 
 type DonorResponse = { success: boolean; items: OnlineDonor[]; page: number; total: number; totalPages: number; error?: string };
 
@@ -14,6 +15,7 @@ export const OnlineDonors: React.FC = () => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<OnlineDonor | 'new' | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
@@ -23,6 +25,7 @@ export const OnlineDonors: React.FC = () => {
       const response = await fetch(`/api/v3/donors?${params.toString()}`);
       const data = await response.json() as DonorResponse;
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load donors.');
+      setError('');
       setItems(data.items);
       setTotal(data.total);
       setTotalPages(Math.max(1, data.totalPages));
@@ -65,16 +68,17 @@ export const OnlineDonors: React.FC = () => {
         <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading donors from the cloud...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th>Donor</th><th>Phone</th><th>Email</th><th>Address</th><th style={{ textAlign: 'right' }}>Total given</th><th /></tr></thead>
-            <tbody>{items.map(donor => <tr key={donor.id}>
+            <tbody>{items.map(donor => <tr key={donor.id} onClick={() => setProfileId(donor.id)} style={{ cursor: 'pointer' }}>
               <td><div style={{ fontWeight: 800 }}>{donor.name}</div><div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{donor.displayId || donor.id}</div>{(donor.hebFirstName || donor.hebLastName) && <div dir="rtl" style={{ color: 'var(--navy-light)', fontSize: 13, textAlign: 'left' }}>{[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ')}</div>}</td>
               <td>{donor.phone}</td><td>{donor.email || ''}</td><td>{donor.address || ''}</td>
               <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--green)' }}>${Number(donor.totalGiven || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={() => { setEditing(donor); setNotice(''); }}>Edit</button></td>
+              <td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={event => { event.stopPropagation(); setEditing(donor); setNotice(''); }}>Edit</button></td>
             </tr>)}{items.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center' }}>No matching donors.</td></tr>}</tbody>
           </table></div>}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
         </section>
       </div>
+      {profileId && <CloudDonorProfileModal donorId={profileId} onClose={() => setProfileId(null)} onEdit={donor => { setProfileId(null); setEditing(donor); }} />}
     </main>
   );
 };

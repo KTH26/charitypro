@@ -13,6 +13,7 @@ class MockStatement {
   async all() { return { results: this.database.prepare(this.sql).all(...this.values) as any[] }; }
   async first() { return (this.database.prepare(this.sql).get(...this.values) as any) || null; }
   async run() { return this.database.prepare(this.sql).run(...this.values); }
+  async execute() { return /^\s*(SELECT|WITH)\b/i.test(this.sql) ? this.all() : this.run(); }
 }
 
 class MockD1 {
@@ -23,7 +24,7 @@ class MockD1 {
     this.database.exec('BEGIN');
     try {
       const results = [];
-      for (const statement of statements) results.push(await statement.run());
+      for (const statement of statements) results.push(await statement.execute());
       this.database.exec('COMMIT');
       return results;
     } catch (error) {
@@ -161,5 +162,46 @@ describe('server-driven bank deposit matching', () => {
     expect(Number(row.revision)).toBe(3);
     expect(Number(row.is_deleted)).toBe(1);
     expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='pledges'").get() as any).count)).toBe(3);
+  });
+
+  it('searches donors with a bounded server-side page', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'donor-search-1', { id: 'donor-search-1', name: 'Sarah Smith', firstName: 'Sarah', lastName: 'Smith', phone: '555-0100', email: 'sarah@example.com', displayId: 'D-100' });
+    seedRecord(db, 'transactions', 'donor-payment-1', { id: 'donor-payment-1', donorId: 'donor-search-1', amount: 40, amountCAD: 40, currency: 'CAD', date: '2026-07-20', type: 'approved', method: 'cash' });
+    seedRecord(db, 'pledges', 'donor-pledge-1', { id: 'donor-pledge-1', donorId: 'donor-search-1', amount: 100, currency: 'CAD', date: '2026-07-19' });
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/donors?limit=50&search=smith', {}, { DB: db } as any);
+    const body = await response.json() as any;
+    expect(response.status).toBe(200);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].name).toBe('Sarah Smith');
+    expect(body.limit).toBe(50);
+    const profileResponse = await app.request('/v3/donors/donor-search-1/profile', {}, { DB: db } as any);
+    const profile = await profileResponse.json() as any;
+    expect(profileResponse.status).toBe(200);
+    expect(profile.summary.approvedTotal).toBe(40);
+    expect(profile.summary.pledgedTotal).toBe(100);
+  });
+
+  it('loads bounded account choices used by the payment form', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'asset-1', { id: 'asset-1', name: 'Main Bank', type: 'asset', currency: 'CAD', startingBalance: 100 });
+    seedRecord(db, 'accounts', 'revenue-1', { id: 'revenue-1', name: 'Donations', type: 'revenue', currency: 'CAD', startingBalance: 0 });
+    seedRecord(db, 'transactions', 'account-payment-1', { id: 'account-payment-1', donorId: 'donor-1', amount: 20, amountCAD: 20, currency: 'CAD', date: '2026-07-20', type: 'approved', method: 'cash', sourceAccountId: 'asset-1', offsetAccountId: 'revenue-1' });
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/accounts?limit=100', {}, { DB: db } as any);
+    const body = await response.json() as any;
+    expect(response.status).toBe(200);
+    expect(body.items).toHaveLength(2);
+    expect(body.total).toBe(2);
+    const ledgerResponse = await app.request('/v3/accounts/asset-1/ledger?limit=50', {}, { DB: db } as any);
+    const ledger = await ledgerResponse.json() as any;
+    expect(ledgerResponse.status).toBe(200);
+    expect(ledger.items).toHaveLength(1);
+    expect(ledger.items[0].recordType).toBe('transactions');
   });
 });

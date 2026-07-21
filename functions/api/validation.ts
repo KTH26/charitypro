@@ -28,6 +28,25 @@ export const BillSchema = z.object({
   category: z.string()
 }).passthrough();
 
+export const PledgeSchema = z.object({
+  id: z.string().min(1),
+  donorId: z.string().min(1),
+  amount: MoneyAmountSchema.positive(),
+  currency: z.enum(['CAD', 'USD']),
+  date: z.string().min(1)
+}).passthrough();
+
+export const RecurringPaymentSchema = z.object({
+  id: z.string().min(1),
+  donorId: z.string().min(1),
+  amount: MoneyAmountSchema.positive(),
+  currency: z.enum(['CAD', 'USD']),
+  frequency: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
+  nextDate: z.string().min(1),
+  method: z.enum(['credit_card', 'check', 'cash', 'e_transfer', 'vouchers', 'eizer', 'bnei_leivy', 'other']),
+  active: z.boolean()
+}).passthrough();
+
 export const validatePayload = (type: string, data: any) => {
   switch (type) {
     case 'donors':
@@ -36,6 +55,10 @@ export const validatePayload = (type: string, data: any) => {
       return TransactionSchema.safeParse(data);
     case 'bills':
       return BillSchema.safeParse(data);
+    case 'pledges':
+      return PledgeSchema.safeParse(data);
+    case 'recurringPayments':
+      return RecurringPaymentSchema.safeParse(data);
     case 'exchangeRate':
       return z.number().finite().positive().safeParse(data);
     case 'matchedBankTransactions':
