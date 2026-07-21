@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Clock, X, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Edit2, X, XCircle } from 'lucide-react';
 import { CloudPaymentDetailsModal } from './CloudPaymentDetailsModal';
+import { CloudPledgeEditModal } from './CloudPledgeEditModal';
+import { CloudScheduleDetailsModal } from './CloudScheduleDetailsModal';
 
 type Details = {
   pledge: Record<string, any>;
@@ -15,6 +17,8 @@ export const CloudPledgeDetailsModal: React.FC<{ pledgeId: string; onClose: () =
   const [details, setDetails] = useState<Details | null>(null);
   const [selectedPayment, setSelectedPayment] = useState<Record<string, any> | null>(null);
   const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [selectedSchedule, setSelectedSchedule] = useState<Record<string, any> | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -57,12 +61,15 @@ export const CloudPledgeDetailsModal: React.FC<{ pledgeId: string; onClose: () =
             <div style={{ background: 'var(--bg-input)', padding: 16, borderRadius: 12, marginBottom: 24 }}><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}><div><span style={{ color: 'var(--text-muted)' }}>Date:</span> <strong>{details.pledge.date}</strong></div><div><span style={{ color: 'var(--text-muted)' }}>Category:</span> <strong>{details.pledge.category || '—'}</strong></div><div><span style={{ color: 'var(--text-muted)' }}>Sponsor:</span> <strong>{details.pledge.sponsor || '—'}</strong></div><div><span style={{ color: 'var(--text-muted)' }}>Currency:</span> <strong>{details.pledge.currency}</strong></div><div style={{ gridColumn: '1 / -1' }}><span style={{ color: 'var(--text-muted)' }}>Notes:</span> <strong>{details.pledge.notes || '—'}</strong></div></div></div>
             <h3 style={{ color: 'var(--navy)' }}>Payments Linked to this Pledge ({details.summary.paymentCount})</h3>
             <div className="table-container"><table><thead><tr><th>Date</th><th>Method</th><th>Status</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead><tbody>{details.payments.map(payment => <tr key={payment.id} onClick={() => setSelectedPayment(payment)} style={{ cursor: 'pointer' }}><td>{payment.date}</td><td style={{ textTransform: 'capitalize' }}>{String(payment.method || '').replaceAll('_', ' ')}</td><td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textTransform: 'capitalize' }}>{status(payment.type)}</span></td><td style={{ textAlign: 'right', fontWeight: 700 }}>{payment.currency} ${money(payment.amount)}</td></tr>)}{details.payments.length === 0 && <tr><td colSpan={4} style={{ padding: 30, textAlign: 'center' }}>No payments found for this pledge.</td></tr>}</tbody></table></div>
-            {details.schedules.length > 0 && <><h3 style={{ color: 'var(--navy)', marginTop: 22 }}>Recurring Schedules ({details.summary.scheduleCount})</h3><div className="table-container"><table><thead><tr><th>Next Date</th><th>Frequency</th><th>Status</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead><tbody>{details.schedules.map(schedule => <tr key={schedule.id}><td>{schedule.nextDate}</td><td style={{ textTransform: 'capitalize' }}>{schedule.frequency}</td><td>{schedule.active ? 'Active' : 'Paused'}</td><td style={{ textAlign: 'right', fontWeight: 700 }}>{schedule.currency} ${money(schedule.amount)}</td></tr>)}</tbody></table></div></>}
+            {details.schedules.length > 0 && <><h3 style={{ color: 'var(--navy)', marginTop: 22 }}>Recurring Schedules ({details.summary.scheduleCount})</h3><div className="table-container"><table><thead><tr><th>Next Date</th><th>Frequency</th><th>Status</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead><tbody>{details.schedules.map(schedule => <tr key={schedule.id} onClick={() => setSelectedSchedule({ ...schedule, donorName: details.pledge.donorName })} style={{ cursor: 'pointer' }}><td>{schedule.nextDate}</td><td style={{ textTransform: 'capitalize' }}>{schedule.frequency}</td><td>{schedule.active ? 'Active' : 'Paused'}</td><td style={{ textAlign: 'right', fontWeight: 700 }}>{schedule.currency} ${money(schedule.amount)}</td></tr>)}</tbody></table></div></>}
             <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 14 }}>Lists are limited to the latest 50 records to keep the popup responsive.</div>
           </>}
         </div>
+        {details && <div className="modal-footer"><button className="btn btn-secondary" onClick={onClose}>Close</button><button className="btn btn-primary" onClick={() => setEditing(true)}><Edit2 size={15} /> Edit All Details</button></div>}
       </div>
     </div>
     {selectedPayment && <CloudPaymentDetailsModal payment={{ ...selectedPayment, donorName: details?.pledge.donorName }} onClose={() => setSelectedPayment(null)} onUpdated={payment => { setSelectedPayment(payment); setDetails(current => current ? { ...current, payments: current.payments.map(item => item.id === payment.id ? payment : item) } : current); }} />}
+    {editing && details && <CloudPledgeEditModal pledge={details.pledge} onClose={() => setEditing(false)} onSaved={pledge => { setEditing(false); setDetails(current => current ? { ...current, pledge, summary: { ...current.summary, amount: Number(pledge.amountCAD ?? pledge.amount), balance: Number(pledge.amountCAD ?? pledge.amount) - current.summary.paid - current.summary.scheduled } } : current); }} />}
+    {selectedSchedule && <CloudScheduleDetailsModal schedule={selectedSchedule} onClose={() => setSelectedSchedule(null)} onUpdated={schedule => { setSelectedSchedule(schedule); setDetails(current => current ? { ...current, schedules: current.schedules.map(item => item.id === schedule.id ? schedule : item) } : current); }} />}
   </>;
 };

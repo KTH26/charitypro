@@ -676,6 +676,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (sourceAccountId) record.sourceAccountId = sourceAccountId;
     if (creditAccountId) record.creditAccountId = creditAccountId;
     if (body.projectId) record.projectId = String(body.projectId);
+    if (body.isPayrollExpense) record.isPayroll = true;
+    if (body.employeeId) record.employeeId = String(body.employeeId);
+    if (body.t4aEligible) record.t4aEligible = true;
     if (body.checkNumber) record.checkNumber = String(body.checkNumber).trim().slice(0, 100);
     if (body.printStatus === 'queued' || body.printStatus === 'printed') record.printStatus = body.printStatus;
     if (body.method) record.method = String(body.method).trim().slice(0, 100);

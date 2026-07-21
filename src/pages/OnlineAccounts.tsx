@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { CloudAccountDetailsModal } from '../components/CloudAccountDetailsModal';
 
-type Account = { id: string; name: string; type: string; subType?: string; currency: string; balance: number };
+type Account = { id: string; revision: number; name: string; type: string; subType?: string; currency: string; balance: number; startingBalance?: number };
 
 export const OnlineAccounts: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -58,7 +58,7 @@ export const OnlineAccounts: React.FC = () => {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14 }}><span>Page {page} of {totalPages} · 50 accounts maximum per page</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
       </div>
-      {selectedAccount && <CloudAccountDetailsModal account={selectedAccount} onClose={() => setSelectedAccount(null)} />}
+      {selectedAccount && <CloudAccountDetailsModal account={selectedAccount} onClose={() => setSelectedAccount(null)} onUpdated={account => { setSelectedAccount(account); setAccounts(current => current.map(item => item.id === account.id ? account : item)); }} />}
     </main>
   );
 };

@@ -71,12 +71,13 @@ export const OnlineDonorForm: React.FC<{
   };
 
   return (
-    <section className="card" style={{ padding: 22, marginBottom: 18, border: '2px solid var(--green)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'start', marginBottom: 18 }}>
+    <div className="modal-overlay" onClick={onCancel}>
+    <section className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 900, width: '92%', maxHeight: '90vh', overflowY: 'auto' }}>
+      <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'start' }}>
         <div><h2 style={{ color: 'var(--navy)', margin: 0 }}>{donor ? `Edit ${donor.name}` : 'Add donor to the cloud'}</h2><div style={{ color: 'var(--text-muted)', marginTop: 4 }}>Changes are shared immediately with every signed-in user.</div></div>
         <button className="btn btn-ghost" type="button" onClick={onCancel}>Close</button>
       </div>
-      <form onSubmit={submit}>
+      <form className="modal-body" onSubmit={submit}>
         {error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
           <label className="form-group" style={{ margin: 0 }}><span>First name *</span><input value={form.firstName} onChange={e => set('firstName', e.target.value)} /></label>
@@ -97,8 +98,9 @@ export const OnlineDonorForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Home phone</span><input value={form.homePhone} onChange={e => set('homePhone', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Mobile phone</span><input value={form.mobilePhone} onChange={e => set('mobilePhone', e.target.value)} /></label>
         </div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}><button className="btn btn-secondary" type="button" onClick={onCancel} disabled={saving}>Cancel</button><button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Saving securely...' : donor ? 'Save Changes' : 'Add Donor'}</button></div>
+        <div className="modal-footer" style={{ margin: '18px -22px -22px', padding: '16px 22px' }}><button className="btn btn-secondary" type="button" onClick={onCancel} disabled={saving}>Cancel</button><button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Saving securely...' : donor ? 'Save Changes' : 'Add Donor'}</button></div>
       </form>
     </section>
+    </div>
   );
 };
