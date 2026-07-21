@@ -136,9 +136,15 @@ app.post('/plaid/transactions', async (c) => {
 
     if (!access_token) return c.json({ error: 'No access token' }, 400);
 
+    let priorSync: any = null;
+    try {
+      const row: any = await c.env.DB.prepare('SELECT value FROM sync_metadata WHERE key=?').bind(`bank_sync:${accountId}`).first();
+      if (row?.value) priorSync = JSON.parse(String(row.value));
+    } catch { /* A first-time connection has no saved sync cursor yet. */ }
     let startDateObj = new Date();
-    startDateObj.setDate(startDateObj.getDate() - 730); // fetch last 2 years by default
-    if (clientStartDate) startDateObj = new Date(clientStartDate);
+    startDateObj.setDate(startDateObj.getDate() - 30);
+    if (priorSync?.lastSuccessfulDate) startDateObj = new Date(`${priorSync.lastSuccessfulDate}T00:00:00Z`);
+    if (clientStartDate) startDateObj = new Date(`${clientStartDate}T00:00:00Z`);
 
     let endDateObj = new Date();
     if (clientEndDate) endDateObj = new Date(clientEndDate);
@@ -186,7 +192,19 @@ app.post('/plaid/transactions', async (c) => {
       allTransactions = allTransactions.concat(nextData.transactions);
     }
 
+    const now = Date.now();
+    for (let offset = 0; offset < allTransactions.length; offset += 50) {
+      const chunk = allTransactions.slice(offset, offset + 50).map((transaction: any) => {
+        const record = { id: String(transaction.transaction_id), accountId, date: String(transaction.date || ''), description: String(transaction.name || ''), amount: Number(transaction.amount || 0) * -1, rawAmount: Number(transaction.amount || 0), pending: Boolean(transaction.pending), merchantName: String(transaction.merchant_name || ''), category: Array.isArray(transaction.category) ? transaction.category : [] };
+        const operationId = `plaid-${accountId}-${record.id}-${now}`;
+        return c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bankFeedTransactions',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(`${accountId}:${record.id}`, JSON.stringify(record), now, operationId);
+      });
+      if (chunk.length) await c.env.DB.batch(chunk);
+    }
+    const lastSuccessfulDate = endDateObj.toISOString().slice(0, 10);
+    await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(`bank_sync:${accountId}`, JSON.stringify({ lastSuccessfulDate, lastSyncAt: now, fetchedFrom: reqBody.start_date, fetchedTo: reqBody.end_date }), now).run();
     data.transactions = allTransactions;
+    data.sync = { lastSuccessfulDate, lastSyncAt: now, fetchedFrom: reqBody.start_date, fetchedTo: reqBody.end_date };
     return c.json(data);
   } catch (err: any) {
     return c.json({ error: 'Worker crash', message: err.message, stack: err.stack }, 500);

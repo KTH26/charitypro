@@ -303,6 +303,7 @@ describe('server-driven bank deposit matching', () => {
   it('records payroll earnings, recurring schedules, and payments without duplicate retries', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'employees', 'employee-1', { id: 'employee-1', name: 'Office Employee', role: 'Manager', balanceOwed: 0 });
+    seedRecord(db, 'bills', 'legacy-payroll-expense', { id: 'legacy-payroll-expense', vendor: 'Office Employee', employeeId: 'employee-1', amount: 10, currency: 'CAD', dueDate: '2026-07-20', paidDate: '2026-07-20', status: 'paid', category: 'payroll-expense', sourceAccountId: 'payroll-bank', isPayrollExpense: true });
     seedRecord(db, 'accounts', 'payroll-expense', { id: 'payroll-expense', name: 'Payroll Expense', type: 'expense', currency: 'CAD' });
     seedRecord(db, 'accounts', 'payroll-bank', { id: 'payroll-bank', name: 'Payroll Bank', type: 'asset', currency: 'CAD' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
@@ -312,8 +313,28 @@ describe('server-driven bank deposit matching', () => {
     const payment = await app.request('/v3/payroll/entries', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'payroll-payment' }, body: JSON.stringify({ action: 'payment', entityId: 'employee-1', entityType: 'employee', amount: 40, date: '2026-07-21', sourceAccountId: 'payroll-bank', t4aEligible: true }) }, { DB: db } as any);
     expect(payment.status).toBe(201);
     const entitiesResponse = await app.request('/v3/payroll/entities?type=employees&limit=50', {}, { DB: db } as any); const entities = await entitiesResponse.json() as any;
-    expect(entitiesResponse.status).toBe(200); expect(entities.items[0].balanceOwed).toBe(60);
+    expect(entitiesResponse.status).toBe(200); expect(entities.items[0].balanceOwed).toBe(50);
     const ledgerResponse = await app.request('/v3/payroll/employee/employee-1/ledger?limit=50', {}, { DB: db } as any); const ledger = await ledgerResponse.json() as any;
-    expect(ledgerResponse.status).toBe(200); expect(ledger.total).toBe(2); expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='recurringPayroll' AND is_deleted=0").get() as any).count)).toBe(1);
+    expect(ledgerResponse.status).toBe(200); expect(ledger.total).toBe(3); expect(ledger.items.some((item: any) => item.id === 'legacy-payroll-expense')).toBe(true); expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='recurringPayroll' AND is_deleted=0").get() as any).count)).toBe(1);
+  });
+
+  it('loads saved bank-feed transactions without contacting the bank again', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'bankFeedTransactions', 'bank-1:plaid-1', { id: 'plaid-1', accountId: 'bank-1', date: '2026-07-21', description: 'Saved deposit', amount: 125 });
+    db.database.prepare('INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?)').run('bank_sync:bank-1', JSON.stringify({ lastSuccessfulDate: '2026-07-21', lastSyncAt: 1 }), 1);
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/bank/feed?accountId=bank-1&limit=50', {}, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.items).toEqual([{ id: 'plaid-1', accountId: 'bank-1', date: '2026-07-21', description: 'Saved deposit', amount: 125 }]); expect(body.sync.lastSuccessfulDate).toBe('2026-07-21');
+  });
+
+  it('calculates fundraising reports on the server in bounded pages', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'report-donor', { id: 'report-donor', name: 'Report Donor', phone: '555-0101' });
+    seedRecord(db, 'transactions', 'report-payment', { id: 'report-payment', donorId: 'report-donor', amount: 80, amountCAD: 80, currency: 'CAD', date: '2026-07-20', type: 'approved', method: 'cash' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const monthlyResponse = await app.request('/v3/reports?tab=monthly&limit=50', {}, { DB: db } as any); const monthly = await monthlyResponse.json() as any;
+    expect(monthlyResponse.status).toBe(200); expect(monthly.items[0]).toMatchObject({ label: '2026-07', total: 80 }); expect(monthly.grandTotal).toBe(80);
+    const donorResponse = await app.request('/v3/reports?tab=by_donor&limit=50', {}, { DB: db } as any); const donors = await donorResponse.json() as any;
+    expect(donorResponse.status).toBe(200); expect(donors.items[0]).toMatchObject({ id: 'report-donor', total: 80 });
   });
 });

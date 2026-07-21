@@ -36,7 +36,7 @@ const categories: NavCategory[] = [
     { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon }
   ] },
   { label: 'REPORTS', items: [
-    { path: '/reports', label: 'Fundraising Reports', icon: BarChart3 },
+    { path: '/reports', label: 'Fundraising Reports', icon: BarChart3, ready: true },
     { path: '/profit-loss', label: 'Profit & Loss', icon: BarChart3 }
   ] },
   { label: 'SYSTEM', items: [

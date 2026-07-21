@@ -490,7 +490,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const type = String(c.req.query('type') || 'employees');
     if (!['employees','fundraisers'].includes(type)) return c.json({ success: false, error: 'Choose employees or fundraisers.' }, 400);
     const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
-    const payrollBalance = `(SELECT COALESCE(SUM(CASE WHEN json_extract(b.data,'$.status')='paid' THEN -COALESCE(json_extract(b.data,'$.amount'),0) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND COALESCE(json_extract(b.data,'$.isPayroll'),0)=1 AND (json_extract(b.data,'$.employeeId')=e.id OR lower(json_extract(b.data,'$.vendor'))=lower('Payroll: '||json_extract(e.data,'$.name'))))`;
+    const payrollBalance = `(SELECT COALESCE(SUM(CASE WHEN json_extract(b.data,'$.status')='paid' THEN -COALESCE(json_extract(b.data,'$.amount'),0) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND (COALESCE(json_extract(b.data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(b.data,'$.isPayrollExpense'),0)=1) AND (json_extract(b.data,'$.employeeId')=e.id OR lower(json_extract(b.data,'$.vendor'))=lower('Payroll: '||json_extract(e.data,'$.name'))))`;
     const commissionBalance = type === 'fundraisers' ? `+(SELECT COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)*COALESCE(json_extract(e.data,'$.percentage'),0)/100),0) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.fundraiserId')=e.id)` : '';
     const [listResult, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT e.id,e.data,e.revision,e.updated_at,(${payrollBalance}${commissionBalance}) AS balance_owed FROM sync_records e WHERE e.type=? AND e.is_deleted=0 ORDER BY lower(json_extract(e.data,'$.name')) LIMIT ? OFFSET ?`).bind(type, limit, offset),
@@ -508,7 +508,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const id = String(c.req.param('id') || ''); const entity: any = await c.env.DB.prepare('SELECT data FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(recordType, id).first();
     if (!entity) return c.json({ success: false, error: 'Payroll entity not found.' }, 404);
     const name = String(JSON.parse(String(entity.data)).name || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
-    const where = "type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.isPayroll'),0)=1 AND (json_extract(data,'$.employeeId')=? OR lower(json_extract(data,'$.vendor'))=lower(?))";
+    const where = "type='bills' AND is_deleted=0 AND (COALESCE(json_extract(data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(data,'$.isPayrollExpense'),0)=1) AND (json_extract(data,'$.employeeId')=? OR lower(json_extract(data,'$.vendor'))=lower(?))";
     const [listResult, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE ${where} ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT ? OFFSET ?`).bind(id, `Payroll: ${name}`, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE ${where}`).bind(id, `Payroll: ${name}`)
@@ -550,6 +550,33 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
     const response = { success: true, item: { ...bill, revision: 1, updatedAt: now }, schedule: schedule ? { ...schedule, revision: 1, updatedAt: now } : null }; statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));
     try { await c.env.DB.batch(statements); return c.json(response, 201); } catch { const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first(); if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json))); return c.json({ success: false, error: 'Payroll was not recorded. You can safely try again.' }, 409); }
+  });
+
+  app.get('/v3/reports', async (c: any) => {
+    const denied = requirePermission(c, 'reports.read');
+    if (denied) return denied;
+    const tab = String(c.req.query('tab') || 'monthly'); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    let listSql = ''; let countSql = ''; const bindings: any[] = [];
+    if (tab === 'monthly') {
+      listSql = "SELECT substr(json_extract(data,'$.date'),1,7) AS label,COUNT(*) AS count,COALESCE(SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)),0) AS total FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 GROUP BY label ORDER BY label DESC LIMIT 12";
+      countSql = "SELECT COUNT(DISTINCT substr(json_extract(data,'$.date'),1,7)) AS count,COALESCE(SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)),0) AS grand_total FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0";
+    } else if (tab === 'open_pledges') {
+      const base = `WITH pledge AS (SELECT json_extract(data,'$.donorId') donor_id,SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) pledged FROM sync_records WHERE type='pledges' AND is_deleted=0 GROUP BY donor_id), paid AS (SELECT json_extract(data,'$.donorId') donor_id,SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) paid FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 GROUP BY donor_id), scheduled AS (SELECT json_extract(data,'$.donorId') donor_id,SUM(CASE WHEN COALESCE(json_extract(data,'$.active'),0)=1 THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END) scheduled FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 GROUP BY donor_id) `;
+      listSql = `${base}SELECT d.id,json_extract(d.data,'$.name') AS name,json_extract(d.data,'$.phone') AS phone,MAX(0,COALESCE(p.pledged,0)-COALESCE(x.paid,0)-COALESCE(s.scheduled,0)) AS balance FROM sync_records d LEFT JOIN pledge p ON p.donor_id=d.id LEFT JOIN paid x ON x.donor_id=d.id LEFT JOIN scheduled s ON s.donor_id=d.id WHERE d.type='donors' AND d.is_deleted=0 AND COALESCE(p.pledged,0)-COALESCE(x.paid,0)-COALESCE(s.scheduled,0)>0 AND NOT EXISTS(SELECT 1 FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.donorId')=d.id AND json_extract(t.data,'$.type')='pending') ORDER BY balance DESC LIMIT ? OFFSET ?`; listSql = listSql.replace('MAX(0,','max(0,'); bindings.push(limit,offset);
+      countSql = `${base}SELECT COUNT(*) AS count,COALESCE(SUM(max(0,COALESCE(p.pledged,0)-COALESCE(x.paid,0)-COALESCE(s.scheduled,0))),0) AS grand_total FROM sync_records d LEFT JOIN pledge p ON p.donor_id=d.id LEFT JOIN paid x ON x.donor_id=d.id LEFT JOIN scheduled s ON s.donor_id=d.id WHERE d.type='donors' AND d.is_deleted=0 AND COALESCE(p.pledged,0)-COALESCE(x.paid,0)-COALESCE(s.scheduled,0)>0 AND NOT EXISTS(SELECT 1 FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.donorId')=d.id AND json_extract(t.data,'$.type')='pending')`;
+    } else if (tab === 'by_fundraiser') {
+      listSql = "SELECT f.id,json_extract(f.data,'$.name') AS name,json_extract(f.data,'$.email') AS email,COALESCE(json_extract(f.data,'$.percentage'),0) AS percentage,COALESCE(SUM(CASE WHEN json_extract(t.data,'$.type')='approved' THEN COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0) ELSE 0 END),0) AS total,COALESCE(SUM(CASE WHEN json_extract(t.data,'$.type')='approved' THEN COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0) ELSE 0 END),0)*COALESCE(json_extract(f.data,'$.percentage'),0)/100 AS commission FROM sync_records f LEFT JOIN sync_records t ON t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.fundraiserId')=f.id WHERE f.type='fundraisers' AND f.is_deleted=0 GROUP BY f.id ORDER BY total DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(*) AS count FROM sync_records WHERE type='fundraisers' AND is_deleted=0"; bindings.push(limit,offset);
+    } else if (tab === 'by_category') {
+      listSql = "SELECT COALESCE(json_extract(a.data,'$.name'),json_extract(t.data,'$.category'),'Uncategorized') AS name,COUNT(*) AS count,COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)),0) AS total FROM sync_records t LEFT JOIN sync_records a ON a.type='accounts' AND a.id=COALESCE(json_extract(t.data,'$.offsetAccountId'),json_extract(t.data,'$.category')) AND a.is_deleted=0 WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 GROUP BY name ORDER BY total DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(*) AS count,COALESCE(SUM(total),0) AS grand_total FROM (SELECT SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) total FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 GROUP BY COALESCE(json_extract(data,'$.offsetAccountId'),json_extract(data,'$.category'),'Uncategorized'))"; bindings.push(limit,offset);
+    } else if (tab === 'by_donor') {
+      listSql = "SELECT d.id,json_extract(d.data,'$.name') AS name,json_extract(d.data,'$.phone') AS phone,COUNT(t.id) AS count,COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)),0) AS total,MIN(json_extract(t.data,'$.date')) AS first_date,MAX(json_extract(t.data,'$.date')) AS last_date FROM sync_records d JOIN sync_records t ON t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.donorId')=d.id AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 WHERE d.type='donors' AND d.is_deleted=0 GROUP BY d.id ORDER BY total DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(DISTINCT json_extract(data,'$.donorId')) AS count,COALESCE(SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)),0) AS grand_total FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0"; bindings.push(limit,offset);
+    } else if (tab === 'by_project') {
+      listSql = "SELECT p.id,json_extract(p.data,'$.name') AS name,COALESCE((SELECT SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.projectId')=p.id),0) AS income,COALESCE((SELECT SUM(COALESCE(json_extract(b.data,'$.amount'),0)) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId')=p.id),0) AS cost FROM sync_records p WHERE p.type='projects' AND p.is_deleted=0 AND (income<>0 OR cost<>0) ORDER BY cost DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(*) AS count FROM sync_records WHERE type='projects' AND is_deleted=0"; bindings.push(limit,offset);
+    } else if (tab === 'tax_summary') {
+      listSql = "SELECT substr(json_extract(data,'$.dueDate'),1,4) AS year,COUNT(*) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.taxable'),0)=1 GROUP BY year ORDER BY year DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(DISTINCT substr(json_extract(data,'$.dueDate'),1,4)) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS grand_total FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.taxable'),0)=1"; bindings.push(limit,offset);
+    } else return c.json({ success: false, error: 'Unknown report.' }, 404);
+    const [listResult,countResult]=await c.env.DB.batch([c.env.DB.prepare(listSql).bind(...bindings),c.env.DB.prepare(countSql)]); const summary:any=countResult.results[0]||{}; const total=Number(summary.count||0);
+    return c.json({success:true,items:listResult.results,page,limit,total,totalPages:tab==='monthly'?1:Math.ceil(total/limit),grandTotal:Number(summary.grand_total||0)});
   });
 
   app.get('/v3/donors', async (c: any) => {
@@ -836,7 +863,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (sourceAccountId) record.sourceAccountId = sourceAccountId;
     if (creditAccountId) record.creditAccountId = creditAccountId;
     if (body.projectId) record.projectId = String(body.projectId);
-    if (body.isPayrollExpense) record.isPayroll = true;
+    if (body.isPayrollExpense) record.isPayrollExpense = true;
     if (body.employeeId) record.employeeId = String(body.employeeId);
     if (body.t4aEligible) record.t4aEligible = true;
     if (body.checkNumber) record.checkNumber = String(body.checkNumber).trim().slice(0, 100);
@@ -928,6 +955,20 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       matchedRevision: Number((matchRecord as any)?.revision || 0),
       updatedAt: Number((matchRecord as any)?.updated_at || 0)
     });
+  });
+
+  app.get('/v3/bank/feed', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read');
+    if (denied) return denied;
+    const accountId = String(c.req.query('accountId') || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    if (!accountId) return c.json({ success: false, error: 'Choose a bank account.' }, 400);
+    const [listResult,countResult,syncRow] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=? ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT ? OFFSET ?").bind(accountId,limit,offset),
+      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=?").bind(accountId),
+      c.env.DB.prepare('SELECT value,updated_at FROM sync_metadata WHERE key=?').bind(`bank_sync:${accountId}`)
+    ]);
+    const total=Number(countResult.results[0]?.count||0); const sync:any=syncRow.results[0]; let syncState:any=null; try{syncState=sync?.value?JSON.parse(String(sync.value)):null;}catch{syncState=null;}
+    return c.json({success:true,items:listResult.results.map((row:any)=>JSON.parse(String(row.data))),page,limit,total,totalPages:Math.ceil(total/limit),sync:syncState});
   });
 
   app.get('/v3/bank/deposit-candidates', async (c: any) => {
