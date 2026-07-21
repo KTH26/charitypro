@@ -345,7 +345,7 @@ app.get('/sync2/hardened/pull', async (c) => {
   }
   
   const genRec = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key = 'sync_generation'").first();
-  const syncGeneration = 8; // New normalized production database; force a clean full pull.
+  const syncGeneration = 9; // Force browsers with a stale cursor to rebuild from the authoritative cloud ledger.
   
   const jsonStr = JSON.stringify({
     changes: permittedChanges,
