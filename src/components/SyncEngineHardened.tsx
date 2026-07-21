@@ -364,7 +364,15 @@ export const SyncEngineHardened: React.FC = () => {
             const localArr = (currentLocalState as any)[k] as any[] || [];
             const serverArr = (serverState as any)[k] as any[] || [];
             
-            (mergedState as any)[k] = mergeServerRecords(k, serverArr, localArr, serverRevisions);
+            // A generation rebuild is an explicit recovery from an obsolete or
+            // corrupt local snapshot. In that mode the completed cloud ledger
+            // is authoritative; preserving an incomplete local collection can
+            // leave two devices showing permanently different totals. Offline
+            // edits remain protected separately in PENDING_MUTATIONS_KEY and
+            // are processed only after the cloud snapshot has been restored.
+            (mergedState as any)[k] = isInitial
+              ? [...serverArr]
+              : mergeServerRecords(k, serverArr, localArr, serverRevisions);
         }
         
         isApplyingServerState = true;
