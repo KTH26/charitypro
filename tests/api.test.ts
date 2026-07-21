@@ -23,6 +23,8 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.get('/v3/bank/state'");
     expect(source).toContain("app.get('/v3/bank/deposit-candidates'");
     expect(source).toContain("app.post('/v3/bank/match-deposit'");
+    expect(source).toContain("app.get('/v3/bank/bill-candidates'");
+    expect(source).toContain("app.post('/v3/bank/match-outgoing'");
     expect(source).toContain("app.get('/v3/accounts'");
     expect(source).toContain("app.post('/v3/payments'");
     expect(source).toContain("app.delete('/v3/payments/:id'");
@@ -52,6 +54,7 @@ describe('Backend API & Security Rules', () => {
     const bankSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineBank.tsx'), 'utf8');
     expect(appSource).toContain('path="/online/bank"');
     expect(bankSource).toContain("fetch('/api/v3/bank/match-deposit'");
+    expect(bankSource).toContain("fetch('/api/v3/bank/match-outgoing'");
     expect(bankSource).toContain('Exact match');
     const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
     expect(formSource).toContain("fetch('/api/v3/payments'");

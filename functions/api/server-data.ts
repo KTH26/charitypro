@@ -526,6 +526,146 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
   });
 
+  app.get('/v3/bank/bill-candidates', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read');
+    if (denied) return denied;
+    const accountId = String(c.req.query('accountId') || '');
+    const amount = Number(c.req.query('amount'));
+    if (!accountId || !Number.isFinite(amount) || amount <= 0) return c.json({ success: false, error: 'Bank account and positive amount are required.' }, 400);
+    const account: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId).first();
+    if (!account) return c.json({ success: false, error: 'Bank account not found.' }, 404);
+    const accountData = JSON.parse(String(account.data));
+    const result = await c.env.DB.prepare(`
+      SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name
+      FROM sync_records b LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
+      WHERE b.type='bills' AND b.is_deleted=0 AND COALESCE(json_extract(b.data,'$.isPayroll'),0)=0
+        AND COALESCE(json_extract(b.data,'$.bankTransactionId'),'')=''
+      ORDER BY CASE WHEN json_extract(b.data,'$.status')='paid' THEN 1 ELSE 0 END,json_extract(b.data,'$.dueDate') DESC
+    `).all();
+    const items = result.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized' })).filter((bill: any) => {
+      const expected = accountData.currency === 'CAD' && bill.currency === 'USD' ? Number(bill.amount) * Number(bill.exchangeRate || 1.35) : Number(bill.amount);
+      return Math.abs(expected - amount) < 0.005;
+    });
+    return c.json({ success: true, items });
+  });
+
+  app.post('/v3/bank/match-outgoing', async (c: any) => {
+    const body = await c.req.json();
+    const action = String(body.action || '');
+    const denied = requirePermission(c, action === 'transfer' ? 'transactions.approve' : 'bills.mark_paid');
+    if (denied) return denied;
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    if (!['expense','existing_bill','transfer'].includes(action)) return c.json({ success: false, error: 'Choose a valid outgoing match action.' }, 400);
+    const mutationId = `v3-bank-outgoing-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const accountId = String(body.accountId || '').trim();
+    const bankTransactionId = String(body.bankTransactionId || '').trim();
+    const bankDate = String(body.bankDate || '').trim();
+    const description = String(body.description || 'Bank Transaction').trim().slice(0, 500);
+    const amount = Number(body.amount);
+    if (!accountId || !bankTransactionId || !/^\d{4}-\d{2}-\d{2}$/.test(bankDate) || Number.isNaN(Date.parse(`${bankDate}T00:00:00Z`)) || !Number.isFinite(amount) || amount <= 0) {
+      return c.json({ success: false, error: 'Bank account, transaction, date, and positive amount are required.' }, 400);
+    }
+    const account: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId).first();
+    if (!account) return c.json({ success: false, error: 'Bank account not found.' }, 404);
+    const accountData = JSON.parse(String(account.data));
+    if (accountData.type !== 'asset' || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected asset account.' }, 409);
+    const alreadyLinked: any = await c.env.DB.prepare(`SELECT id,type FROM sync_records WHERE is_deleted=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')=? LIMIT 1`).bind(bankTransactionId).first();
+    if (alreadyLinked) return c.json({ success: false, error: 'This bank transaction is already linked.' }, 409);
+    const matchRecord: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0").first();
+    if (!matchRecord) return c.json({ success: false, error: 'Bank match history is unavailable.' }, 500);
+    const parsedMatchedIds = JSON.parse(String(matchRecord.data));
+    const matchedIds: string[] = Array.isArray(parsedMatchedIds) ? parsedMatchedIds : [];
+    if (matchedIds.includes(bankTransactionId)) return c.json({ success: false, error: 'This bank transaction is already matched.' }, 409);
+
+    const now = Date.now();
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    const matchAssertionId = `${mutationId}-match-assertion`;
+    const matchOperationId = `${mutationId}-match-update`;
+    const nextMatchRevision = Number(matchRecord.revision) + 1;
+    const nextMatchedData = JSON.stringify([...new Set([...matchedIds, bankTransactionId])]);
+    const statements: any[] = [
+      c.env.DB.prepare(`INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END`).bind(matchAssertionId, matchRecord.revision)
+    ];
+    let resultItem: any;
+    let recordAssertionId = '';
+
+    if (action === 'expense') {
+      const vendor = String(body.vendor || '').trim();
+      const category = String(body.category || '').trim();
+      const categoryRow: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(category).first();
+      if (!vendor || !categoryRow || JSON.parse(String(categoryRow.data)).type !== 'expense') return c.json({ success: false, error: 'Vendor and a valid expense category are required.' }, 409);
+      const id = crypto.randomUUID();
+      const operationId = `${mutationId}-bill-insert`;
+      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', dueDate: bankDate, paidDate: bankDate, status: 'paid', category, sourceAccountId: accountId, offsetAccountId: category, taxable: Boolean(body.taxable), memo: description, bankTransactionId };
+      const data = JSON.stringify(record);
+      resultItem = { ...record, revision: 1, updatedAt: now };
+      statements.push(
+        c.env.DB.prepare(`INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bills',?,?,1,0,?)`).bind(id, data, now, operationId),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bills',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bills','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created from server-driven outgoing bank match')
+      );
+    } else if (action === 'transfer') {
+      const targetAccountId = String(body.targetAccountId || '').trim();
+      const target: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(targetAccountId).first();
+      if (!target || targetAccountId === accountId) return c.json({ success: false, error: 'Choose a different destination account.' }, 409);
+      const id = crypto.randomUUID();
+      const operationId = `${mutationId}-transfer-insert`;
+      const record = { id, fromAccountId: accountId, toAccountId: targetAccountId, amount, date: bankDate, notes: description, bankTransactionId };
+      const data = JSON.stringify(record);
+      resultItem = { ...record, revision: 1, updatedAt: now };
+      statements.push(
+        c.env.DB.prepare(`INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'accountTransfers',?,?,1,0,?)`).bind(id, data, now, operationId),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'accountTransfers',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'accountTransfers','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created from server-driven outgoing bank transfer match')
+      );
+    } else {
+      const billId = String(body.billId || '').trim();
+      const current: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='bills' AND id=? AND is_deleted=0").bind(billId).first();
+      if (!current) return c.json({ success: false, error: 'Existing bill not found.' }, 404);
+      const bill = JSON.parse(String(current.data));
+      if (bill.bankTransactionId) return c.json({ success: false, error: 'This bill is already linked to a bank transaction.' }, 409);
+      const expectedAmount = accountData.currency === 'CAD' && bill.currency === 'USD' ? Number(bill.amount) * Number(bill.exchangeRate || 1.35) : Number(bill.amount);
+      if (Math.abs(expectedAmount - amount) >= 0.005) return c.json({ success: false, error: `The bill is $${expectedAmount.toFixed(2)} in this bank currency, but the bank transaction is $${amount.toFixed(2)}.` }, 409);
+      const expectedRevision = Number(body.revision);
+      if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This bill was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
+      const next = { ...bill, bankTransactionId, ...(bill.status === 'paid' ? {} : { status: 'paid', paidDate: bankDate, sourceAccountId: accountId, offsetAccountId: bill.category }) };
+      const nextRevision = expectedRevision + 1;
+      const data = JSON.stringify(next);
+      const operationId = `${mutationId}-bill-update`;
+      recordAssertionId = `${mutationId}-bill-assertion`;
+      resultItem = { ...next, revision: nextRevision, updatedAt: now };
+      statements.push(
+        c.env.DB.prepare(`INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bills' AND id=? AND revision=? AND is_deleted=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')='') THEN 1 ELSE 0 END`).bind(recordAssertionId, billId, expectedRevision),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',revision,revision+1,data,?, ?,?,?, ?,?,? FROM sync_records WHERE type='bills' AND id=? AND revision=?`).bind(data, userId, userEmail, now, mutationId, operationId, 'Linked through server-driven outgoing bank match', billId, expectedRevision),
+        c.env.DB.prepare(`UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='bills' AND id=? AND revision=? AND is_deleted=0`).bind(data, nextRevision, now, operationId, billId, expectedRevision),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='bills' AND id=? AND revision=?`).bind(mutationId, operationId, billId, nextRevision)
+      );
+    }
+
+    const response = { success: true, action, item: resultItem };
+    statements.push(
+      c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',revision,revision+1,data,?, ?,?,?, ?,?,? FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=?`).bind(nextMatchedData, userId, userEmail, now, mutationId, matchOperationId, 'Added server-driven outgoing bank match', matchRecord.revision),
+      c.env.DB.prepare(`UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0`).bind(nextMatchedData, nextMatchRevision, now, matchOperationId, matchRecord.revision),
+      c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=?`).bind(mutationId, matchOperationId, nextMatchRevision),
+      recordAssertionId
+        ? c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id IN (?,?)').bind(matchAssertionId, recordAssertionId)
+        : c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(matchAssertionId),
+      c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+    );
+    try {
+      await c.env.DB.batch(statements);
+      return c.json(response);
+    } catch {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: 'The bank match or accounting record changed. The latest cloud records were reloaded.', conflict: true }, 409);
+    }
+  });
+
   app.get('/v3/accounts', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;

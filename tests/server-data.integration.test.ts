@@ -79,4 +79,63 @@ describe('server-driven bank deposit matching', () => {
     expect((await retry.json() as any).item.id).toBe(firstBody.item.id);
     expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions'").get() as any).count)).toBe(3);
   });
+
+  it('atomically creates a paid expense and advances bank match history', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'bank-1', { id: 'bank-1', name: 'Bank', type: 'asset', currency: 'CAD', plaidConnected: true });
+    seedRecord(db, 'accounts', 'expense-1', { id: 'expense-1', name: 'Office', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'matchedBankTransactions', 'matchedBankTransactions', [], 1);
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const payload = { requestId: 'expense-request', action: 'expense', accountId: 'bank-1', bankTransactionId: 'bank-expense-1', bankDate: '2026-07-21', description: 'Office Store', amount: 75, vendor: 'Office Store', category: 'expense-1', taxable: true };
+    const response = await app.request('/v3/bank/match-outgoing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'expense-request' }, body: JSON.stringify(payload) }, { DB: db } as any);
+    expect(response.status).toBe(200);
+    const bill: any = db.database.prepare("SELECT data FROM sync_records WHERE type='bills'").get();
+    const billData = JSON.parse(String(bill.data));
+    expect(billData.status).toBe('paid');
+    expect(billData.bankTransactionId).toBe('bank-expense-1');
+    const match: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='matchedBankTransactions'").get();
+    expect(JSON.parse(String(match.data))).toContain('bank-expense-1');
+    expect(Number(match.revision)).toBe(2);
+    expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(2);
+  });
+
+  it('atomically links and pays an existing bill', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'bank-1', { id: 'bank-1', name: 'Bank', type: 'asset', currency: 'CAD', plaidConnected: true });
+    seedRecord(db, 'matchedBankTransactions', 'matchedBankTransactions', [], 4);
+    seedRecord(db, 'bills', 'bill-1', { id: 'bill-1', vendor: 'Vendor', amount: 25, currency: 'CAD', dueDate: '2026-07-20', status: 'pending', category: 'expense-1' }, 3);
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const payload = { requestId: 'bill-request', action: 'existing_bill', accountId: 'bank-1', bankTransactionId: 'bank-bill-1', bankDate: '2026-07-21', description: 'Vendor', amount: 25, billId: 'bill-1', revision: 3 };
+    const response = await app.request('/v3/bank/match-outgoing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'bill-request' }, body: JSON.stringify(payload) }, { DB: db } as any);
+    expect(response.status).toBe(200);
+    const bill: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='bills' AND id='bill-1'").get();
+    const billData = JSON.parse(String(bill.data));
+    expect(billData.status).toBe('paid');
+    expect(billData.sourceAccountId).toBe('bank-1');
+    expect(billData.bankTransactionId).toBe('bank-bill-1');
+    expect(Number(bill.revision)).toBe(4);
+    expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(2);
+  });
+
+  it('atomically records an outgoing account transfer', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'bank-1', { id: 'bank-1', name: 'Bank', type: 'asset', currency: 'CAD', plaidConnected: true });
+    seedRecord(db, 'accounts', 'cash-1', { id: 'cash-1', name: 'Cash', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'matchedBankTransactions', 'matchedBankTransactions', [], 1);
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const payload = { requestId: 'transfer-request', action: 'transfer', accountId: 'bank-1', bankTransactionId: 'bank-transfer-1', bankDate: '2026-07-21', description: 'Transfer', amount: 50, targetAccountId: 'cash-1' };
+    const response = await app.request('/v3/bank/match-outgoing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'transfer-request' }, body: JSON.stringify(payload) }, { DB: db } as any);
+    expect(response.status).toBe(200);
+    const transfer: any = db.database.prepare("SELECT data FROM sync_records WHERE type='accountTransfers'").get();
+    const transferData = JSON.parse(String(transfer.data));
+    expect(transferData.fromAccountId).toBe('bank-1');
+    expect(transferData.toAccountId).toBe('cash-1');
+    expect(transferData.bankTransactionId).toBe('bank-transfer-1');
+  });
 });
