@@ -663,4 +663,18 @@ app.get('/debug/last-mutation', async (c) => {
   return c.json(res);
 });
 
+app.get('/debug/stats', async (c) => {
+  const countRes = await c.env.DB.prepare("SELECT count(*) as total_count FROM sync_records WHERE type = 'transactions' AND is_deleted = 0").first();
+  const allTxs = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type = 'transactions' AND is_deleted = 0").all();
+  
+  let totalAmountCAD = 0;
+  for (const row of allTxs.results) {
+    const tx = JSON.parse(row.data as string);
+    const amount = Number(tx.amountCAD) || Number(tx.amount) || 0;
+    totalAmountCAD += amount;
+  }
+  
+  return c.json({ count: countRes?.total_count, total_amount: totalAmountCAD });
+});
+
 export const onRequest = handle(app)
