@@ -33,15 +33,15 @@ const categories: NavCategory[] = [
     { path: '/bank-feed', label: 'Bank Feed', icon: Building, ready: true },
     { path: '/payroll', label: 'Payroll & T4A', icon: Users, ready: true },
     { path: '/reconciliation', label: 'Reconciliation', icon: CheckSquare, ready: true },
-    { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon }
+    { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon, ready: true }
   ] },
   { label: 'REPORTS', items: [
     { path: '/reports', label: 'Fundraising Reports', icon: BarChart3, ready: true },
-    { path: '/profit-loss', label: 'Profit & Loss', icon: BarChart3 }
+    { path: '/profit-loss', label: 'Profit & Loss', icon: BarChart3, ready: true }
   ] },
   { label: 'SYSTEM', items: [
     { path: '/tasks', label: 'Tasks', icon: CheckSquare, ready: true },
-    { path: '/settings', label: 'Settings', icon: Settings }
+    { path: '/settings', label: 'Settings', icon: Settings, ready: true }
   ] }
 ];
 

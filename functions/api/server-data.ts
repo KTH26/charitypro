@@ -571,12 +571,175 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     } else if (tab === 'by_donor') {
       listSql = "SELECT d.id,json_extract(d.data,'$.name') AS name,json_extract(d.data,'$.phone') AS phone,COUNT(t.id) AS count,COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)),0) AS total,MIN(json_extract(t.data,'$.date')) AS first_date,MAX(json_extract(t.data,'$.date')) AS last_date FROM sync_records d JOIN sync_records t ON t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.donorId')=d.id AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 WHERE d.type='donors' AND d.is_deleted=0 GROUP BY d.id ORDER BY total DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(DISTINCT json_extract(data,'$.donorId')) AS count,COALESCE(SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)),0) AS grand_total FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0"; bindings.push(limit,offset);
     } else if (tab === 'by_project') {
-      listSql = "SELECT p.id,json_extract(p.data,'$.name') AS name,COALESCE((SELECT SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.projectId')=p.id),0) AS income,COALESCE((SELECT SUM(COALESCE(json_extract(b.data,'$.amount'),0)) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId')=p.id),0) AS cost FROM sync_records p WHERE p.type='projects' AND p.is_deleted=0 AND (income<>0 OR cost<>0) ORDER BY cost DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(*) AS count FROM sync_records WHERE type='projects' AND is_deleted=0"; bindings.push(limit,offset);
+      const projectTotals = "WITH project_totals AS (SELECT p.id,json_extract(p.data,'$.name') AS name,COALESCE((SELECT SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.projectId')=p.id),0) AS income,COALESCE((SELECT SUM(COALESCE(json_extract(b.data,'$.amount'),0)) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId')=p.id),0) AS cost FROM sync_records p WHERE p.type='projects' AND p.is_deleted=0) ";
+      listSql = `${projectTotals}SELECT id,name,income,cost FROM project_totals WHERE income<>0 OR cost<>0 ORDER BY cost DESC LIMIT ? OFFSET ?`; countSql = `${projectTotals}SELECT COUNT(*) AS count FROM project_totals WHERE income<>0 OR cost<>0`; bindings.push(limit,offset);
     } else if (tab === 'tax_summary') {
       listSql = "SELECT substr(json_extract(data,'$.dueDate'),1,4) AS year,COUNT(*) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.taxable'),0)=1 GROUP BY year ORDER BY year DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(DISTINCT substr(json_extract(data,'$.dueDate'),1,4)) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS grand_total FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.taxable'),0)=1"; bindings.push(limit,offset);
     } else return c.json({ success: false, error: 'Unknown report.' }, 404);
     const [listResult,countResult]=await c.env.DB.batch([c.env.DB.prepare(listSql).bind(...bindings),c.env.DB.prepare(countSql)]); const summary:any=countResult.results[0]||{}; const total=Number(summary.count||0);
     return c.json({success:true,items:listResult.results,page,limit,total,totalPages:tab==='monthly'?1:Math.ceil(total/limit),grandTotal:Number(summary.grand_total||0)});
+  });
+
+  app.get('/v3/profit-loss', async (c: any) => {
+    const denied = requirePermission(c, 'reports.read');
+    if (denied) return denied;
+    const year = new Date().getUTCFullYear();
+    const startDate = String(c.req.query('startDate') || `${year}-01-01`);
+    const endDate = String(c.req.query('endDate') || `${year}-12-31`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+      return c.json({ success: false, error: 'Choose a valid report date range.' }, 400);
+    }
+    const limit = boundedLimit(c.req.query('limit'));
+    const page = boundedPage(c.req.query('page'));
+    const offset = (page - 1) * limit;
+    const base = `WITH entries AS (
+      SELECT a.id AS account_id,json_extract(a.data,'$.name') AS account_name,'revenue' AS section,
+        COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0) AS amount
+      FROM sync_records t JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(t.data,'$.offsetAccountId') AND a.is_deleted=0
+      WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved'
+        AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND json_extract(a.data,'$.type')='revenue'
+        AND json_extract(t.data,'$.date') BETWEEN ? AND ?
+      UNION ALL
+      SELECT a.id AS account_id,json_extract(a.data,'$.name') AS account_name,'expense' AS section,
+        COALESCE(json_extract(b.data,'$.amount'),0) * CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE 1 END AS amount
+      FROM sync_records b JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(b.data,'$.category') AND a.is_deleted=0
+      WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid'
+        AND json_extract(a.data,'$.type')='expense'
+        AND COALESCE(json_extract(b.data,'$.paidDate'),json_extract(b.data,'$.dueDate')) BETWEEN ? AND ?
+      UNION ALL
+      SELECT a.id AS account_id,json_extract(a.data,'$.name') AS account_name,'expense' AS section,
+        COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0) AS amount
+      FROM sync_records t JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(t.data,'$.offsetAccountId') AND a.is_deleted=0
+      WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved'
+        AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND json_extract(a.data,'$.type')='expense'
+        AND json_extract(t.data,'$.date') BETWEEN ? AND ?
+    ), totals AS (
+      SELECT section,account_id,account_name,SUM(amount) AS amount FROM entries GROUP BY section,account_id,account_name
+    ) `;
+    const dateBindings = [startDate,endDate,startDate,endDate,startDate,endDate];
+    const [rows,countResult,summaryResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`${base}SELECT section,account_id AS id,account_name AS name,amount FROM totals ORDER BY CASE section WHEN 'revenue' THEN 0 ELSE 1 END,amount DESC,lower(account_name) LIMIT ? OFFSET ?`).bind(...dateBindings,limit,offset),
+      c.env.DB.prepare(`${base}SELECT COUNT(*) AS count FROM totals`).bind(...dateBindings),
+      c.env.DB.prepare(`${base}SELECT COALESCE(SUM(CASE WHEN section='revenue' THEN amount ELSE 0 END),0) AS revenue,COALESCE(SUM(CASE WHEN section='expense' THEN amount ELSE 0 END),0) AS expenses FROM totals`).bind(...dateBindings)
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    const summary: any = summaryResult.results[0] || {};
+    const revenue = Number(summary.revenue || 0);
+    const expenses = Number(summary.expenses || 0);
+    return c.json({ success: true, items: rows.results.map((row: any) => ({ ...row, amount: Number(row.amount || 0) })), startDate, endDate, basis: 'cash', page, limit, total, totalPages: Math.ceil(total / limit), summary: { revenue, expenses, netIncome: revenue - expenses } });
+  });
+
+  const settingDefaults: Record<string, any> = { isRtl: false, currency: 'CAD', exchangeRate: 1.35, donorSortBy: 'lastName', googleSheetSyncUrl: '' };
+  const parseSetting = (raw: unknown, fallback: any) => { try { return JSON.parse(String(raw)); } catch { return fallback; } };
+
+  app.get('/v3/settings', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const result = await c.env.DB.prepare("SELECT type,id,data,revision,updated_at FROM sync_records WHERE type IN ('isRtl','currency','exchangeRate','donorSortBy','googleSheetSyncUrl') AND is_deleted=0 ORDER BY updated_at DESC").all();
+    const settings = { ...settingDefaults }; const revisions: Record<string, number> = {};
+    for (const row of result.results as any[]) if (revisions[row.type] === undefined) { settings[row.type] = parseSetting(row.data, settingDefaults[row.type]); revisions[row.type] = Number(row.revision); }
+    const sola: any = await c.env.DB.prepare("SELECT 1 AS configured FROM sync_records WHERE type='solaApiKey' AND is_deleted=0 AND data NOT IN ('','\"\"','null') LIMIT 1").first();
+    return c.json({ success: true, settings, revisions, solaConfigured: Boolean(c.env.SOLA_API_KEY || sola?.configured), balances: 'calculated-live' });
+  });
+
+  app.put('/v3/settings/:key', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const key = String(c.req.param('key') || '');
+    if (!(key in settingDefaults)) return c.json({ success: false, error: 'Unknown setting.' }, 404);
+    const body = await c.req.json(); const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    let value = body.value;
+    if (key === 'isRtl' && typeof value !== 'boolean') return c.json({ success: false, error: 'Choose a valid layout.' }, 400);
+    if (key === 'currency' && !['CAD','USD'].includes(value)) return c.json({ success: false, error: 'Choose CAD or USD.' }, 400);
+    if (key === 'exchangeRate' && (!Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 100)) return c.json({ success: false, error: 'Enter a valid exchange rate.' }, 400);
+    if (key === 'exchangeRate') value = Number(value);
+    if (key === 'donorSortBy' && !['lastName','firstName','hebLastName','hebFirstName'].includes(value)) return c.json({ success: false, error: 'Choose a valid donor sort order.' }, 400);
+    if (key === 'googleSheetSyncUrl') { value = String(value || '').trim(); if (value.length > 2048 || (value && !/^https:\/\//i.test(value))) return c.json({ success: false, error: 'Enter a valid secure Google Sheets URL.' }, 400); }
+    const mutationId = `v3-setting-${key}-${requestId}`; const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare('SELECT id,data,revision FROM sync_records WHERE type=? AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1').bind(key).first();
+    const expectedRevision = body.revision == null ? Number(current?.revision || 0) : Number(body.revision);
+    if (current && expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This setting changed on another computer. The latest value has been reloaded.', conflict: true }, 409);
+    const id = String(current?.id || key); const revision = Number(current?.revision || 0) + 1; const data = JSON.stringify(value); const now = Date.now(); const operationId = `${mutationId}-save`; const response = { success: true, key, value, revision };
+    const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    const statements: any[] = current ? [
+      c.env.DB.prepare('UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(data,revision,now,operationId,key,id,current.revision),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,?,'update',?,?,?,?)").bind(id,key,revision,data,now,mutationId,operationId),
+      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'update',?,?,?,?,?,?,?,?,?,?)").bind(id,key,current.revision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Updated online system setting')
+    ] : [
+      c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?,?,1,0,?)').bind(id,key,data,now,operationId),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(id,key,data,now,mutationId,operationId),
+      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,key,data,userId,userEmail,now,mutationId,operationId,'Created online system setting')
+    ];
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));
+    try { await c.env.DB.batch(statements); return c.json(response); } catch { const repeated: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first(); if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json))); return c.json({ success: false, error: 'This setting changed on another computer. Reload the latest value.', conflict: true }, 409); }
+  });
+
+  app.get('/v3/backup', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const page = boundedPage(c.req.query('page')); const limit = Math.min(500,Math.max(1,Number.parseInt(c.req.query('limit') || '500',10) || 500)); const offset = (page - 1) * limit;
+    const [rows,countResult] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT type,id,data,revision,updated_at FROM sync_records WHERE is_deleted=0 AND type<>'solaApiKey' ORDER BY type,id LIMIT ? OFFSET ?").bind(limit,offset),
+      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE is_deleted=0 AND type<>'solaApiKey'")
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    return c.json({ success: true, items: rows.results.map((row: any) => ({ type: row.type,id: row.id,data: parseSetting(row.data,null),revision: Number(row.revision),updatedAt: Number(row.updated_at) })), page, limit, total, totalPages: Math.ceil(total/limit) });
+  });
+
+  const getSolaKey = async (c: any) => {
+    if (c.env.SOLA_API_KEY) return String(c.env.SOLA_API_KEY);
+    const row: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaApiKey' AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1").first();
+    const value = row ? parseSetting(row.data,'') : '';
+    return typeof value === 'string' ? value.trim() : String(value?.apiKey || value?.key || '').trim();
+  };
+
+  app.get('/v3/sola/status', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const key = await getSolaKey(c); const metadata: any = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_sync_status'").first();
+    return c.json({ success: true, configured: Boolean(key), sync: metadata ? parseSetting(metadata.value,null) : null });
+  });
+
+  app.post('/v3/sola/sync', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const body = await c.req.json(); const startDate = String(body.startDate || ''); const endDate = String(body.endDate || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate>endDate) return c.json({ success:false,error:'Choose a valid Sola date range.' },400);
+    const key = await getSolaKey(c); if (!key) return c.json({ success:false,error:'Sola is not configured on the server.' },409);
+    try {
+      const response = await fetch('https://x1.cardknox.com/reportjson',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xKey:key,xVersion:'4.5.9',xSoftwareName:'CharityApp',xSoftwareVersion:'1.0',xCommand:'report:all',xBeginDate:`${startDate} 00:00:00`,xEndDate:`${endDate} 23:59:59`})});
+      if(!response.ok)return c.json({success:false,error:`Sola report request failed (${response.status}).`},502);
+      const payload:any=await response.json(); if(payload.xResult==='E')return c.json({success:false,error:String(payload.xError||'Sola returned an error.')},502);
+      const raw=Array.isArray(payload.ReportData)?payload.ReportData:Array.isArray(payload.xReportData)?payload.xReportData:[]; const now=Date.now();
+      const records=raw.map((item:any)=>({ref:String(item.RefNum||item.xRefNum||'').trim(),name:String(item.Name||item.xName||'Unknown').slice(0,300),date:String(item.Date||item.xEnteredDate||'').slice(0,30),amount:Number(item.Amount||item.xAmount||0),status:String(item.Status||item.xResponseResult||'Unknown').slice(0,50),last4:String(item.Last4||(item.xMaskedCardNumber||'').slice(-4)||'****').slice(-4),cardType:String(item.CardType||'Credit').slice(0,50),batch:String(item.Batch||item.xBatch||'').slice(0,100)})).filter((item:any)=>item.ref&&Number.isFinite(item.amount));
+      for(let index=0;index<records.length;index+=50){const statements=records.slice(index,index+50).map((record:any)=>c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaTransactions',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(record.ref,JSON.stringify(record),now,`sola-sync-${now}-${record.ref}`));await c.env.DB.batch(statements);}
+      const sync={lastSyncAt:now,startDate,endDate,count:records.length};await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_sync_status',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify(sync),now).run();
+      return c.json({success:true,sync});
+    } catch(reason:any){return c.json({success:false,error:`Unable to communicate with Sola: ${reason.message||'network error'}`},502);}
+  });
+
+  app.get('/v3/sola/view', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const startDate=String(c.req.query('startDate')||'0000-01-01');const endDate=String(c.req.query('endDate')||'9999-12-31');const page=boundedPage(c.req.query('page'));const limit=boundedLimit(c.req.query('limit'));const offset=(page-1)*limit;
+    const dismissedRow:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='dismissedSolaRefs' AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1").first();const dismissed=new Set<string>(Array.isArray(parseSetting(dismissedRow?.data,'') )?parseSetting(dismissedRow.data,[]):[]);
+    const [solaRows,appRows,solaCount,appCount]=await c.env.DB.batch([
+      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaTransactions' AND is_deleted=0 AND lower(json_extract(data,'$.status'))='approved' AND substr(json_extract(data,'$.date'),1,10) BETWEEN ? AND ? ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT ? OFFSET ?").bind(startDate,endDate,limit*2,offset),
+      c.env.DB.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.aliases') AS aliases FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.method')='credit_card' AND json_extract(t.data,'$.date') BETWEEN ? AND ? AND (json_extract(t.data,'$.type')='pending' OR (json_extract(t.data,'$.type')='approved' AND instr(COALESCE(json_extract(t.data,'$.notes'),''),'Ref:')=0)) ORDER BY json_extract(t.data,'$.date') DESC,t.id DESC LIMIT ? OFFSET ?").bind(startDate,endDate,limit,offset),
+      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaTransactions' AND is_deleted=0 AND lower(json_extract(data,'$.status'))='approved' AND substr(json_extract(data,'$.date'),1,10) BETWEEN ? AND ?").bind(startDate,endDate),
+      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.method')='credit_card' AND json_extract(data,'$.date') BETWEEN ? AND ? AND (json_extract(data,'$.type')='pending' OR (json_extract(data,'$.type')='approved' AND instr(COALESCE(json_extract(data,'$.notes'),''),'Ref:')=0))").bind(startDate,endDate)
+    ]);
+    const sola=solaRows.results.map((row:any)=>parseSetting(row.data,null)).filter((item:any)=>item&&!dismissed.has(item.ref)).slice(0,limit);const appItems=appRows.results.map((row:any)=>({...parseRecord(row),donorName:row.donor_name||'Unknown',aliases:parseSetting(row.aliases,[])}));
+    const autoMatches:any[]=[];const used=new Set<string>();for(const tx of appItems){const amount=Number(tx.amount||0);const names=[tx.donorName,...(Array.isArray(tx.aliases)?tx.aliases:[])].map((name:any)=>String(name).toLowerCase());const match=sola.find((item:any)=>!used.has(item.ref)&&Math.abs(Number(item.amount)-amount)<0.005&&names.some(name=>{const first=name.split(' ')[0];const solaFirst=String(item.name).toLowerCase().split(' ')[0];return name===String(item.name).toLowerCase()||(first&&solaFirst&&(first.includes(solaFirst)||solaFirst.includes(first)));}));if(match){used.add(match.ref);autoMatches.push({transactionId:tx.id,solaRef:match.ref});}}
+    return c.json({success:true,sola,appItems,autoMatches,page,limit,totalPages:Math.max(1,Math.ceil(Math.max(Number(solaCount.results[0]?.count||0),Number(appCount.results[0]?.count||0))/limit))});
+  });
+
+  app.post('/v3/sola/resolve', async (c:any) => {
+    const denied=requirePermission(c,'transactions.approve');if(denied)return denied;const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const action=String(body.action||'');if(!['match','import','dismiss'].includes(action))return c.json({success:false,error:'Choose a valid Sola action.'},400);
+    const mutationId=`v3-sola-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));const ref=String(body.ref||'');const solaRow:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaTransactions' AND id=? AND is_deleted=0").bind(ref).first();if(!solaRow)return c.json({success:false,error:'Sola transaction not found in the saved online report.'},404);const sola=parseSetting(solaRow.data,null);const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const statements:any[]=[];let item:any=null;
+    if(action==='match'){const id=String(body.transactionId||'');const current:any=await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id=? AND is_deleted=0").bind(id).first();if(!current)return c.json({success:false,error:'App transaction not found.'},404);if(Number(body.revision)!==Number(current.revision))return c.json({success:false,error:'This transaction changed on another computer. Reload the latest version.',conflict:true},409);const old=JSON.parse(String(current.data));const next={...old,type:'approved',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaBatchId:sola.batch||'',notes:`Matched via Sola Sync. Ref: ${ref}`};const revision=Number(current.revision)+1;const data=JSON.stringify(next);const operationId=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,id,current.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(id,current.revision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Matched to saved Sola transaction'));item={...next,id,revision,updatedAt:now};}
+    if(action==='import'){const donorId=String(body.donorId||'');const donor:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();if(!donor)return c.json({success:false,error:'Choose a valid donor.'},409);const id=crypto.randomUUID();const date=String(sola.date||'').slice(0,10);const transaction={id,donorId,amount:Number(sola.amount),amountCAD:Number(sola.amount),date,type:'approved',method:'credit_card',currency:'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaBatchId:sola.batch||'',notes:`Imported as new via Sola Sync. Ref: ${ref}`};const data=JSON.stringify(transaction);const operationId=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(id,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,userId,userEmail,now,mutationId,operationId,'Imported from saved Sola transaction'));item={...transaction,revision:1,updatedAt:now};}
+    const dismissedRow:any=await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='dismissedSolaRefs' AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1").first();const oldDismissed=Array.isArray(parseSetting(dismissedRow?.data,[]))?parseSetting(dismissedRow.data,[]):[];const nextDismissed=oldDismissed.includes(ref)?oldDismissed:[...oldDismissed,ref];const dismissedId=String(dismissedRow?.id||'dismissedSolaRefs');const dismissedData=JSON.stringify(nextDismissed);const dismissedRevision=Number(dismissedRow?.revision||0)+1;const dismissedOperation=`${mutationId}-dismiss`;if(dismissedRow)statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='dismissedSolaRefs' AND id=? AND revision=? AND is_deleted=0").bind(dismissedData,dismissedRevision,now,dismissedOperation,dismissedId,dismissedRow.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'dismissedSolaRefs',?,'update',?,?,?,?)").bind(dismissedId,dismissedRevision,dismissedData,now,mutationId,dismissedOperation));else statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'dismissedSolaRefs',?,?,1,0,?)").bind(dismissedId,dismissedData,now,dismissedOperation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'dismissedSolaRefs',1,'insert',?,?,?,?)").bind(dismissedId,dismissedData,now,mutationId,dismissedOperation));
+    const result={success:true,action,item,ref};statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now));try{await c.env.DB.batch(statements);return c.json(result);}catch{return c.json({success:false,error:'A related online record changed. Reload Sola Sync and try again.',conflict:true},409);}
   });
 
   app.get('/v3/donors', async (c: any) => {

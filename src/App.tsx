@@ -13,12 +13,14 @@ import { OnlineVendors } from './pages/OnlineVendors';
 import { OnlineTransactions } from './pages/OnlineTransactions';
 import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
 import { OnlineTasks } from './pages/OnlineTasks';
-import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
 const OnlineReconciliation = React.lazy(() => import('./pages/OnlineReconciliation').then(module => ({ default: module.OnlineReconciliation })));
 const OnlineReports = React.lazy(() => import('./pages/OnlineReports').then(module => ({ default: module.OnlineReports })));
+const OnlineProfitLoss = React.lazy(() => import('./pages/OnlineProfitLoss').then(module => ({ default: module.OnlineProfitLoss })));
+const OnlineSettings = React.lazy(() => import('./pages/OnlineSettings').then(module => ({ default: module.OnlineSettings })));
+const OnlineSolaSync = React.lazy(() => import('./pages/OnlineSolaSync').then(module => ({ default: module.OnlineSolaSync })));
 
 /**
  * Production is cloud-only. Local-store pages and synchronization engines are
@@ -28,7 +30,6 @@ const OnlineReports = React.lazy(() => import('./pages/OnlineReports').then(modu
  */
 function App() {
   const cloudPage = (page: React.ReactNode) => <CloudLayout>{page}</CloudLayout>;
-  const waitingPage = (title: string) => cloudPage(<OnlineUnavailable title={title} />);
 
   return (
     <BrowserRouter>
@@ -47,11 +48,11 @@ function App() {
         <Route path="/transactions" element={cloudPage(<OnlineTransactions />)} />
         <Route path="/payroll" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading payroll...</div>}><OnlinePayroll /></React.Suspense>)} />
         <Route path="/reconciliation" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reconciliation...</div>}><OnlineReconciliation /></React.Suspense>)} />
-        <Route path="/sola-sync" element={waitingPage('Sola Payments Sync')} />
+        <Route path="/sola-sync" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading Sola Payments Sync...</div>}><OnlineSolaSync /></React.Suspense>)} />
         <Route path="/reports" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reports...</div>}><OnlineReports /></React.Suspense>)} />
-        <Route path="/profit-loss" element={waitingPage('Profit & Loss')} />
+        <Route path="/profit-loss" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading Profit & Loss...</div>}><OnlineProfitLoss /></React.Suspense>)} />
         <Route path="/tasks" element={cloudPage(<OnlineTasks />)} />
-        <Route path="/settings" element={waitingPage('Settings')} />
+        <Route path="/settings" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading settings...</div>}><OnlineSettings /></React.Suspense>)} />
 
         {/* Temporary aliases for bookmarks created during the migration. */}
         <Route path="/online/payments" element={<Navigate to="/payments" replace />} />

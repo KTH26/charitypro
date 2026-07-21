@@ -337,4 +337,47 @@ describe('server-driven bank deposit matching', () => {
     const donorResponse = await app.request('/v3/reports?tab=by_donor&limit=50', {}, { DB: db } as any); const donors = await donorResponse.json() as any;
     expect(donorResponse.status).toBe(200); expect(donors.items[0]).toMatchObject({ id: 'report-donor', total: 80 });
   });
+
+  it('calculates project and profit-and-loss reports from online records', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'revenue-1', { id: 'revenue-1', name: 'Donations', type: 'revenue', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'expense-1', { id: 'expense-1', name: 'Programs', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'projects', 'project-1', { id: 'project-1', name: 'Food Program' });
+    seedRecord(db, 'transactions', 'income-1', { id: 'income-1', amount: 200, amountCAD: 200, currency: 'CAD', date: '2026-07-20', type: 'approved', offsetAccountId: 'revenue-1', projectId: 'project-1' });
+    seedRecord(db, 'bills', 'expense-bill-1', { id: 'expense-bill-1', vendor: 'Supplier', amount: 75, currency: 'CAD', dueDate: '2026-07-20', paidDate: '2026-07-21', status: 'paid', category: 'expense-1', projectId: 'project-1' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const projectResponse = await app.request('/v3/reports?tab=by_project&limit=50', {}, { DB: db } as any); const project = await projectResponse.json() as any;
+    expect(projectResponse.status).toBe(200); expect(project.items[0]).toMatchObject({ id: 'project-1', income: 200, cost: 75 });
+    const response = await app.request('/v3/profit-loss?startDate=2026-07-01&endDate=2026-07-31&limit=50', {}, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.summary).toEqual({ revenue: 200, expenses: 75, netIncome: 125 }); expect(body.items).toHaveLength(2);
+  });
+
+  it('saves shared settings with revisions and creates a secret-free cloud backup', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'currency', 'currency', 'CAD', 2);
+    seedRecord(db, 'solaApiKey', 'solaApiKey', 'secret-value');
+    seedRecord(db, 'transactions', 'backup-payment', { id: 'backup-payment', amount: 25, date: '2026-07-21' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const settingsResponse = await app.request('/v3/settings', {}, { DB: db } as any); const settings = await settingsResponse.json() as any;
+    expect(settingsResponse.status).toBe(200); expect(settings.settings.currency).toBe('CAD'); expect(settings.solaConfigured).toBe(true);
+    const updateRequest = () => app.request('/v3/settings/currency', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'setting-currency' }, body: JSON.stringify({ value: 'USD', revision: 2 }) }, { DB: db } as any);
+    expect((await updateRequest()).status).toBe(200); expect((await updateRequest()).status).toBe(200);
+    const backupResponse = await app.request('/v3/backup?limit=500', {}, { DB: db } as any); const backup = await backupResponse.json() as any;
+    expect(backupResponse.status).toBe(200); expect(backup.items.some((item: any) => item.id === 'backup-payment')).toBe(true); expect(backup.items.some((item: any) => item.type === 'solaApiKey')).toBe(false);
+  });
+
+  it('matches a saved Sola charge to an online transaction exactly once', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'solaTransactions', 'sola-ref-1', { ref: 'sola-ref-1', name: 'Jane Donor', date: '2026-07-21', amount: 50, status: 'Approved', last4: '1234', batch: 'batch-1' });
+    seedRecord(db, 'dismissedSolaRefs', 'dismissedSolaRefs', []);
+    seedRecord(db, 'donors', 'donor-sola', { id: 'donor-sola', name: 'Jane Donor', aliases: [] });
+    seedRecord(db, 'transactions', 'pending-sola', { id: 'pending-sola', donorId: 'donor-sola', amount: 50, amountCAD: 50, currency: 'CAD', method: 'credit_card', date: '2026-07-21', type: 'pending' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const viewResponse = await app.request('/v3/sola/view?startDate=2026-07-01&endDate=2026-07-31&limit=50', {}, { DB: db } as any); const view = await viewResponse.json() as any;
+    expect(viewResponse.status).toBe(200); expect(view.autoMatches).toEqual([{ transactionId: 'pending-sola', solaRef: 'sola-ref-1' }]);
+    const resolveRequest = () => app.request('/v3/sola/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'resolve-sola-1' }, body: JSON.stringify({ action: 'match', ref: 'sola-ref-1', transactionId: 'pending-sola', revision: 1 }) }, { DB: db } as any);
+    expect((await resolveRequest()).status).toBe(200); expect((await resolveRequest()).status).toBe(200);
+    const transaction: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id='pending-sola'").get(); const transactionData = JSON.parse(transaction.data);
+    expect(transactionData).toMatchObject({ type: 'approved', solaBatchId: 'batch-1', sourceAccountId: 'sys-undeposited-funds' }); expect(transactionData.notes).toContain('sola-ref-1'); expect(Number(transaction.revision)).toBe(2);
+  });
 });
