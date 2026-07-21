@@ -1003,8 +1003,11 @@ export const useStore = create<AppState>()(
           const toDelete = new Set<string>();
           
           for (const tx of state.transactions) {
-            // Include category and method to be safe
-            const hash = `${tx.donorId}-${tx.amount}-${tx.date}-${tx.type}-${tx.method}-${tx.currency}-${tx.category || ''}`;
+            // Only remove a transaction when every persisted field except its
+            // generated ID is identical. The previous short hash could erase
+            // legitimate same-day payments with the same donor and amount.
+            const { id: _id, ...payload } = tx;
+            const hash = JSON.stringify(payload);
             if (seen.has(hash)) {
               toDelete.add(tx.id);
             } else {
@@ -1014,39 +1017,10 @@ export const useStore = create<AppState>()(
 
           if (toDelete.size === 0) return state;
 
-          const updatedTxs = state.transactions.filter(t => !toDelete.has(t.id));
-          
-          const donorUpdates = new Map<string, { totalGiven: number, balanceOwed: number }>();
-          const accountUpdates = new Map<string, number>();
-
-          for (const tx of state.transactions) {
-            if (toDelete.has(tx.id)) {
-               countRemoved++;
-               const effectiveAmount = tx.amountCAD ?? tx.amount;
-               const dUpdate = donorUpdates.get(tx.donorId) || { totalGiven: 0, balanceOwed: 0 };
-               if (tx.type === 'approved') dUpdate.totalGiven -= effectiveAmount;
-               donorUpdates.set(tx.donorId, dUpdate);
-
-               if (tx.type === 'approved') {
-                 if (tx.sourceAccountId) accountUpdates.set(tx.sourceAccountId, (accountUpdates.get(tx.sourceAccountId) || 0) - tx.amount);
-                 if (tx.offsetAccountId) accountUpdates.set(tx.offsetAccountId, (accountUpdates.get(tx.offsetAccountId) || 0) - tx.amount);
-               }
-            }
-          }
-
-          const updatedDonors = state.donors.map(d => {
-            if (!donorUpdates.has(d.id)) return d;
-            const u = donorUpdates.get(d.id)!;
-            return { ...d, totalGiven: d.totalGiven + u.totalGiven, balanceOwed: Math.max(0, d.balanceOwed + u.balanceOwed) };
-          });
-          
-          const updatedAccounts = state.accounts.map(a => {
-            if (!accountUpdates.has(a.id)) return a;
-            return { ...a, balance: a.balance + accountUpdates.get(a.id)! };
-          });
-
-          return { transactions: updatedTxs, donors: updatedDonors, accounts: updatedAccounts };
+          countRemoved = toDelete.size;
+          return { transactions: state.transactions.filter(t => !toDelete.has(t.id)) };
         });
+        if (countRemoved > 0) get().recalculateBalances();
         return { count: countRemoved };
       },
 

@@ -383,6 +383,7 @@ export const SyncEngineHardened: React.FC = () => {
           isApplyingServerState = true;
           try {
             useStore.setState(mergedState);
+            useStore.getState().recalculateBalances();
           } finally {
             isApplyingServerState = false;
           }
