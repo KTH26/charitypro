@@ -260,4 +260,14 @@ describe('server-driven bank deposit matching', () => {
     const response = await app.request('/v3/checks?limit=50&status=queued', {}, { DB: db } as any); const body = await response.json() as any;
     expect(response.status).toBe(200); expect(body.total).toBe(1); expect(body.items[0]).toMatchObject({ id: 'queued-check', categoryName: 'Programs', sourceName: 'Checking' });
   });
+
+  it('loads a bounded task page with donor names and summary counts', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'task-donor', { id: 'task-donor', name: 'Task Donor' });
+    seedRecord(db, 'tasks', 'task-high', { id: 'task-high', title: 'Call donor', type: 'call', priority: 'high', dueDate: '2026-07-21', donorId: 'task-donor', completed: false });
+    seedRecord(db, 'tasks', 'task-done', { id: 'task-done', title: 'Send receipt', type: 'email', priority: 'medium', dueDate: '2026-07-20', completed: true });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/tasks?limit=50&status=pending', {}, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.total).toBe(1); expect(body.limit).toBe(50); expect(body.items[0]).toMatchObject({ id: 'task-high', donorName: 'Task Donor', priority: 'high' }); expect(body.summary).toEqual({ total: 2, pending: 1, high: 1 });
+  });
 });

@@ -40,7 +40,7 @@ const categories: NavCategory[] = [
     { path: '/profit-loss', label: 'Profit & Loss', icon: BarChart3 }
   ] },
   { label: 'SYSTEM', items: [
-    { path: '/tasks', label: 'Tasks', icon: CheckSquare },
+    { path: '/tasks', label: 'Tasks', icon: CheckSquare, ready: true },
     { path: '/settings', label: 'Settings', icon: Settings }
   ] }
 ];

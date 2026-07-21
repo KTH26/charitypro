@@ -392,6 +392,23 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), recordType: row.record_type, donorName: row.donor_name || '', sourceName: row.source_name || '', offsetName: row.offset_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
+  app.get('/v3/tasks', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const status = String(c.req.query('status') || 'pending'); const search = String(c.req.query('search') || '').trim().toLowerCase();
+    const conditions = ["t.type='tasks'", 't.is_deleted=0']; const bindings: any[] = [];
+    if (status === 'pending') conditions.push("COALESCE(json_extract(t.data,'$.completed'),0)=0"); if (status === 'completed') conditions.push("COALESCE(json_extract(t.data,'$.completed'),0)=1");
+    if (search) { conditions.push("lower(t.data) LIKE ?"); bindings.push(`%${search}%`); }
+    const where = conditions.join(' AND ');
+    const [listResult, countResult, summaryResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 WHERE ${where} ORDER BY COALESCE(json_extract(t.data,'$.completed'),0),CASE json_extract(t.data,'$.priority') WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,json_extract(t.data,'$.dueDate'),t.id LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records t WHERE ${where}`).bind(...bindings),
+      c.env.DB.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN COALESCE(json_extract(data,'$.completed'),0)=0 THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN COALESCE(json_extract(data,'$.completed'),0)=0 AND json_extract(data,'$.priority')='high' THEN 1 ELSE 0 END) AS high FROM sync_records WHERE type='tasks' AND is_deleted=0")
+    ]);
+    const total = Number(countResult.results[0]?.count || 0); const summary: any = summaryResult.results[0] || {};
+    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit), summary: { total: Number(summary.total || 0), pending: Number(summary.pending || 0), high: Number(summary.high || 0) } });
+  });
+
   app.get('/v3/donors', async (c: any) => {
     const denied = requirePermission(c, 'donors.read');
     if (denied) return denied;

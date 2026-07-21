@@ -12,6 +12,7 @@ import { OnlineSchedules } from './pages/OnlineSchedules';
 import { OnlineVendors } from './pages/OnlineVendors';
 import { OnlineTransactions } from './pages/OnlineTransactions';
 import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
+import { OnlineTasks } from './pages/OnlineTasks';
 import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 /**
@@ -44,7 +45,7 @@ function App() {
         <Route path="/sola-sync" element={waitingPage('Sola Payments Sync')} />
         <Route path="/reports" element={waitingPage('Fundraising Reports')} />
         <Route path="/profit-loss" element={waitingPage('Profit & Loss')} />
-        <Route path="/tasks" element={waitingPage('Tasks')} />
+        <Route path="/tasks" element={cloudPage(<OnlineTasks />)} />
         <Route path="/settings" element={waitingPage('Settings')} />
 
         {/* Temporary aliases for bookmarks created during the migration. */}
