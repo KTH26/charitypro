@@ -52,7 +52,7 @@ export const OnlineDonors: React.FC = () => {
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'center', marginBottom: 22 }}>
           <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>SERVER MODE</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Donors ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Cloud records and calculated giving totals. Updates automatically every 3 seconds.</div></div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button className="btn btn-primary" onClick={() => { setEditing('new'); setNotice(''); }}>Add Donor</button><a className="btn btn-secondary" href="/online/payments">Online Payments</a><a className="btn btn-secondary" href="/online/accounts">Online Accounts</a><a className="btn btn-secondary" href="/donors">Current CharityPro</a></div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button className="btn btn-primary" onClick={() => { setEditing('new'); setNotice(''); }}>Add Donor</button><a className="btn btn-secondary" href="/online/payments">Online Payments</a><a className="btn btn-secondary" href="/online/expenses">Online Expenses</a><a className="btn btn-secondary" href="/online/accounts">Online Accounts</a><a className="btn btn-secondary" href="/donors">Current CharityPro</a></div>
         </div>
 
         {editing && <OnlineDonorForm donor={editing === 'new' ? undefined : editing} onCancel={() => setEditing(null)} onSaved={saved} onConflict={message => { setEditing(null); setNotice(message); void load(); }} />}

@@ -251,6 +251,140 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
   });
 
+  app.get('/v3/bills', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read');
+    if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit'));
+    const page = boundedPage(c.req.query('page'));
+    const offset = (page - 1) * limit;
+    const search = (c.req.query('search') || '').trim().toLowerCase();
+    const status = (c.req.query('status') || 'open').trim();
+    const conditions = ["b.type='bills'", 'b.is_deleted=0', "COALESCE(json_extract(b.data,'$.isPayroll'),0)=0"];
+    const bindings: any[] = [];
+    if (status === 'open') conditions.push("json_extract(b.data,'$.status') IN ('pending','urgent','scheduled')");
+    else if (status !== 'all') { conditions.push("json_extract(b.data,'$.status')=?"); bindings.push(status); }
+    if (search) {
+      conditions.push("(lower(COALESCE(json_extract(b.data,'$.vendor'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.memo'),'')) LIKE ?)");
+      bindings.push(`%${search}%`, `%${search}%`);
+    }
+    const where = conditions.join(' AND ');
+    const joins = `LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
+      LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0`;
+    const [listResult, totalsResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE ${where} ORDER BY json_extract(b.data,'$.dueDate') DESC,b.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) AS total_cad FROM sync_records b WHERE ${where}`).bind(...bindings)
+    ]);
+    const total = Number(totalsResult.results[0]?.count || 0);
+    return c.json({
+      success: true,
+      items: listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '' })),
+      page, limit, total, totalPages: Math.ceil(total / limit), totalCAD: Number(totalsResult.results[0]?.total_cad || 0)
+    });
+  });
+
+  app.post('/v3/bills', async (c: any) => {
+    const denied = requirePermission(c, 'bills.create');
+    if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'requestId is required.' }, 400);
+    const mutationId = `v3-bill-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const vendor = String(body.vendor || '').trim();
+    const amount = Number(body.amount);
+    const dueDate = String(body.dueDate || '').trim();
+    const category = String(body.category || '').trim();
+    const status = ['pending','urgent','paid'].includes(body.status) ? body.status : 'pending';
+    if (!vendor || !Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || Number.isNaN(Date.parse(`${dueDate}T00:00:00Z`)) || !category) {
+      return c.json({ success: false, error: 'Vendor, positive amount, due date, and expense category are required.' }, 400);
+    }
+    const sourceAccountId = String(body.sourceAccountId || '').trim();
+    if (status === 'paid' && !sourceAccountId) return c.json({ success: false, error: 'A paid-from account is required for a paid expense.' }, 400);
+    const creditAccountId = String(body.creditAccountId || '').trim();
+    const refs = await c.env.DB.prepare(`SELECT type,id,data FROM sync_records WHERE is_deleted=0 AND (type='exchangeRate' OR (type='accounts' AND id IN (?,?,?)))`).bind(category, sourceAccountId || '-', creditAccountId || '-').all();
+    const categoryRow: any = refs.results.find((row: any) => row.type === 'accounts' && row.id === category);
+    const sourceRow: any = refs.results.find((row: any) => row.type === 'accounts' && row.id === sourceAccountId);
+    if (!categoryRow || JSON.parse(String(categoryRow.data)).type !== 'expense') return c.json({ success: false, error: 'Choose a valid expense category.' }, 409);
+    if (status === 'paid' && !sourceRow) return c.json({ success: false, error: 'Choose a valid paid-from account.' }, 409);
+    const exchangeRow: any = refs.results.find((row: any) => row.type === 'exchangeRate');
+    const rawRate = exchangeRow ? Number(JSON.parse(String(exchangeRow.data))) : 1.35;
+    const exchangeRate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    const currency = body.currency === 'USD' ? 'USD' : 'CAD';
+    const record: any = {
+      id, vendor, amount, currency, exchangeRate: currency === 'USD' ? exchangeRate : undefined,
+      dueDate, status, category, taxable: Boolean(body.taxable), memo: String(body.memo || '').trim().slice(0, 2000)
+    };
+    if (sourceAccountId) record.sourceAccountId = sourceAccountId;
+    if (creditAccountId) record.creditAccountId = creditAccountId;
+    if (body.projectId) record.projectId = String(body.projectId);
+    if (status === 'paid') { record.paidDate = String(body.paidDate || new Date().toISOString().slice(0, 10)); record.offsetAccountId = category; }
+    const data = JSON.stringify(record);
+    const operationId = `${mutationId}-insert`;
+    const response = { success: true, item: { ...record, revision: 1, updatedAt: now } };
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare(`INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bills',?,?,1,0,?)`).bind(id, data, now, operationId),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bills',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bills','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created through server-driven expense API'),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response, 201);
+    } catch (error: any) {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: `Unable to create expense: ${error.message}` }, 409);
+    }
+  });
+
+  app.patch('/v3/bills/:id/pay', async (c: any) => {
+    const denied = requirePermission(c, 'bills.mark_paid');
+    if (denied) return denied;
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-bill-pay-${requestId}`;
+    const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='bills' AND id=? AND is_deleted=0").bind(id).first();
+    if (!current) return c.json({ success: false, error: 'Expense not found.' }, 404);
+    const existing = JSON.parse(String(current.data));
+    if (existing.status === 'paid') return c.json({ success: true, item: { ...existing, revision: Number(current.revision) }, alreadyPaid: true });
+    const expectedRevision = Number(body.revision);
+    if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This expense was changed by another user. Reloaded the latest version.', conflict: true }, 409);
+    const sourceAccountId = String(body.sourceAccountId || '').trim();
+    const source: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first();
+    if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid asset or liability account.' }, 409);
+    const next = { ...existing, status: 'paid', paidDate: new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category };
+    const now = Date.now();
+    const nextRevision = expectedRevision + 1;
+    const data = JSON.stringify(next);
+    const operationId = `${mutationId}-update`;
+    const response = { success: true, item: { ...next, revision: nextRevision, updatedAt: now } };
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare(`INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bills' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END`).bind(operationId, id, expectedRevision),
+        c.env.DB.prepare(`UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='bills' AND id=? AND revision=? AND is_deleted=0`).bind(data, nextRevision, now, operationId, id, expectedRevision),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='bills' AND id=? AND revision=?`).bind(mutationId, operationId, id, nextRevision),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',?,revision,?,data,?,?,updated_at,?,?,? FROM sync_records WHERE type='bills' AND id=? AND revision=?`).bind(expectedRevision, current.data, userId, userEmail, mutationId, operationId, 'Marked paid through server-driven expense API', id, nextRevision),
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response);
+    } catch {
+      const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: 'This expense was changed by another user. Reloaded the latest version.', conflict: true }, 409);
+    }
+  });
+
   app.get('/v3/accounts', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;

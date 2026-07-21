@@ -16,6 +16,9 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.get('/v3/donors'");
     expect(source).toContain("app.post('/v3/donors'");
     expect(source).toContain("app.put('/v3/donors/:id'");
+    expect(source).toContain("app.get('/v3/bills'");
+    expect(source).toContain("app.post('/v3/bills'");
+    expect(source).toContain("app.patch('/v3/bills/:id/pay'");
     expect(source).toContain("app.get('/v3/accounts'");
     expect(source).toContain("app.post('/v3/payments'");
     expect(source).toContain("app.delete('/v3/payments/:id'");
@@ -38,6 +41,10 @@ describe('Backend API & Security Rules', () => {
     const donorsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineDonors.tsx'), 'utf8');
     expect(appSource).toContain('path="/online/donors"');
     expect(donorsSource).toContain('window.setInterval');
+    const expensesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineExpenses.tsx'), 'utf8');
+    expect(appSource).toContain('path="/online/expenses"');
+    expect(expensesSource).toContain("fetch('/api/v3/bills'");
+    expect(expensesSource).toContain('window.setInterval');
     const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
     expect(formSource).toContain("fetch('/api/v3/payments'");
     expect(formSource).toContain('pendingRequestId');
