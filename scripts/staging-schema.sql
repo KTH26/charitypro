@@ -101,5 +101,5 @@ CREATE INDEX IF NOT EXISTS idx_audit_record ON audit_log(record_id, audit_id);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(changed_by_user_id, changed_at);
 
 INSERT INTO sync_metadata (key, value, updated_at)
-VALUES ('sync_generation', '7', strftime('%s','now') * 1000)
+VALUES ('sync_generation', '8', strftime('%s','now') * 1000)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;

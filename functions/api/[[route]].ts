@@ -345,7 +345,7 @@ app.get('/sync2/hardened/pull', async (c) => {
   }
   
   const genRec = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key = 'sync_generation'").first();
-  const syncGeneration = 7; // BUMP TO 7 to force full re-sync from cursor 0
+  const syncGeneration = 8; // New normalized production database; force a clean full pull.
   
   const jsonStr = JSON.stringify({
     changes: permittedChanges,

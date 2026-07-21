@@ -52,7 +52,7 @@ for (const type of recordKeys) {
 lines.push(
   `INSERT INTO sync_records (id,type,data,updated_at,revision,is_deleted) VALUES('exchangeRate','exchangeRate',${quote(JSON.stringify(state.exchangeRate))},${timestamp},1,0);`,
   `INSERT INTO sync_changes (record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'insert',data,updated_at,'verified-backup-20260720','migration-' || type || '-' || id FROM sync_records;`,
-  `UPDATE sync_metadata SET value='7', updated_at=${timestamp} WHERE key='sync_generation';`,
+  `UPDATE sync_metadata SET value='8', updated_at=${timestamp} WHERE key='sync_generation';`,
   ''
 );
 
