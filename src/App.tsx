@@ -25,12 +25,14 @@ import { BankFeed } from './pages/BankFeed';
 import { Reconciliation } from './pages/Reconciliation';
 import { SolaSync } from './pages/SolaSync';
 import { Payroll } from './pages/Payroll';
+import { OnlinePayments } from './pages/OnlinePayments';
 
 import { SyncEngineHardened } from './components/SyncEngineHardened';
 const SYNC_ENGINE_VERSION = import.meta.env.VITE_SYNC_ENGINE_VERSION ?? 'v2_hardened';
 
 function App() {
   const [hasHydrated, setHasHydrated] = useState(false);
+  const isServerRoute = window.location.pathname.startsWith('/online/');
 
   useEffect(() => {
     // Zustand persist exports .persist object on the store hook
@@ -49,14 +51,15 @@ function App() {
     });
   }, []);
 
-  if (!hasHydrated) {
+  if (!isServerRoute && !hasHydrated) {
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--bg-app)' }}><div className="loader" style={{ width: '40px', height: '40px', border: '4px solid var(--border)', borderTopColor: 'var(--navy)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}><style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style></div></div>;
   }
 
   return (
     <BrowserRouter>
-      {SYNC_ENGINE_VERSION === 'v2_hardened' ? <SyncEngineHardened /> : <SyncEngine />}
+      {!isServerRoute && (SYNC_ENGINE_VERSION === 'v2_hardened' ? <SyncEngineHardened /> : <SyncEngine />)}
       <Routes>
+        <Route path="/online/payments" element={<OnlinePayments />} />
         <Route path="/" element={<Layout><Dashboard /></Layout>} />
         <Route path="/donors" element={<Layout><Donors /></Layout>} />
         <Route path="/fundraisers" element={<Layout><Fundraisers /></Layout>} />
