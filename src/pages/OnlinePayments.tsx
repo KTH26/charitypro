@@ -109,9 +109,14 @@ export const OnlinePayments: React.FC = () => {
 
         {showCreate && <OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {
           setShowCreate(false);
-          setNotice(createdStatus === 'pending' ? 'Check saved safely in the cloud as pending.' : 'Payment saved safely in the cloud.');
+          setNotice(createdStatus === 'pending'
+            ? 'Check saved safely in the cloud as pending. You can view it under Pending checks when you are ready.'
+            : 'Payment saved safely in the cloud.');
           setPage(1);
-          if (status === createdStatus) void load(); else setStatus(createdStatus);
+          // Saving a payment must never move the operator to another view or tab.
+          // The three-second cloud refresh will show it here when it belongs to the
+          // current filter; pending checks remain available under Pending checks.
+          if (status === createdStatus) void load();
         }} />}
         {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}
 
