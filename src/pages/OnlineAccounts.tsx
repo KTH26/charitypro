@@ -34,8 +34,8 @@ export const OnlineAccounts: React.FC = () => {
     <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
-          <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>SERVER MODE</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Chart of Accounts</h1><div style={{ color: 'var(--text-muted)' }}>Balances calculated directly from cloud payments, bills, and transfers. Updates automatically every 3 seconds.</div></div>
-          <div style={{ display: 'flex', gap: 8 }}><a className="btn btn-secondary" href="/online/donors">Online Donors</a><a className="btn btn-secondary" href="/online/payments">Online Payments</a><a className="btn btn-secondary" href="/online/expenses">Online Expenses</a><a className="btn btn-secondary" href="/online/bank">Online Bank</a><a className="btn btn-secondary" href="/chart-of-accounts">Current CharityPro</a></div>
+          <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Chart of Accounts</h1><div style={{ color: 'var(--text-muted)' }}>Balances calculated directly from cloud payments, bills, and transfers. Updates automatically every 3 seconds.</div></div>
+          <div style={{ display: 'flex', gap: 8 }}><a className="btn btn-secondary" href="/donors">Donors</a><a className="btn btn-secondary" href="/payments">Payments</a><a className="btn btn-secondary" href="/expenses">Expenses</a><a className="btn btn-secondary" href="/bank-feed">Bank</a><a className="btn btn-secondary" href="/legacy/chart-of-accounts">Legacy Tools</a></div>
         </div>
         {error && <div className="card" style={{ padding: 16, color: 'var(--red)' }}>{error}</div>}
         {loading ? <div className="card" style={{ padding: 40, textAlign: 'center' }}>Calculating cloud balances…</div> : (

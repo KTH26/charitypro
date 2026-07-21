@@ -94,12 +94,12 @@ export const OnlinePayments: React.FC = () => {
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'center', marginBottom: 22 }}>
           <div>
-            <div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13, letterSpacing: 0.6 }}>SERVER MODE</div>
+            <div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13, letterSpacing: 0.6 }}>CHARITYPRO CLOUD</div>
             <h1 style={{ margin: '4px 0', color: 'var(--navy)' }}>Donor Payments ({total.toLocaleString()})</h1>
             <div style={{ color: 'var(--green)', fontWeight: 700 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
             <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 3 }}>Live cloud data — updates automatically every 3 seconds</div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button><a className="btn btn-secondary" href="/online/donors">Online Donors</a><a className="btn btn-secondary" href="/online/expenses">Online Expenses</a><a className="btn btn-secondary" href="/online/bank">Online Bank</a><a className="btn btn-secondary" href="/online/accounts">Online Accounts</a><a className="btn btn-secondary" href="/payments">Current CharityPro</a></div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button><a className="btn btn-secondary" href="/donors">Donors</a><a className="btn btn-secondary" href="/expenses">Expenses</a><a className="btn btn-secondary" href="/bank-feed">Bank</a><a className="btn btn-secondary" href="/chart-of-accounts">Accounts</a><a className="btn btn-secondary" href="/legacy/payments">Legacy Tools</a></div>
         </div>
 
         {showCreate && <OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {

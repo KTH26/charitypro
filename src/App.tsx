@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { SyncEngine } from './components/SyncEngine';
 import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
@@ -33,15 +33,25 @@ import { OnlineBank } from './pages/OnlineBank';
 
 import { SyncEngineHardened } from './components/SyncEngineHardened';
 const SYNC_ENGINE_VERSION = import.meta.env.VITE_SYNC_ENGINE_VERSION ?? 'v2_hardened';
+const CLOUD_ROUTES = new Set([
+  '/', '/payments', '/donors', '/expenses', '/chart-of-accounts', '/bank-feed',
+  '/online/payments', '/online/accounts', '/online/donors', '/online/expenses', '/online/bank'
+]);
 
-function App() {
+function AppContent() {
   const [hasHydrated, setHasHydrated] = useState(false);
-  const isServerRoute = window.location.pathname.startsWith('/online/');
+  const location = useLocation();
+  const currentPath = location.pathname.replace(/\/$/, '') || '/';
+  const isServerRoute = CLOUD_ROUTES.has(currentPath);
 
   useEffect(() => {
+    if (isServerRoute) return;
+    let active = true;
+    let unsubscribe: () => void = () => {};
     // Zustand persist exports .persist object on the store hook
     import('./store').then(({ useStore }) => {
-      const unsub = useStore.persist.onFinishHydration(() => {
+      if (!active) return;
+      unsubscribe = useStore.persist.onFinishHydration(() => {
         setHasHydrated(true);
         useStore.getState().checkSystemAccounts();
         useStore.getState().recalculateBalances(); // always recompute from source of truth
@@ -51,16 +61,16 @@ function App() {
         useStore.getState().checkSystemAccounts();
         useStore.getState().recalculateBalances(); // always recompute from source of truth
       }
-      return unsub;
     });
-  }, []);
+    return () => { active = false; unsubscribe(); };
+  }, [isServerRoute]);
 
   if (!isServerRoute && !hasHydrated) {
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--bg-app)' }}><div className="loader" style={{ width: '40px', height: '40px', border: '4px solid var(--border)', borderTopColor: 'var(--navy)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}><style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style></div></div>;
   }
 
   return (
-    <BrowserRouter>
+    <>
       {!isServerRoute && (SYNC_ENGINE_VERSION === 'v2_hardened' ? <SyncEngineHardened /> : <SyncEngine />)}
       <Routes>
         <Route path="/online/payments" element={<OnlinePayments />} />
@@ -68,21 +78,28 @@ function App() {
         <Route path="/online/donors" element={<OnlineDonors />} />
         <Route path="/online/expenses" element={<OnlineExpenses />} />
         <Route path="/online/bank" element={<OnlineBank />} />
-        <Route path="/" element={<Layout><Dashboard /></Layout>} />
-        <Route path="/donors" element={<Layout><Donors /></Layout>} />
+        <Route path="/" element={<Navigate to="/payments" replace />} />
+        <Route path="/payments" element={<OnlinePayments />} />
+        <Route path="/donors" element={<OnlineDonors />} />
+        <Route path="/expenses" element={<OnlineExpenses />} />
+        <Route path="/chart-of-accounts" element={<OnlineAccounts />} />
+        <Route path="/bank-feed" element={<OnlineBank />} />
+        <Route path="/legacy" element={<Navigate to="/legacy/dashboard" replace />} />
+        <Route path="/legacy/dashboard" element={<Layout><Dashboard /></Layout>} />
+        <Route path="/legacy/donors" element={<Layout><Donors /></Layout>} />
+        <Route path="/legacy/expenses" element={<Layout><Expenses /></Layout>} />
+        <Route path="/legacy/chart-of-accounts" element={<Layout><ChartOfAccounts /></Layout>} />
+        <Route path="/legacy/bank-feed" element={<Layout><BankFeed /></Layout>} />
+        <Route path="/legacy/payments" element={<Layout><Payments /></Layout>} />
         <Route path="/fundraisers" element={<Layout><Fundraisers /></Layout>} />
         <Route path="/transactions" element={<Layout><Transactions /></Layout>} />
-        <Route path="/chart-of-accounts" element={<Layout><ChartOfAccounts /></Layout>} />
         <Route path="/write-checks" element={<Layout><WriteChecks /></Layout>} />
-        <Route path="/bank-feed" element={<Layout><BankFeed /></Layout>} />
         <Route path="/payroll" element={<Layout><Payroll /></Layout>} />
         <Route path="/reconciliation" element={<Layout><Reconciliation /></Layout>} />
         <Route path="/accounting" element={<Layout><Accounting /></Layout>} />
         <Route path="/vendors" element={<Layout><Vendors /></Layout>} />
-        <Route path="/expenses" element={<Layout><Expenses /></Layout>} />
         <Route path="/print-check" element={<Layout><PrintCheckLayout /></Layout>} />
         <Route path="/pledges" element={<Layout><Pledges /></Layout>} />
-        <Route path="/payments" element={<Layout><Payments /></Layout>} />
         <Route path="/schedules" element={<Layout><Schedules /></Layout>} />
         <Route path="/reports" element={<Layout><Reports /></Layout>} />
         <Route path="/calendar" element={<Layout><CalendarPage /></Layout>} />
@@ -94,8 +111,12 @@ function App() {
         <Route path="/sola-sync" element={<Layout><SolaSync /></Layout>} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
-    </BrowserRouter>
+    </>
   );
+}
+
+function App() {
+  return <BrowserRouter><AppContent /></BrowserRouter>;
 }
 
 export default App;
