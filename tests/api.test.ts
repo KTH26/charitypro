@@ -10,6 +10,17 @@ describe('Backend API & Security Rules', () => {
     const schema = readFileSync(join(process.cwd(), 'scripts', 'staging-schema.sql'), 'utf8');
     expect(schema).toContain('PRIMARY KEY (type, id)');
   });
+  it('defines paginated server-driven reads and idempotent audited payment writes', () => {
+    const source = readFileSync(join(process.cwd(), 'functions', 'api', 'server-data.ts'), 'utf8');
+    expect(source).toContain("app.get('/v3/payments'");
+    expect(source).toContain("app.get('/v3/donors'");
+    expect(source).toContain("app.get('/v3/accounts'");
+    expect(source).toContain("app.post('/v3/payments'");
+    expect(source).toContain("app.delete('/v3/payments/:id'");
+    expect(source).toContain('processed_mutations');
+    expect(source).toContain('audit_log');
+    expect(source).toContain('LIMIT ? OFFSET ?');
+  });
   it('JWT Middleware - (To be implemented using miniflare)', () => {
     // A complete integration test of the Cloudflare Worker would use Miniflare,
     // but here we verify the logic modules directly.

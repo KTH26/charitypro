@@ -4,6 +4,7 @@ import { requireAuth } from './middleware';
 import { getRequiredPermission, hasPermission } from './permissions';
 import { validatePayload } from './validation';
 import { isOperationAlreadyApplied } from './idempotency';
+import { registerServerDataRoutes } from './server-data';
 
 const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string } }>().basePath('/api')
 
@@ -676,5 +677,7 @@ app.get('/debug/stats', async (c) => {
   
   return c.json({ count: countRes?.total_count, total_amount: totalAmountCAD });
 });
+
+registerServerDataRoutes(app);
 
 export const onRequest = handle(app)
