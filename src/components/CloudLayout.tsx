@@ -31,7 +31,7 @@ const categories: NavCategory[] = [
     { path: '/transactions', label: 'Transactions', icon: Wallet, ready: true },
     { path: '/chart-of-accounts', label: 'Chart of Accounts', icon: List, ready: true },
     { path: '/bank-feed', label: 'Bank Feed', icon: Building, ready: true },
-    { path: '/payroll', label: 'Payroll & T4A', icon: Users },
+    { path: '/payroll', label: 'Payroll & T4A', icon: Users, ready: true },
     { path: '/reconciliation', label: 'Reconciliation', icon: CheckSquare },
     { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon }
   ] },

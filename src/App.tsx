@@ -16,6 +16,7 @@ import { OnlineTasks } from './pages/OnlineTasks';
 import { OnlineUnavailable } from './pages/OnlineUnavailable';
 
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
+const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
 
 /**
  * Production is cloud-only. Local-store pages and synchronization engines are
@@ -42,7 +43,7 @@ function App() {
         <Route path="/vendors" element={cloudPage(<OnlineVendors />)} />
         <Route path="/write-checks" element={cloudPage(<OnlineWriteChecks />)} />
         <Route path="/transactions" element={cloudPage(<OnlineTransactions />)} />
-        <Route path="/payroll" element={waitingPage('Payroll & T4A')} />
+        <Route path="/payroll" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading payroll...</div>}><OnlinePayroll /></React.Suspense>)} />
         <Route path="/reconciliation" element={waitingPage('Reconciliation')} />
         <Route path="/sola-sync" element={waitingPage('Sola Payments Sync')} />
         <Route path="/reports" element={waitingPage('Fundraising Reports')} />

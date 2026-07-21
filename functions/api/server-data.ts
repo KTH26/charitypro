@@ -483,6 +483,74 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.put('/v3/sponsorship-days/:donorId/:dayId', (c: any) => mutateSponsorshipDay(c, 'update'));
   app.delete('/v3/sponsorship-days/:donorId/:dayId', (c: any) => mutateSponsorshipDay(c, 'delete'));
 
+  app.get('/v3/payroll/entities', async (c: any) => {
+    const denied = requirePermission(c, 'payroll.read');
+    if (denied) return denied;
+    const type = String(c.req.query('type') || 'employees');
+    if (!['employees','fundraisers'].includes(type)) return c.json({ success: false, error: 'Choose employees or fundraisers.' }, 400);
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    const payrollBalance = `(SELECT COALESCE(SUM(CASE WHEN json_extract(b.data,'$.status')='paid' THEN -COALESCE(json_extract(b.data,'$.amount'),0) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND COALESCE(json_extract(b.data,'$.isPayroll'),0)=1 AND (json_extract(b.data,'$.employeeId')=e.id OR lower(json_extract(b.data,'$.vendor'))=lower('Payroll: '||json_extract(e.data,'$.name'))))`;
+    const commissionBalance = type === 'fundraisers' ? `+(SELECT COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)*COALESCE(json_extract(e.data,'$.percentage'),0)/100),0) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.fundraiserId')=e.id)` : '';
+    const [listResult, countResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT e.id,e.data,e.revision,e.updated_at,(${payrollBalance}${commissionBalance}) AS balance_owed FROM sync_records e WHERE e.type=? AND e.is_deleted=0 ORDER BY lower(json_extract(e.data,'$.name')) LIMIT ? OFFSET ?`).bind(type, limit, offset),
+      c.env.DB.prepare('SELECT COUNT(*) AS count FROM sync_records WHERE type=? AND is_deleted=0').bind(type)
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), balanceOwed: Number(row.balance_owed || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.get('/v3/payroll/:entityType/:id/ledger', async (c: any) => {
+    const denied = requirePermission(c, 'payroll.read');
+    if (denied) return denied;
+    const entityType = String(c.req.param('entityType') || ''); const recordType = entityType === 'employee' ? 'employees' : entityType === 'fundraiser' ? 'fundraisers' : '';
+    if (!recordType) return c.json({ success: false, error: 'Payroll entity not found.' }, 404);
+    const id = String(c.req.param('id') || ''); const entity: any = await c.env.DB.prepare('SELECT data FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(recordType, id).first();
+    if (!entity) return c.json({ success: false, error: 'Payroll entity not found.' }, 404);
+    const name = String(JSON.parse(String(entity.data)).name || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    const where = "type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.isPayroll'),0)=1 AND (json_extract(data,'$.employeeId')=? OR lower(json_extract(data,'$.vendor'))=lower(?))";
+    const [listResult, countResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE ${where} ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT ? OFFSET ?`).bind(id, `Payroll: ${name}`, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE ${where}`).bind(id, `Payroll: ${name}`)
+    ]);
+    const total = Number(countResult.results[0]?.count || 0);
+    return c.json({ success: true, items: listResult.results.map(parseRecord), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.post('/v3/payroll/entries', async (c: any) => {
+    const denied = requirePermission(c, 'payroll.manage');
+    if (denied) return denied;
+    const body = await c.req.json(); const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-payroll-entry-${requestId}`; const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const action = body.action === 'payment' ? 'payment' : 'earnings'; const entityType = body.entityType === 'fundraiser' ? 'fundraiser' : 'employee'; const recordType = entityType === 'employee' ? 'employees' : 'fundraisers'; const entityId = String(body.entityId || ''); const amount = Number(body.amount); const date = String(body.date || '');
+    if (!entityId || !Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return c.json({ success: false, error: 'Payroll recipient, positive amount, and date are required.' }, 400);
+    const [entity, category] = await Promise.all([
+      c.env.DB.prepare('SELECT data FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(recordType, entityId).first(),
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.type')='expense' ORDER BY CASE WHEN lower(json_extract(data,'$.name'))='payroll expense' THEN 0 WHEN json_extract(data,'$.subType')='payroll' THEN 1 ELSE 2 END,lower(json_extract(data,'$.name')) LIMIT 1").first()
+    ]);
+    if (!entity) return c.json({ success: false, error: 'Payroll recipient not found.' }, 404);
+    if (!category) return c.json({ success: false, error: 'Add a Payroll Expense account before recording payroll.' }, 409);
+    const sourceAccountId = String(body.sourceAccountId || '');
+    if (action === 'payment') { const source: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first(); if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid paid-from account.' }, 409); }
+    const entityData = JSON.parse(String((entity as any).data)); const id = crypto.randomUUID(); const now = Date.now(); const categoryId = String((category as any).id); const operationId = `${mutationId}-bill`;
+    const bill: any = { id, vendor: `Payroll: ${entityData.name}`, employeeId: entityId, payrollEntityType: entityType, amount, currency: 'CAD', dueDate: date, status: action === 'payment' ? 'paid' : 'pending', category: categoryId, isPayroll: true, earningType: String(body.earningType || 'Salary').slice(0,100), t4aEligible: Boolean(body.t4aEligible), memo: String(body.memo || '').trim().slice(0,2000) };
+    if (action === 'payment') { bill.sourceAccountId = sourceAccountId; bill.offsetAccountId = categoryId; bill.paidDate = date; }
+    const billData = JSON.stringify(bill); const statements: any[] = [
+      c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bills',?,?,1,0,?)").bind(id, billData, now, operationId),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bills',1,'insert',?,?,?,?)").bind(id, billData, now, mutationId, operationId),
+      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bills','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, billData, String(c.get('userId') || 'unknown'), String(c.get('userEmail') || 'unknown'), now, mutationId, operationId, action === 'payment' ? 'Recorded payroll payment' : 'Added payroll earnings')
+    ];
+    let schedule: any = null;
+    if (action === 'earnings' && body.recurring) {
+      const frequency = ['weekly','biweekly','monthly'].includes(body.frequency) ? body.frequency : 'monthly'; const scheduleId = crypto.randomUUID(); const scheduleOperationId = `${mutationId}-schedule`;
+      schedule = { id: scheduleId, entityId, type: entityType, amount, earningType: bill.earningType, t4aEligible: Boolean(body.t4aEligible), frequency, startDate: date, nextDate: date, active: true }; const scheduleData = JSON.stringify(schedule);
+      statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'recurringPayroll',?,?,1,0,?)").bind(scheduleId, scheduleData, now, scheduleOperationId), c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayroll',1,'insert',?,?,?,?)").bind(scheduleId, scheduleData, now, mutationId, scheduleOperationId), c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayroll','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(scheduleId, scheduleData, String(c.get('userId') || 'unknown'), String(c.get('userEmail') || 'unknown'), now, mutationId, scheduleOperationId, 'Created recurring payroll schedule'));
+    }
+    const response = { success: true, item: { ...bill, revision: 1, updatedAt: now }, schedule: schedule ? { ...schedule, revision: 1, updatedAt: now } : null }; statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));
+    try { await c.env.DB.batch(statements); return c.json(response, 201); } catch { const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first(); if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json))); return c.json({ success: false, error: 'Payroll was not recorded. You can safely try again.' }, 409); }
+  });
+
   app.get('/v3/donors', async (c: any) => {
     const denied = requirePermission(c, 'donors.read');
     if (denied) return denied;

@@ -297,4 +297,21 @@ describe('server-driven bank deposit matching', () => {
     const removed = await app.request(`/v3/sponsorship-days/calendar-donor/${dayId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'calendar-delete' }, body: JSON.stringify({ revision: 4 }) }, { DB: db } as any);
     expect(removed.status).toBe(200); expect(Number((db.database.prepare("SELECT revision FROM sync_records WHERE type='donors' AND id='calendar-donor'").get() as any).revision)).toBe(5); expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='donors'").get() as any).count)).toBe(3);
   });
+
+  it('records payroll earnings, recurring schedules, and payments without duplicate retries', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'employees', 'employee-1', { id: 'employee-1', name: 'Office Employee', role: 'Manager', balanceOwed: 0 });
+    seedRecord(db, 'accounts', 'payroll-expense', { id: 'payroll-expense', name: 'Payroll Expense', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'payroll-bank', { id: 'payroll-bank', name: 'Payroll Bank', type: 'asset', currency: 'CAD' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const earningsPayload = { action: 'earnings', entityId: 'employee-1', entityType: 'employee', amount: 100, date: '2026-07-21', earningType: 'Salary', recurring: true, frequency: 'monthly' };
+    const earningsRequest = () => app.request('/v3/payroll/entries', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'payroll-earnings' }, body: JSON.stringify(earningsPayload) }, { DB: db } as any);
+    expect((await earningsRequest()).status).toBe(201); expect((await earningsRequest()).status).toBe(200);
+    const payment = await app.request('/v3/payroll/entries', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'payroll-payment' }, body: JSON.stringify({ action: 'payment', entityId: 'employee-1', entityType: 'employee', amount: 40, date: '2026-07-21', sourceAccountId: 'payroll-bank', t4aEligible: true }) }, { DB: db } as any);
+    expect(payment.status).toBe(201);
+    const entitiesResponse = await app.request('/v3/payroll/entities?type=employees&limit=50', {}, { DB: db } as any); const entities = await entitiesResponse.json() as any;
+    expect(entitiesResponse.status).toBe(200); expect(entities.items[0].balanceOwed).toBe(60);
+    const ledgerResponse = await app.request('/v3/payroll/employee/employee-1/ledger?limit=50', {}, { DB: db } as any); const ledger = await ledgerResponse.json() as any;
+    expect(ledgerResponse.status).toBe(200); expect(ledger.total).toBe(2); expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='recurringPayroll' AND is_deleted=0").get() as any).count)).toBe(1);
+  });
 });
