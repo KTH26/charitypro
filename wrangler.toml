@@ -5,7 +5,7 @@ compatibility_date = "2024-03-20"
 # PRODUCTION ENVIRONMENT
 [vars]
 CF_ACCESS_ISSUER = "https://gentle-forest-7be4.cloudflareaccess.com"
-CF_ACCESS_AUDIENCE = "90007633ab3ca91383397a3ca3987ec0f228a4ff7f44216acdc1df53036970a2"
+CF_ACCESS_AUDIENCE = "139dcc327d61b3b154cf69decb5302f112adfd4d4bc48ed4f225f0bcffb5b44d"
 
 [[d1_databases]]
 binding = "DB"
