@@ -20,6 +20,7 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain('AS calculated_balance');
     expect(source).toContain('WITH exchange_rate AS');
     expect(source).toContain('LEFT JOIN tx_source');
+    expect(source).toContain("currency === 'USD' ? amount * exchangeRate : amount");
     expect(source).toContain('processed_mutations');
     expect(source).toContain('audit_log');
     expect(source).toContain('LIMIT ? OFFSET ?');
@@ -30,6 +31,10 @@ describe('Backend API & Security Rules', () => {
     expect(appSource).toContain("window.location.pathname.startsWith('/online/')");
     expect(appSource).toContain('path="/online/accounts"');
     expect(accountsSource).toContain("fetch('/api/v3/accounts')");
+    expect(accountsSource).toContain('window.setInterval');
+    const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
+    expect(formSource).toContain("fetch('/api/v3/payments'");
+    expect(formSource).toContain('pendingRequestId');
   });
   it('JWT Middleware - (To be implemented using miniflare)', () => {
     // A complete integration test of the Cloudflare Worker would use Miniflare,

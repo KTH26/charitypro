@@ -227,8 +227,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (!donorId || !sourceAccountId || !offsetAccountId) return c.json({ success: false, error: 'Donor, receiving account, and offset account are required.' }, 400);
 
     const refs = await c.env.DB.prepare(`
-      SELECT type,id FROM sync_records
-      WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='accounts' AND id IN (?,?)))
+      SELECT type,id,data FROM sync_records
+      WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='accounts' AND id IN (?,?)) OR type='exchangeRate')
     `).bind(donorId, sourceAccountId, offsetAccountId).all();
     const found = new Set(refs.results.map((row: any) => `${row.type}:${row.id}`));
     if (!found.has(`donors:${donorId}`) || !found.has(`accounts:${sourceAccountId}`) || !found.has(`accounts:${offsetAccountId}`)) {
@@ -238,12 +238,23 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const id = crypto.randomUUID();
     const now = Date.now();
     const method = String(body.method || 'other');
+    const allowedMethods = new Set(['credit_card', 'check', 'cash', 'e_transfer', 'vouchers', 'eizer', 'bnei_leivy', 'other']);
+    if (!allowedMethods.has(method)) return c.json({ success: false, error: 'Invalid payment method.' }, 400);
     const currency = body.currency === 'USD' ? 'USD' : 'CAD';
-    const amountCAD = Number.isFinite(Number(body.amountCAD)) ? Number(body.amountCAD) : amount;
+    const exchangeRow: any = refs.results.find((row: any) => row.type === 'exchangeRate');
+    const savedRate = exchangeRow ? Number(JSON.parse(String(exchangeRow.data))) : 1.35;
+    const exchangeRate = Number.isFinite(savedRate) && savedRate > 0 ? savedRate : 1.35;
+    const amountCAD = currency === 'USD' ? amount * exchangeRate : amount;
+    const date = String(body.date || new Date().toISOString().slice(0, 10));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+      return c.json({ success: false, error: 'A valid payment date is required.' }, 400);
+    }
+    const notes = String(body.notes || '').trim();
+    if (notes.length > 2000) return c.json({ success: false, error: 'Notes must be 2,000 characters or fewer.' }, 400);
     const undeposited = sourceAccountId === 'sys-undeposited-funds' || body.depositStatus === 'undeposited';
     const record = {
       id, donorId, amount, amountCAD,
-      date: String(body.date || new Date().toISOString().slice(0, 10)),
+      date,
       type: body.type === 'pending' ? 'pending' : 'approved',
       method, currency,
       sourceAccountId: undeposited ? 'sys-undeposited-funds' : sourceAccountId,
@@ -253,7 +264,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       ...(body.projectId ? { projectId: String(body.projectId) } : {}),
       ...(body.pledgeId ? { pledgeId: String(body.pledgeId) } : {}),
       ...(body.sponsor ? { sponsor: String(body.sponsor) } : {}),
-      ...(body.notes ? { notes: String(body.notes) } : {})
+      ...(notes ? { notes } : {})
     };
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;

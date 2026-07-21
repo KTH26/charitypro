@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { OnlinePaymentForm } from '../components/OnlinePaymentForm';
 
 type OnlinePayment = {
   id: string;
@@ -9,6 +10,7 @@ type OnlinePayment = {
   date: string;
   method: string;
   currency: 'CAD' | 'USD';
+  type: 'approved' | 'pending';
   notes?: string;
 };
 
@@ -36,15 +38,17 @@ export const OnlinePayments: React.FC = () => {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [method, setMethod] = useState('');
+  const [status, setStatus] = useState<'approved' | 'pending'>('approved');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    const params = new URLSearchParams({ page: String(page), limit: '50', status: 'approved' });
+  const load = useCallback(async (silent = false) => {
+    if (!silent) { setLoading(true); setError(''); }
+    const params = new URLSearchParams({ page: String(page), limit: '50', status });
     if (search) params.set('search', search);
     if (method) params.set('method', method);
     if (from) params.set('from', from);
@@ -58,14 +62,18 @@ export const OnlinePayments: React.FC = () => {
       setTotalPages(Math.max(1, data.totalPages));
       setTotalCAD(data.totalCAD);
     } catch (e: any) {
-      setError(e.message || 'Unable to load payments.');
+      if (!silent) setError(e.message || 'Unable to load payments.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [page, search, method, from, to]);
+  }, [page, search, method, from, to, status]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setPage(1); }, [search, method, from, to]);
+  useEffect(() => {
+    const interval = window.setInterval(() => void load(true), 3000);
+    return () => window.clearInterval(interval);
+  }, [load]);
+  useEffect(() => { setPage(1); }, [search, method, from, to, status]);
 
   const removePayment = async (payment: OnlinePayment) => {
     if (!window.confirm(`Delete the ${payment.date} payment of $${payment.amount.toFixed(2)} for ${payment.donorName}?`)) return;
@@ -88,14 +96,24 @@ export const OnlinePayments: React.FC = () => {
           <div>
             <div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13, letterSpacing: 0.6 }}>SERVER MODE</div>
             <h1 style={{ margin: '4px 0', color: 'var(--navy)' }}>Donor Payments ({total.toLocaleString()})</h1>
-            <div style={{ color: 'var(--green)', fontWeight: 700 }}>Total received: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
+            <div style={{ color: 'var(--green)', fontWeight: 700 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 3 }}>Live cloud data — updates automatically every 3 seconds</div>
           </div>
-          <a className="btn btn-secondary" href="/payments">Return to current CharityPro</a>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button><a className="btn btn-secondary" href="/online/accounts">Online Accounts</a><a className="btn btn-secondary" href="/payments">Current CharityPro</a></div>
         </div>
 
+        {showCreate && <OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {
+          setShowCreate(false);
+          setNotice(createdStatus === 'pending' ? 'Check saved safely in the cloud as pending.' : 'Payment saved safely in the cloud.');
+          setPage(1);
+          if (status === createdStatus) void load(); else setStatus(createdStatus);
+        }} />}
+        {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}
+
         <section className="card" style={{ padding: 18, marginBottom: 18 }}>
-          <form onSubmit={e => { e.preventDefault(); setSearch(searchInput.trim()); }} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 180px 150px 150px auto', gap: 10 }}>
+          <form onSubmit={e => { e.preventDefault(); setSearch(searchInput.trim()); }} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 160px 145px 145px 145px auto', gap: 10 }}>
             <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Search donor, amount, or notes" />
+            <select value={status} onChange={e => setStatus(e.target.value as 'approved' | 'pending')}><option value="approved">Received</option><option value="pending">Pending checks</option></select>
             <select value={method} onChange={e => setMethod(e.target.value)}>
               <option value="">All methods</option>
               {Object.entries(methodLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -113,19 +131,20 @@ export const OnlinePayments: React.FC = () => {
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th>Date</th><th>Donor</th><th>Method</th><th>Notes</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead>
+                <thead><tr><th>Date</th><th>Donor</th><th>Status</th><th>Method</th><th>Notes</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead>
                 <tbody>
                   {items.map(payment => (
                     <tr key={payment.id}>
                       <td>{payment.date}</td>
                       <td style={{ fontWeight: 700 }}>{payment.donorName}</td>
+                      <td>{payment.type === 'pending' ? 'Pending' : 'Received'}</td>
                       <td>{methodLabel[payment.method] || payment.method}</td>
                       <td style={{ color: 'var(--text-muted)', maxWidth: 420 }}>{payment.notes || ''}</td>
                       <td style={{ textAlign: 'right', fontWeight: 800 }}>{payment.currency} ${payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => void removePayment(payment)}>Delete</button></td>
                     </tr>
                   ))}
-                  {items.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center' }}>No matching payments.</td></tr>}
+                  {items.length === 0 && <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center' }}>No matching payments.</td></tr>}
                 </tbody>
               </table>
             </div>
