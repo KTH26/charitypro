@@ -42,6 +42,7 @@ export const OnlineDonors: React.FC = () => {
     return () => window.clearInterval(interval);
   }, [load]);
   useEffect(() => { setPage(1); }, [search]);
+  useEffect(() => { const timer = window.setTimeout(() => setSearch(searchInput.trim()), 220); return () => window.clearTimeout(timer); }, [searchInput]);
 
   const saved = (message: string) => {
     setEditing(null);
@@ -61,7 +62,7 @@ export const OnlineDonors: React.FC = () => {
         {editing && <OnlineDonorForm donor={editing === 'new' ? undefined : editing} onCancel={() => setEditing(null)} onSaved={saved} onConflict={message => { setEditing(null); setNotice(message); void load(); }} />}
         {notice && <div className="card" style={{ padding: 14, marginBottom: 16, color: notice.includes('changed by another') ? 'var(--red)' : 'var(--green)', fontWeight: 800 }}>{notice}</div>}
         <section className="card" style={{ padding: 18, marginBottom: 18 }}>
-          <form onSubmit={event => { event.preventDefault(); setSearch(searchInput.trim()); }} style={{ display: 'flex', gap: 10 }}><input style={{ flex: 1 }} value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder="Search name, phone, email, Hebrew name, or donor ID" /><button className="btn btn-primary" type="submit">Search</button>{search && <button className="btn btn-secondary" type="button" onClick={() => { setSearchInput(''); setSearch(''); }}>Clear</button>}</form>
+          <div style={{ display: 'flex', gap: 10 }}><input style={{ flex: 1 }} value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder="Live search: name, phone, email, Hebrew name, address or donor ID" />{searchInput && <button className="btn btn-secondary" type="button" onClick={() => setSearchInput('')}>Clear</button>}</div>
         </section>
 
         {error && <div className="card" style={{ padding: 16, color: 'var(--red)', marginBottom: 16 }}>{error}</div>}

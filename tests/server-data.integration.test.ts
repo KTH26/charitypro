@@ -352,6 +352,23 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200); expect(body.summary).toEqual({ revenue: 200, expenses: 75, netIncome: 125 }); expect(body.items).toHaveLength(2);
   });
 
+  it('restores shared expense categories, all-expenses default, and the processing queue', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'expense-office', { id: 'expense-office', name: 'Office Expense', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'bank-main', { id: 'bank-main', name: 'Main Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'bills', 'open-expense', { id: 'open-expense', vendor: 'Paper Store', amount: 25, currency: 'CAD', dueDate: '2026-07-20', status: 'pending', category: 'expense-office', memo: 'Printer paper' });
+    seedRecord(db, 'bills', 'paid-expense', { id: 'paid-expense', vendor: 'Paper Store', amount: 30, currency: 'CAD', dueDate: '2026-07-21', status: 'paid', category: 'expense-office', sourceAccountId: 'bank-main' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const allResponse = await app.request('/v3/bills?limit=50&search=office', {}, { DB: db } as any); const all = await allResponse.json() as any;
+    expect(allResponse.status).toBe(200); expect(all.total).toBe(2);
+    const categoryResponse = await app.request('/v3/expense-categories?limit=50&year=2026', {}, { DB: db } as any); const category = await categoryResponse.json() as any;
+    expect(categoryResponse.status).toBe(200); expect(category.items[0]).toMatchObject({ id: 'expense-office', ytd: 55 }); expect(category.totalYTD).toBe(55);
+    const createQueue = await app.request('/v3/records/expenseQueueItems', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'queue-create' }, body: JSON.stringify({ data: { id: 'waiting-expense', date: '2026-07-21', description: 'Needs processing', amount: 12.5, taxable: false } }) }, { DB: db } as any);
+    expect(createQueue.status).toBe(201);
+    const queueResponse = await app.request('/v3/records/expenseQueueItems?limit=50&search=processing', {}, { DB: db } as any); const queue = await queueResponse.json() as any;
+    expect(queueResponse.status).toBe(200); expect(queue.items[0]).toMatchObject({ id: 'waiting-expense', amount: 12.5 });
+  });
+
   it('saves shared settings with revisions and creates a secret-free cloud backup', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'currency', 'currency', 'CAD', 2);

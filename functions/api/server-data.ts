@@ -25,6 +25,7 @@ const genericCollections: Record<string, { read: string; create: string; update:
   t4aSlips: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
   recurringPayroll: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
   recurringExpenses: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
+  expenseQueueItems: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
   accountTransfers: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
   reconciliations: { read: 'transactions.read', create: 'transactions.approve', update: 'transactions.approve', delete: 'transactions.reverse' }
 };
@@ -231,12 +232,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const page = boundedPage(c.req.query('page'));
     const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase();
-    const condition = search ? " AND (lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(p.data,'$.notes'),'')) LIKE ?)" : '';
-    const bindings = search ? [`%${search}%`, `%${search}%`] : [];
+    const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const conditions=["p.type='pledges'",'p.is_deleted=0'];const bindings:any[]=[];if(search){conditions.push("(lower(p.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)");bindings.push(`%${search}%`,`%${search}%`);}if(from){conditions.push("json_extract(p.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(p.data,'$.date')<=?");bindings.push(to);}const where=conditions.join(' AND ');
     const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0";
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records p ${join} WHERE p.type='pledges' AND p.is_deleted=0${condition} ORDER BY json_extract(p.data,'$.date') DESC,p.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records p ${join} WHERE p.type='pledges' AND p.is_deleted=0${condition}`).bind(...bindings)
+      c.env.DB.prepare(`SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records p ${join} WHERE ${where} ORDER BY json_extract(p.data,'$.date') DESC,p.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records p ${join} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor' })), page, limit, total, totalPages: Math.ceil(total / limit) });
@@ -287,11 +287,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase();
     const status = String(c.req.query('status') || 'all');
+    const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');
     const conditions = ["r.type='recurringPayments'", 'r.is_deleted=0'];
     const bindings: any[] = [];
     if (status === 'active') conditions.push("COALESCE(json_extract(r.data,'$.active'),0)=1");
     if (status === 'paused') conditions.push("COALESCE(json_extract(r.data,'$.active'),0)=0");
-    if (search) { conditions.push("lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?"); bindings.push(`%${search}%`); }
+    if (search) { conditions.push("(lower(r.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)"); bindings.push(`%${search}%`, `%${search}%`); }
+    if(from){conditions.push("json_extract(r.data,'$.nextDate')>=?");bindings.push(from);}if(to){conditions.push("json_extract(r.data,'$.nextDate')<=?");bindings.push(to);}
     const where = conditions.join(' AND ');
     const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0";
     const [listResult, countResult] = await c.env.DB.batch([
@@ -326,12 +328,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (to) { conditions.push("json_extract(t.data, '$.date') <= ?"); bindings.push(to); }
     if (search) {
       conditions.push(`(
-        lower(COALESCE(json_extract(d.data, '$.name'), '')) LIKE ? OR
-        CAST(COALESCE(json_extract(t.data, '$.amount'), '') AS TEXT) LIKE ? OR
-        lower(COALESCE(json_extract(t.data, '$.notes'), '')) LIKE ?
+        lower(t.data) LIKE ? OR lower(COALESCE(json_extract(d.data, '$.name'), '')) LIKE ? OR
+        lower(COALESCE(json_extract(src.data, '$.name'), '')) LIKE ? OR lower(COALESCE(json_extract(off.data, '$.name'), '')) LIKE ?
       )`);
       const term = `%${search}%`;
-      bindings.push(term, term, term);
+      bindings.push(term, term, term, term);
     }
 
     const where = conditions.join(' AND ');
@@ -399,10 +400,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/tasks', async (c: any) => {
     const denied = requirePermission(c, 'system.manage');
     if (denied) return denied;
-    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const status = String(c.req.query('status') || 'pending'); const search = String(c.req.query('search') || '').trim().toLowerCase();
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const status = String(c.req.query('status') || 'pending'); const search = String(c.req.query('search') || '').trim().toLowerCase(); const priority=String(c.req.query('priority')||''); const taskType=String(c.req.query('taskType')||''); const from=String(c.req.query('from')||''); const to=String(c.req.query('to')||'');
     const conditions = ["t.type='tasks'", 't.is_deleted=0']; const bindings: any[] = [];
     if (status === 'pending') conditions.push("COALESCE(json_extract(t.data,'$.completed'),0)=0"); if (status === 'completed') conditions.push("COALESCE(json_extract(t.data,'$.completed'),0)=1");
     if (search) { conditions.push("lower(t.data) LIKE ?"); bindings.push(`%${search}%`); }
+    if(priority){conditions.push("json_extract(t.data,'$.priority')=?");bindings.push(priority);} if(taskType){conditions.push("json_extract(t.data,'$.type')=?");bindings.push(taskType);} if(from){conditions.push("json_extract(t.data,'$.dueDate')>=?");bindings.push(from);} if(to){conditions.push("json_extract(t.data,'$.dueDate')<=?");bindings.push(to);}
     const where = conditions.join(' AND ');
     const [listResult, countResult, summaryResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 WHERE ${where} ORDER BY COALESCE(json_extract(t.data,'$.completed'),0),CASE json_extract(t.data,'$.priority') WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,json_extract(t.data,'$.dueDate'),t.id LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
@@ -489,12 +491,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (denied) return denied;
     const type = String(c.req.query('type') || 'employees');
     if (!['employees','fundraisers'].includes(type)) return c.json({ success: false, error: 'Choose employees or fundraisers.' }, 400);
-    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const search=String(c.req.query('search')||'').trim().toLowerCase();
     const payrollBalance = `(SELECT COALESCE(SUM(CASE WHEN json_extract(b.data,'$.status')='paid' THEN -COALESCE(json_extract(b.data,'$.amount'),0) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND (COALESCE(json_extract(b.data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(b.data,'$.isPayrollExpense'),0)=1) AND (json_extract(b.data,'$.employeeId')=e.id OR lower(json_extract(b.data,'$.vendor'))=lower('Payroll: '||json_extract(e.data,'$.name'))))`;
     const commissionBalance = type === 'fundraisers' ? `+(SELECT COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)*COALESCE(json_extract(e.data,'$.percentage'),0)/100),0) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.fundraiserId')=e.id)` : '';
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT e.id,e.data,e.revision,e.updated_at,(${payrollBalance}${commissionBalance}) AS balance_owed FROM sync_records e WHERE e.type=? AND e.is_deleted=0 ORDER BY lower(json_extract(e.data,'$.name')) LIMIT ? OFFSET ?`).bind(type, limit, offset),
-      c.env.DB.prepare('SELECT COUNT(*) AS count FROM sync_records WHERE type=? AND is_deleted=0').bind(type)
+      c.env.DB.prepare(`SELECT e.id,e.data,e.revision,e.updated_at,(${payrollBalance}${commissionBalance}) AS balance_owed FROM sync_records e WHERE e.type=? AND e.is_deleted=0 AND (?='' OR lower(e.data) LIKE ?) ORDER BY lower(json_extract(e.data,'$.name')) LIMIT ? OFFSET ?`).bind(type,search,`%${search}%`,limit,offset),
+      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type=? AND is_deleted=0 AND (?='' OR lower(data) LIKE ?)").bind(type,search,`%${search}%`)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), balanceOwed: Number(row.balance_owed || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
@@ -749,10 +751,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const page = boundedPage(c.req.query('page'));
     const offset = (page - 1) * limit;
     const search = (c.req.query('search') || '').trim().toLowerCase();
-    const condition = search
-      ? `AND (lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.email'),'')) LIKE ? OR COALESCE(json_extract(d.data,'$.phone'),'') LIKE ? OR lower(COALESCE(json_extract(d.data,'$.hebFirstName'),'')) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.hebLastName'),'')) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.displayId'),'')) LIKE ?)`
-      : '';
-    const searchBindings = search ? Array(6).fill(`%${search}%`) : [];
+    const condition = search ? `AND lower(d.data) LIKE ?` : '';
+    const searchBindings = search ? [`%${search}%`] : [];
     const [listResult, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`
         WITH donor_totals AS (
@@ -911,21 +911,29 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const page = boundedPage(c.req.query('page'));
     const offset = (page - 1) * limit;
     const search = (c.req.query('search') || '').trim().toLowerCase();
-    const status = (c.req.query('status') || 'open').trim();
+    const status = (c.req.query('status') || 'all').trim();
+    const category = String(c.req.query('category') || '').trim();
+    const account = String(c.req.query('account') || '').trim();
+    const from = String(c.req.query('from') || '').trim();
+    const to = String(c.req.query('to') || '').trim();
     const conditions = ["b.type='bills'", 'b.is_deleted=0', "COALESCE(json_extract(b.data,'$.isPayroll'),0)=0"];
     const bindings: any[] = [];
     if (status === 'open') conditions.push("json_extract(b.data,'$.status') IN ('pending','urgent','scheduled')");
     else if (status !== 'all') { conditions.push("json_extract(b.data,'$.status')=?"); bindings.push(status); }
+    if (category) { conditions.push("json_extract(b.data,'$.category')=?"); bindings.push(category); }
+    if (account) { conditions.push("json_extract(b.data,'$.sourceAccountId')=?"); bindings.push(account); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { conditions.push("json_extract(b.data,'$.dueDate')>=?"); bindings.push(from); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { conditions.push("json_extract(b.data,'$.dueDate')<=?"); bindings.push(to); }
     if (search) {
-      conditions.push("(lower(COALESCE(json_extract(b.data,'$.vendor'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.memo'),'')) LIKE ?)");
-      bindings.push(`%${search}%`, `%${search}%`);
+      conditions.push("(lower(COALESCE(json_extract(b.data,'$.vendor'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.memo'),'')) LIKE ? OR lower(COALESCE(json_extract(cat.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(src.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.status'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.dueDate'),'')) LIKE ? OR CAST(COALESCE(json_extract(b.data,'$.amount'),0) AS TEXT) LIKE ?)");
+      bindings.push(...Array(7).fill(`%${search}%`));
     }
     const where = conditions.join(' AND ');
     const joins = `LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
       LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0`;
     const [listResult, totalsResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE ${where} ORDER BY json_extract(b.data,'$.dueDate') DESC,b.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) AS total_cad FROM sync_records b WHERE ${where}`).bind(...bindings)
+      c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) AS total_cad FROM sync_records b ${joins} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(totalsResult.results[0]?.count || 0);
     return c.json({
@@ -933,6 +941,20 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       items: listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '' })),
       page, limit, total, totalPages: Math.ceil(total / limit), totalCAD: Number(totalsResult.results[0]?.total_cad || 0)
     });
+  });
+
+  app.get('/v3/expense-categories', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read'); if (denied) return denied;
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    const search = String(c.req.query('search') || '').trim().toLowerCase(); const year = /^\d{4}$/.test(String(c.req.query('year') || '')) ? String(c.req.query('year')) : String(new Date().getUTCFullYear());
+    const condition = search ? " AND lower(COALESCE(json_extract(a.data,'$.name'),'')) LIKE ?" : ''; const bindings = search ? [`%${search}%`] : [];
+    const base = "a.type='accounts' AND a.is_deleted=0 AND json_extract(a.data,'$.type')='expense'";
+    const [listResult,countResult,totalResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT a.id,a.data,a.revision,a.updated_at,COALESCE(SUM(CASE WHEN substr(json_extract(b.data,'$.dueDate'),1,4)=? THEN CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END ELSE 0 END),0) AS ytd FROM sync_records a LEFT JOIN sync_records b ON b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.category')=a.id WHERE ${base}${condition} GROUP BY a.id ORDER BY lower(json_extract(a.data,'$.name')) LIMIT ? OFFSET ?`).bind(year,...bindings,limit,offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records a WHERE ${base}${condition}`).bind(...bindings),
+      c.env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data,'$.currency')='USD' THEN COALESCE(json_extract(data,'$.amount'),0)*COALESCE(json_extract(data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(data,'$.amount'),0) END),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND substr(json_extract(data,'$.dueDate'),1,4)=?").bind(year)
+    ]);
+    const total=Number(countResult.results[0]?.count||0); return c.json({success:true,items:listResult.results.map((row:any)=>({...parseRecord(row),ytd:Number(row.ytd||0)})),page,limit,total,totalPages:Math.ceil(total/limit),year,totalYTD:Number(totalResult.results[0]?.total||0)});
   });
 
   app.get('/v3/vendors', async (c: any) => {
@@ -978,11 +1000,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/checks', async (c: any) => {
     const denied = requirePermission(c, 'bills.read');
     if (denied) return denied;
-    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const status = String(c.req.query('status') || 'queued');
+    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const status = String(c.req.query('status') || 'queued'); const search=String(c.req.query('search')||'').trim().toLowerCase(); const account=String(c.req.query('account')||''); const category=String(c.req.query('category')||''); const from=String(c.req.query('from')||''); const to=String(c.req.query('to')||''); const conditions=["b.type='bills'",'b.is_deleted=0',"json_extract(b.data,'$.printStatus')=?"];const bindings:any[]=[status];if(search){conditions.push("(lower(b.data) LIKE ? OR lower(COALESCE(json_extract(cat.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(src.data,'$.name'),'')) LIKE ?)");bindings.push(`%${search}%`,`%${search}%`,`%${search}%`);}if(account){conditions.push("json_extract(b.data,'$.sourceAccountId')=?");bindings.push(account);}if(category){conditions.push("json_extract(b.data,'$.category')=?");bindings.push(category);}if(from){conditions.push("json_extract(b.data,'$.dueDate')>=?");bindings.push(from);}if(to){conditions.push("json_extract(b.data,'$.dueDate')<=?");bindings.push(to);}const where=conditions.join(' AND ');
     const joins = `LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0 LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0`;
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.printStatus')=? ORDER BY json_extract(b.data,'$.dueDate'),b.id LIMIT ? OFFSET ?`).bind(status, limit, offset),
-      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.printStatus')=?").bind(status)
+      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE ${where} ORDER BY json_extract(b.data,'$.dueDate'),b.id LIMIT ? OFFSET ?`).bind(...bindings,limit,offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records b ${joins} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit) });
@@ -1123,11 +1145,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/bank/feed', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
-    const accountId = String(c.req.query('accountId') || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    const accountId = String(c.req.query('accountId') || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const search=String(c.req.query('search')||'').trim().toLowerCase();const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const matchStatus=String(c.req.query('matchStatus')||'');
     if (!accountId) return c.json({ success: false, error: 'Choose a bank account.' }, 400);
+    const conditions=["f.type='bankFeedTransactions'",'f.is_deleted=0',"json_extract(f.data,'$.accountId')=?"];const bindings:any[]=[accountId];if(search){conditions.push("lower(f.data) LIKE ?");bindings.push(`%${search}%`);}if(from){conditions.push("json_extract(f.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(f.data,'$.date')<=?");bindings.push(to);}if(matchStatus==='matched')conditions.push("EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");if(matchStatus==='unmatched')conditions.push("NOT EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");const where=conditions.join(' AND ');
     const [listResult,countResult,syncRow] = await c.env.DB.batch([
-      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=? ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT ? OFFSET ?").bind(accountId,limit,offset),
-      c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=?").bind(accountId),
+      c.env.DB.prepare(`SELECT f.data FROM sync_records f WHERE ${where} ORDER BY json_extract(f.data,'$.date') DESC,f.id DESC LIMIT ? OFFSET ?`).bind(...bindings,limit,offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records f WHERE ${where}`).bind(...bindings),
       c.env.DB.prepare('SELECT value,updated_at FROM sync_metadata WHERE key=?').bind(`bank_sync:${accountId}`)
     ]);
     const total=Number(countResult.results[0]?.count||0); const sync:any=syncRow.results[0]; let syncState:any=null; try{syncState=sync?.value?JSON.parse(String(sync.value)):null;}catch{syncState=null;}

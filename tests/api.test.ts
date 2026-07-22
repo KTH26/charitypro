@@ -18,6 +18,7 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.post('/v3/donors'");
     expect(source).toContain("app.put('/v3/donors/:id'");
     expect(source).toContain("app.get('/v3/bills'");
+    expect(source).toContain("app.get('/v3/expense-categories'");
     expect(source).toContain("app.post('/v3/bills'");
     expect(source).toContain("app.patch('/v3/bills/:id/pay'");
     expect(source).toContain("app.get('/v3/bank/state'");
@@ -75,6 +76,10 @@ describe('Backend API & Security Rules', () => {
     expect(appSource).toContain('path="/online/expenses"');
     expect(expensesSource).toContain('/api/v3/bills');
     expect(expensesSource).toContain('window.setInterval');
+    expect(expensesSource).toContain('Expense Categories');
+    expect(expensesSource).toContain('Processing Queue');
+    expect(expensesSource).toContain('expenseQueueItems');
+    expect(expensesSource).toContain('<option value="all">All expenses</option>');
     const bankSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineBank.tsx'), 'utf8');
     expect(appSource).toContain('path="/online/bank"');
     expect(bankSource).toContain("fetch('/api/v3/bank/match-deposit'");

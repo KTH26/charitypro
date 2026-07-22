@@ -10,7 +10,6 @@ export const OnlineBank: React.FC = () => {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [allAccounts, setAllAccounts] = useState<CloudAccount[]>([]);
   const [selectedBank, setSelectedBank] = useState('');
-  const [matchedIds, setMatchedIds] = useState<string[]>([]);
   const [feed, setFeed] = useState<BankTransaction[]>([]);
   const [tab, setTab] = useState<'unmatched' | 'matched'>('unmatched');
   const [startDate, setStartDate] = useState('');
@@ -18,6 +17,8 @@ export const OnlineBank: React.FC = () => {
   const [feedPages, setFeedPages] = useState(1);
   const [lastSyncDate, setLastSyncDate] = useState('');
   const [search, setSearch] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -43,7 +44,6 @@ export const OnlineBank: React.FC = () => {
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load bank state.');
       setAccounts(data.accounts);
-      setMatchedIds(data.matchedIds);
       setSelectedBank(current => current && data.accounts.some((account: BankAccount) => account.id === current) ? current : data.accounts[0]?.id || '');
     } catch (e: any) { if (!silent) setError(e.message || 'Unable to load bank state.'); }
     finally { if (!silent) setLoading(false); }
@@ -53,14 +53,15 @@ export const OnlineBank: React.FC = () => {
     if (!selectedBank) return;
     if (!silent) setLoading(true); setError('');
     try {
-      const response = await fetch(`/api/v3/bank/feed?accountId=${encodeURIComponent(selectedBank)}&page=${feedPage}&limit=50`);
+      const params = new URLSearchParams({ accountId: selectedBank, page: String(feedPage), limit: '50', matchStatus: tab, search, from: filterFrom, to: filterTo });
+      const response = await fetch(`/api/v3/bank/feed?${params}`);
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load saved bank transactions.');
       setFeed((data.items || []).map((transaction: any) => ({ ...transaction, sourceAccountId: selectedBank })));
       setFeedPages(Math.max(1, Number(data.totalPages || 1))); setLastSyncDate(String(data.sync?.lastSuccessfulDate || ''));
     } catch (e: any) { if (!silent) setError(e.message || 'Unable to load saved bank transactions.'); }
     finally { if (!silent) setLoading(false); }
-  }, [selectedBank, feedPage]);
+  }, [selectedBank, feedPage, tab, search, filterFrom, filterTo]);
 
   const syncFeed = async () => {
     if (!selectedBank) return; setLoading(true); setError(''); setNotice('');
@@ -124,11 +125,7 @@ export const OnlineBank: React.FC = () => {
     finally { setSaving(false); }
   };
 
-  const visibleFeed = useMemo(() => feed.filter(transaction => {
-    if (search && !transaction.description.toLowerCase().includes(search.toLowerCase()) && !transaction.date.includes(search)) return false;
-    const matched = matchedIds.includes(transaction.id);
-    return tab === 'matched' ? matched : !matched;
-  }), [feed, matchedIds, search, tab]);
+  const visibleFeed = useMemo(() => feed, [feed]);
   const selectedAccount = accounts.find(account => account.id === selectedBank);
   const expenseAccounts = allAccounts.filter(account => account.type === 'expense');
   const transferAccounts = allAccounts.filter(account => account.id !== selectedBank);
@@ -146,6 +143,6 @@ export const OnlineBank: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}><button className="btn btn-secondary" onClick={() => setOutgoing(null)}>Cancel</button><button className="btn btn-primary" disabled={saving} onClick={() => void confirmOutgoing()}>{saving ? 'Matching securely...' : 'Confirm Match'}</button></div>
     </section>}
     {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}{error && <div className="card" style={{ padding: 14, color: 'var(--red)', fontWeight: 700, marginBottom: 16 }}>{error}</div>}
-    <section className="card" style={{ padding: 0, overflow: 'hidden' }}><div style={{ display: 'flex', gap: 8, padding: 16, borderBottom: '1px solid var(--border)', alignItems: 'center' }}><button className={`btn ${tab === 'unmatched' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('unmatched')}>Unmatched</button><button className={`btn ${tab === 'matched' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('matched')}>Matched</button><input style={{ marginLeft: 'auto', maxWidth: 320 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search description or date" /></div><div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th>Date</th><th>Description</th><th>Direction</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead><tbody>{visibleFeed.map(transaction => <tr key={transaction.id}><td>{transaction.date}</td><td style={{ fontWeight: 700 }}>{transaction.description}</td><td>{transaction.amount > 0 ? 'Money in' : 'Money out'}</td><td style={{ textAlign: 'right', fontWeight: 800, color: transaction.amount > 0 ? 'var(--green)' : 'var(--red)' }}>{transaction.amount > 0 ? '+' : '-'}${Math.abs(transaction.amount).toFixed(2)}</td><td style={{ textAlign: 'right' }}>{tab === 'unmatched' && transaction.amount > 0 && <button className="btn btn-primary btn-sm" onClick={() => void openDepositMatch(transaction)}>Match Deposit</button>}{tab === 'unmatched' && transaction.amount < 0 && <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Match Transaction</button>}{tab === 'matched' && <span style={{ color: 'var(--green)', fontWeight: 700 }}>Matched</span>}</td></tr>)}{visibleFeed.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center' }}>{feed.length ? 'No transactions in this tab.' : 'No saved bank transactions yet. Press Sync New Bank Transactions once.'}</td></tr>}</tbody></table></div>{feedPages > 1 && <div style={{ display: 'flex', justifyContent: 'space-between', padding: 14, borderTop: '1px solid var(--border)' }}><button className="btn btn-secondary btn-sm" disabled={feedPage <= 1} onClick={() => setFeedPage(value => value - 1)}>Previous</button><span>Page {feedPage} of {feedPages} · 50 transactions maximum</span><button className="btn btn-secondary btn-sm" disabled={feedPage >= feedPages} onClick={() => setFeedPage(value => value + 1)}>Next</button></div>}</section>
+    <section className="card" style={{ padding: 0, overflow: 'hidden' }}><div style={{ display: 'flex', gap: 8, padding: 16, borderBottom: '1px solid var(--border)', alignItems: 'center', flexWrap: 'wrap' }}><button className={`btn ${tab === 'unmatched' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setTab('unmatched'); setFeedPage(1); }}>Unmatched</button><button className={`btn ${tab === 'matched' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setTab('matched'); setFeedPage(1); }}>Matched</button><input style={{ marginLeft: 'auto', minWidth: 260 }} value={search} onChange={e => { setSearch(e.target.value); setFeedPage(1); }} placeholder="Live search description, date or amount" /><input type="date" value={filterFrom} onChange={e => { setFilterFrom(e.target.value); setFeedPage(1); }} title="From date"/><input type="date" value={filterTo} onChange={e => { setFilterTo(e.target.value); setFeedPage(1); }} title="To date"/></div><div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th>Date</th><th>Description</th><th>Direction</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead><tbody>{visibleFeed.map(transaction => <tr key={transaction.id}><td>{transaction.date}</td><td style={{ fontWeight: 700 }}>{transaction.description}</td><td>{transaction.amount > 0 ? 'Money in' : 'Money out'}</td><td style={{ textAlign: 'right', fontWeight: 800, color: transaction.amount > 0 ? 'var(--green)' : 'var(--red)' }}>{transaction.amount > 0 ? '+' : '-'}${Math.abs(transaction.amount).toFixed(2)}</td><td style={{ textAlign: 'right' }}>{tab === 'unmatched' && transaction.amount > 0 && <button className="btn btn-primary btn-sm" onClick={() => void openDepositMatch(transaction)}>Match Deposit</button>}{tab === 'unmatched' && transaction.amount < 0 && <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Match Transaction</button>}{tab === 'matched' && <span style={{ color: 'var(--green)', fontWeight: 700 }}>Matched</span>}</td></tr>)}{visibleFeed.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center' }}>No bank transactions match these filters.</td></tr>}</tbody></table></div>{feedPages > 1 && <div style={{ display: 'flex', justifyContent: 'space-between', padding: 14, borderTop: '1px solid var(--border)' }}><button className="btn btn-secondary btn-sm" disabled={feedPage <= 1} onClick={() => setFeedPage(value => value - 1)}>Previous</button><span>Page {feedPage} of {feedPages} · 50 transactions maximum</span><button className="btn btn-secondary btn-sm" disabled={feedPage >= feedPages} onClick={() => setFeedPage(value => value + 1)}>Next</button></div>}</section>
   </div></main>;
 };

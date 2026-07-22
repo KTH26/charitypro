@@ -47,6 +47,14 @@ export const RecurringPaymentSchema = z.object({
   active: z.boolean()
 }).passthrough();
 
+export const ExpenseQueueItemSchema = z.object({
+  id: z.string().min(1),
+  date: z.string().min(1),
+  description: z.string().min(1),
+  amount: MoneyAmountSchema.positive(),
+  taxable: z.boolean().optional()
+}).passthrough();
+
 export const validatePayload = (type: string, data: any) => {
   switch (type) {
     case 'donors':
@@ -59,6 +67,8 @@ export const validatePayload = (type: string, data: any) => {
       return PledgeSchema.safeParse(data);
     case 'recurringPayments':
       return RecurringPaymentSchema.safeParse(data);
+    case 'expenseQueueItems':
+      return ExpenseQueueItemSchema.safeParse(data);
     case 'exchangeRate':
       return z.number().finite().positive().safeParse(data);
     case 'matchedBankTransactions':

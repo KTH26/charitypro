@@ -79,6 +79,7 @@ export const OnlinePayments: React.FC = () => {
     return () => window.clearInterval(interval);
   }, [load]);
   useEffect(() => { setPage(1); }, [search, method, from, to, status]);
+  useEffect(() => { const timer = window.setTimeout(() => setSearch(searchInput.trim()), 220); return () => window.clearTimeout(timer); }, [searchInput]);
 
   const removePayment = async (payment: OnlinePayment) => {
     if (!window.confirm(`Delete the ${payment.date} payment of $${payment.amount.toFixed(2)} for ${payment.donorName}?`)) return;
@@ -121,8 +122,8 @@ export const OnlinePayments: React.FC = () => {
         {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}
 
         <section className="card" style={{ padding: 18, marginBottom: 18 }}>
-          <form onSubmit={e => { e.preventDefault(); setSearch(searchInput.trim()); }} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 160px 145px 145px 145px auto', gap: 10 }}>
-            <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Search donor, amount, or notes" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 160px 145px 145px 145px', gap: 10 }}>
+            <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Live search: donor, amount, notes or account" />
             <select value={status} onChange={e => setStatus(e.target.value as 'approved' | 'pending')}><option value="approved">Received</option><option value="pending">Pending checks</option></select>
             <select value={method} onChange={e => setMethod(e.target.value)}>
               <option value="">All methods</option>
@@ -130,8 +131,7 @@ export const OnlinePayments: React.FC = () => {
             </select>
             <input type="date" value={from} onChange={e => setFrom(e.target.value)} title="From date" />
             <input type="date" value={to} onChange={e => setTo(e.target.value)} title="To date" />
-            <button className="btn btn-primary" type="submit">Search</button>
-          </form>
+          </div>
         </section>
 
         {error && <div className="card" style={{ padding: 16, color: 'var(--red)', marginBottom: 16 }}>{error}</div>}
