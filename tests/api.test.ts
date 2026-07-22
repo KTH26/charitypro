@@ -87,9 +87,15 @@ describe('Backend API & Security Rules', () => {
     expect(schedulesSource).toContain('limit=50');
     expect(schedulesSource).toContain("'/api/v3/records/recurringPayments'");
     const donorProfileSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudDonorProfileModal.tsx'), 'utf8');
+    const recurringFormSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudRecurringPaymentForm.tsx'), 'utf8');
     const accountDetailsSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudAccountDetailsModal.tsx'), 'utf8');
     expect(donorProfileSource).toContain('Donor Profile');
     expect(donorProfileSource).toContain("['overview','Overview']");
+    expect(donorProfileSource).toContain('<OnlinePaymentForm donor=');
+    expect(donorProfileSource).toContain('<CloudRecurringPaymentForm donor=');
+    expect(donorProfileSource).not.toContain('href={`/payments?donorId=');
+    expect(donorProfileSource).not.toContain('href={`/schedules?donorId=');
+    expect(recurringFormSource).toContain("fetch('/api/v3/records/recurringPayments'");
     expect(accountDetailsSource).toContain('limit=50');
     const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
     const paymentsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePayments.tsx'), 'utf8');

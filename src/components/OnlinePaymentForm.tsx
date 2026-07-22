@@ -12,10 +12,11 @@ const methods = [
 export const OnlinePaymentForm: React.FC<{
   onCreated: (status: PaymentStatus) => void;
   onCancel: () => void;
-}> = ({ onCreated, onCancel }) => {
-  const [donorQuery, setDonorQuery] = useState('');
-  const [donors, setDonors] = useState<Donor[]>([]);
-  const [donorId, setDonorId] = useState('');
+  donor?: Donor;
+}> = ({ onCreated, onCancel, donor }) => {
+  const [donorQuery, setDonorQuery] = useState(donor?.name || '');
+  const [donors, setDonors] = useState<Donor[]>(donor ? [donor] : []);
+  const [donorId, setDonorId] = useState(donor?.id || '');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
@@ -42,6 +43,7 @@ export const OnlinePaymentForm: React.FC<{
   }, []);
 
   useEffect(() => {
+    if (donor) return;
     const query = donorQuery.trim();
     if (query.length < 2) {
       setDonors([]);
@@ -64,7 +66,7 @@ export const OnlinePaymentForm: React.FC<{
       }
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [donorQuery]);
+  }, [donor, donorQuery]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -115,8 +117,10 @@ export const OnlinePaymentForm: React.FC<{
       <form onSubmit={submit}>
         {error && <div style={{ color: 'var(--red)', marginBottom: 14, fontWeight: 700 }}>{error}</div>}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-          <label className="form-group" style={{ margin: 0 }}><span>Find donor</span><input value={donorQuery} onChange={e => { setDonorQuery(e.target.value); setDonorId(''); }} placeholder="Type at least 2 letters" /></label>
-          <label className="form-group" style={{ margin: 0 }}><span>Choose donor</span><select value={donorId} onChange={e => setDonorId(e.target.value)} disabled={loadingDonors || donors.length === 0}><option value="">{loadingDonors ? 'Searching...' : donors.length ? 'Select donor' : 'Search first'}</option>{donors.map(donor => <option key={donor.id} value={donor.id}>{donor.name}{donor.email ? ` — ${donor.email}` : ''}</option>)}</select></label>
+          {donor ? <div className="form-group" style={{ margin: 0 }}><span>Donor</span><div style={{ padding: '10px 12px', background: 'var(--bg-input)', borderRadius: 8, fontWeight: 800 }}>{donor.name}</div></div> : <>
+            <label className="form-group" style={{ margin: 0 }}><span>Find donor</span><input value={donorQuery} onChange={e => { setDonorQuery(e.target.value); setDonorId(''); }} placeholder="Type at least 2 letters" /></label>
+            <label className="form-group" style={{ margin: 0 }}><span>Choose donor</span><select value={donorId} onChange={e => setDonorId(e.target.value)} disabled={loadingDonors || donors.length === 0}><option value="">{loadingDonors ? 'Searching...' : donors.length ? 'Select donor' : 'Search first'}</option>{donors.map(item => <option key={item.id} value={item.id}>{item.name}{item.email ? ` — ${item.email}` : ''}</option>)}</select></label>
+          </>}
           <label className="form-group" style={{ margin: 0 }}><span>Amount</span><input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={currency} onChange={e => setCurrency(e.target.value as 'CAD' | 'USD')}><option value="CAD">CAD</option><option value="USD">USD</option></select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Payment method</span><select value={method} onChange={e => setMethod(e.target.value)}>{methods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
