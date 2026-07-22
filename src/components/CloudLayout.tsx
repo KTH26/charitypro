@@ -20,6 +20,7 @@ const categories: NavCategory[] = [
   { label: 'DONATIONS', items: [
     { path: '/pledges', label: 'Pledges', icon: HeartHandshake, ready: true },
     { path: '/payments', label: 'Payments', icon: Wallet, ready: true },
+    { path: '/pending-payments', label: 'Pending Verification', icon: CalendarClock, ready: true },
     { path: '/schedules', label: 'Schedules', icon: CalendarClock, ready: true }
   ] },
   { label: 'EXPENSES', items: [

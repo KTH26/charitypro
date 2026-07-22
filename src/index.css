@@ -689,3 +689,52 @@ tbody tr:hover td { background: var(--navy-bg); }
 
 .hover-underline:hover { text-decoration: underline; }
 
+/* Soft live-search treatment used across every cloud list. */
+input.search-field,
+input[placeholder*="search" i],
+input[placeholder*="find donor" i],
+input[placeholder*="type a donor" i] {
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255,255,255,.98), rgba(241,245,249,.92));
+  box-shadow: 0 8px 24px rgba(15,23,42,.07);
+  padding-inline: 22px;
+}
+input.search-field:focus,
+input[placeholder*="search" i]:focus,
+input[placeholder*="find donor" i]:focus,
+input[placeholder*="type a donor" i]:focus {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(37,99,235,.12), 0 0 0 3px rgba(59,130,246,.10);
+}
+.filter-strip {
+  display: grid;
+  grid-template-columns: minmax(260px,1fr) 160px 160px;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 18px;
+  padding: 4px;
+  background: transparent;
+}
+
+.sortable-heading {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sortable-heading:hover,
+.sortable-heading.is-active { color: var(--green); }
+.sort-arrow { font-size: 10px; opacity: .48; }
+.sortable-heading.is-active .sort-arrow { opacity: 1; }
+

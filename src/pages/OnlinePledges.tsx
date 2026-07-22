@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CloudPledgeDetailsModal } from '../components/CloudPledgeDetailsModal';
+import { SortableTh, type SortDirection } from '../components/SortableTh';
 
 type Pledge = { id: string; revision: number; donorId: string; donorName: string; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string };
 type Donor = { id: string; name: string };
@@ -21,18 +22,20 @@ export const OnlinePledges: React.FC = () => {
   const [donorSearch, setDonorSearch] = useState('');
   const [donors, setDonors] = useState<Donor[]>([]);
   const [selectedPledgeId, setSelectedPledgeId] = useState<string | null>(null);
+  const [sort, setSort] = useState('date'); const [direction, setDirection] = useState<SortDirection>('desc');
+  const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'date' || column === 'amount' ? 'desc' : 'asc')); setSort(column); setPage(1); };
   const requestId = useRef('');
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const response = await fetch(`/api/v3/pledges?page=${page}&limit=50&search=${encodeURIComponent(search)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+      const response = await fetch(`/api/v3/pledges?page=${page}&limit=50&search=${encodeURIComponent(search)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&sort=${sort}&direction=${direction}`);
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load pledges.');
       setItems(data.items); setTotal(Number(data.total || 0)); setTotalPages(Math.max(1, Number(data.totalPages || 1)));
     } catch (e: any) { if (!silent) setError(e.message || 'Unable to load pledges.'); }
     finally { if (!silent) setLoading(false); }
-  }, [page, search, from, to]);
+  }, [page, search, from, to, sort, direction]);
   useEffect(() => { void load(); const timer = window.setInterval(() => void load(true), 3000); return () => window.clearInterval(timer); }, [load]);
   useEffect(() => { const timer = window.setTimeout(() => { fetch(`/api/v3/donors?limit=50&search=${encodeURIComponent(donorSearch)}`).then(response => response.json()).then(data => { if (data.success) setDonors(data.items); }).catch(() => undefined); }, 250); return () => window.clearTimeout(timer); }, [donorSearch]);
 
@@ -72,7 +75,13 @@ export const OnlinePledges: React.FC = () => {
       <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Notes</span><textarea value={form.notes} onChange={event => setForm(current => ({ ...current, notes: event.target.value }))} /></label>
     </div></div><div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={() => setEditing(false)}>Cancel</button><button className="btn btn-primary">Save Pledge</button></div></form></div>}
     {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}{error && <div className="card" style={{ padding: 14, color: 'var(--red)', fontWeight: 700, marginBottom: 16 }}>{error}</div>}
-    <section className="card" style={{ padding: 0, overflow: 'hidden' }}><div style={{ display:'grid',gridTemplateColumns:'1fr 160px 160px',gap:10,padding:16,borderBottom:'1px solid var(--border)' }}><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Live search donor, notes, amount, currency or date" /><input type="date" value={from} onChange={event=>{setFrom(event.target.value);setPage(1);}} title="From date"/><input type="date" value={to} onChange={event=>{setTo(event.target.value);setPage(1);}} title="To date"/></div>{loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading pledges...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th>Date</th><th>Donor</th><th>Notes</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead><tbody>{items.map(item => <tr key={item.id} onClick={() => setSelectedPledgeId(item.id)} style={{ cursor: 'pointer' }}><td>{item.date}</td><td style={{ fontWeight: 800 }}>{item.donorName}</td><td>{item.notes || ''}</td><td style={{ textAlign: 'right', fontWeight: 800 }}>{item.currency} ${item.amount.toFixed(2)}</td><td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={event => { event.stopPropagation(); beginEdit(item); }}>Edit</button> <button className="btn btn-danger btn-sm" onClick={event => { event.stopPropagation(); void remove(item); }}>Delete</button></td></tr>)}{items.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center' }}>No matching pledges.</td></tr>}</tbody></table></div>}<div style={{ display: 'flex', justifyContent: 'space-between', padding: 14, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div></section>
+    <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="filter-strip"><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Live search donor, notes, amount, currency or date" /><input type="date" value={from} onChange={event=>{setFrom(event.target.value);setPage(1);}} title="From date"/><input type="date" value={to} onChange={event=>{setTo(event.target.value);setPage(1);}} title="To date"/></div>
+      {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading pledges...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>
+        <SortableTh column="date" label="Date" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="notes" label="Notes" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="amount" label="Amount" sort={sort} direction={direction} onSort={changeSort} align="right"/><th />
+      </tr></thead><tbody>{items.map(item => <tr key={item.id} onClick={() => setSelectedPledgeId(item.id)} style={{ cursor: 'pointer' }}><td>{item.date}</td><td style={{ fontWeight: 800 }}>{item.donorName}</td><td>{item.notes || ''}</td><td style={{ textAlign: 'right', fontWeight: 800 }}>{item.currency} ${item.amount.toFixed(2)}</td><td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={event => { event.stopPropagation(); beginEdit(item); }}>Edit</button> <button className="btn btn-danger btn-sm" onClick={event => { event.stopPropagation(); void remove(item); }}>Delete</button></td></tr>)}{items.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center' }}>No matching pledges.</td></tr>}</tbody></table></div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: 14, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
+    </section>
     {selectedPledgeId && <CloudPledgeDetailsModal pledgeId={selectedPledgeId} onClose={() => setSelectedPledgeId(null)} />}
   </div></main>;
 };

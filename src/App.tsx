@@ -7,6 +7,7 @@ import { OnlineDashboard } from './pages/OnlineDashboard';
 import { OnlineDonors } from './pages/OnlineDonors';
 import { OnlineExpenses } from './pages/OnlineExpenses';
 import { OnlinePayments } from './pages/OnlinePayments';
+import { OnlinePendingPayments } from './pages/OnlinePendingPayments';
 import { OnlinePledges } from './pages/OnlinePledges';
 import { OnlineSchedules } from './pages/OnlineSchedules';
 import { OnlineVendors } from './pages/OnlineVendors';
@@ -36,6 +37,7 @@ function App() {
       <Routes>
         <Route path="/" element={cloudPage(<OnlineDashboard />)} />
         <Route path="/payments" element={cloudPage(<OnlinePayments />)} />
+        <Route path="/pending-payments" element={cloudPage(<OnlinePendingPayments />)} />
         <Route path="/donors" element={cloudPage(<OnlineDonors />)} />
         <Route path="/expenses" element={cloudPage(<OnlineExpenses />)} />
         <Route path="/chart-of-accounts" element={cloudPage(<OnlineAccounts />)} />

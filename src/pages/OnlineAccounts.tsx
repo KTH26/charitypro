@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { CloudAccountDetailsModal } from '../components/CloudAccountDetailsModal';
+import { SortableTh, type SortDirection } from '../components/SortableTh';
 
 type Account = { id: string; revision: number; name: string; type: string; subType?: string; currency: string; balance: number; startingBalance?: number };
 
@@ -11,10 +12,13 @@ export const OnlineAccounts: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
+  const [sort, setSort] = useState('type');
+  const [direction, setDirection] = useState<SortDirection>('asc');
+  const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'balance' ? 'desc' : 'asc')); setSort(column); setPage(1); };
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
     try {
-      const response = await fetch(`/api/v3/accounts?page=${page}&limit=50&search=${encodeURIComponent(search)}`);
+      const response = await fetch(`/api/v3/accounts?page=${page}&limit=50&search=${encodeURIComponent(search)}&sort=${sort}&direction=${direction}`);
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || `Request failed (${response.status})`);
       setAccounts(data.items);
@@ -24,7 +28,7 @@ export const OnlineAccounts: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, sort, direction]);
   useEffect(() => {
     void load();
     const interval = window.setInterval(() => void load(true), 3000);
@@ -49,7 +53,7 @@ export const OnlineAccounts: React.FC = () => {
             {['asset','liability','equity','revenue','expense'].filter(type => grouped[type]?.length).map(type => (
               <section className="card" style={{ padding: 0, overflow: 'hidden' }} key={type}>
                 <h2 style={{ margin: 0, padding: '16px 20px', textTransform: 'capitalize', color: 'var(--navy)', borderBottom: '1px solid var(--border)' }}>{type}</h2>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th>Account</th><th>Currency</th><th style={{ textAlign: 'right' }}>Cloud-calculated balance</th></tr></thead><tbody>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><SortableTh column="name" label="Account" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="currency" label="Currency" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="balance" label="Cloud-calculated balance" sort={sort} direction={direction} onSort={changeSort} align="right"/></tr></thead><tbody>
                   {grouped[type].map(account => <tr key={account.id} onClick={() => setSelectedAccount(account)} style={{ cursor: 'pointer' }}><td style={{ fontWeight: 700 }}>{account.name}</td><td>{account.currency}</td><td style={{ textAlign: 'right', fontWeight: 800, color: account.balance >= 0 ? 'var(--green)' : 'var(--red)' }}>{account.currency} ${account.balance.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>)}
                 </tbody></table>
               </section>

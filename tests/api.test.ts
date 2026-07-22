@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { getRequiredPermission, hasPermission } from '../functions/api/permissions';
 import { validatePayload } from '../functions/api/validation';
 import { isOperationAlreadyApplied } from '../functions/api/idempotency';
-import { depositCandidateWindow } from '../functions/api/server-data';
+import { calculatePledgeFinancials, depositCandidateWindow } from '../functions/api/server-data';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -223,6 +223,32 @@ describe('Backend API & Security Rules', () => {
 
     it('uses Friday through Sunday for a Monday deposit', () => {
       expect(depositCandidateWindow('2026-07-20')).toEqual({ start: '2026-07-17', end: '2026-07-19' });
+    });
+  });
+
+  describe('Twelve-month pledge accounting', () => {
+    it('separates approved, pending verification, and future scheduled amounts', () => {
+      const [result] = calculatePledgeFinancials(
+        [{ id: 'p1', donorId: 'd1', date: '2026-03-01', amount: 1200 }],
+        [
+          { id: 'paid', donorId: 'd1', date: '2026-06-20', amount: 75, type: 'approved' },
+          { id: 'pending', donorId: 'd1', date: '2026-07-20', amount: 75, type: 'pending' }
+        ],
+        [{ id: 'schedule', donorId: 'd1', nextDate: '2026-08-20', endDate: '2027-02-20', frequency: 'monthly', amount: 75, active: true }]
+      );
+      expect(result).toMatchObject({ paid: 75, pending: 75, scheduled: 525, balance: 525, periodStart: '2026-03-01', periodEnd: '2027-03-01' });
+    });
+
+    it('honors a manual pledge override and counts a duplicated Sola reference once', () => {
+      const results = calculatePledgeFinancials(
+        [{ id: 'old', donorId: 'd1', date: '2025-03-01', amount: 900 }, { id: 'new', donorId: 'd1', date: '2026-03-01', amount: 1200 }],
+        [
+          { id: 'a', donorId: 'd1', pledgeId: 'old', date: '2026-06-20', amount: 75, type: 'approved', notes: 'Ref: 10942269872' },
+          { id: 'b', donorId: 'd1', date: '2026-06-20', amount: 75, type: 'approved', notes: 'Ref: 10942269872' }
+        ], []
+      );
+      expect(results.find(item => item.id === 'old')?.paid).toBe(75);
+      expect(results.find(item => item.id === 'new')?.paid).toBe(0);
     });
   });
 });

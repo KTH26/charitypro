@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
@@ -204,8 +204,8 @@ describe('server-driven bank deposit matching', () => {
     const pledgeDetails = await pledgeResponse.json() as any;
     expect(pledgeResponse.status).toBe(200);
     expect(pledgeDetails.pledge.donorName).toBe('Sarah Smith');
-    expect(pledgeDetails.summary).toMatchObject({ amount: 100, paid: 25, scheduled: 10, balance: 65 });
-    expect(pledgeDetails.payments).toHaveLength(1);
+    expect(pledgeDetails.summary).toMatchObject({ amount: 100, paid: 65, scheduled: 120, balance: -85 });
+    expect(pledgeDetails.payments).toHaveLength(2);
     expect(pledgeDetails.schedules).toHaveLength(1);
   });
 
@@ -396,5 +396,33 @@ describe('server-driven bank deposit matching', () => {
     expect((await resolveRequest()).status).toBe(200); expect((await resolveRequest()).status).toBe(200);
     const transaction: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id='pending-sola'").get(); const transactionData = JSON.parse(transaction.data);
     expect(transactionData).toMatchObject({ type: 'approved', solaBatchId: 'batch-1', sourceAccountId: 'sys-undeposited-funds' }); expect(transactionData.notes).toContain('sola-ref-1'); expect(Number(transaction.revision)).toBe(2);
+    const mapping: any = db.database.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings'").get();
+    expect(JSON.parse(mapping.data)).toMatchObject({ solaName: 'Jane Donor', donorId: 'donor-sola' });
+  });
+
+  it('materializes a due schedule once as pending verification without approving it', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });
+    seedRecord(db, 'recurringPayments', 'schedule-safe', { id: 'schedule-safe', donorId: 'scheduled-donor', amount: 75, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', endDate: '2026-08-20', method: 'credit_card', active: true });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const first = await app.request('/v3/schedules/process-due', { method: 'POST' }, { DB: db } as any); const firstBody = await first.json() as any;
+    expect(first.status).toBe(200); expect(firstBody.created).toBe(1);
+    const second = await app.request('/v3/schedules/process-due', { method: 'POST' }, { DB: db } as any); const secondBody = await second.json() as any;
+    expect(second.status).toBe(200); expect(secondBody.created).toBe(0);
+    const pending: any = db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='scheduled-payment-schedule-safe-2026-07-20'").get();
+    expect(JSON.parse(pending.data)).toMatchObject({ donorId: 'scheduled-donor', amount: 75, type: 'pending', method: 'credit_card', scheduleId: 'schedule-safe' });
+    const schedule: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='schedule-safe'").get();
+    expect(JSON.parse(schedule.data)).toMatchObject({ nextDate: '2026-08-20', active: true });
+  });
+
+  it('previews Sola recurring schedules without saving any of them', async () => {
+    const db = new MockD1(); databases.push(db); seedRecord(db, 'solaApiKey', 'solaApiKey', 'test-secret');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ Schedules: [{ ScheduleId: 'sch-1', BillName: 'Jane Donor', Amount: 75, Active: true, IntervalType: 'Monthly', StartDate: '2026-03-20', EndDate: '2027-02-20' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/sola/schedules/preview', { method: 'POST' }, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body).toMatchObject({ success: true, count: 1, readOnly: true }); expect(body.items[0]).toMatchObject({ scheduleId: 'sch-1', name: 'Jane Donor', amount: 75, active: true });
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaSchedules'").get().count).toBe(0);
+    const [, options] = fetchMock.mock.calls[0]; expect((options?.headers as any).Authorization).toBe('test-secret'); expect((options?.headers as any)['X-Recurring-Api-Version']).toBe('2.1');
+    fetchMock.mockRestore();
   });
 });

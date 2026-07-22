@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { OnlineDonorForm, type OnlineDonor } from '../components/OnlineDonorForm';
 import { CloudDonorProfileModal } from '../components/CloudDonorProfileModal';
+import { SortableTh, type SortDirection } from '../components/SortableTh';
 
 type DonorResponse = { success: boolean; items: OnlineDonor[]; page: number; total: number; totalPages: number; error?: string };
 
@@ -16,11 +17,14 @@ export const OnlineDonors: React.FC = () => {
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<OnlineDonor | 'new' | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [sort, setSort] = useState('name'); const [direction, setDirection] = useState<SortDirection>('asc');
+  const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'total' ? 'desc' : 'asc')); setSort(column); setPage(1); };
 
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
     const params = new URLSearchParams({ page: String(page), limit: '50' });
     if (search) params.set('search', search);
+    params.set('sort', sort); params.set('direction', direction);
     try {
       const response = await fetch(`/api/v3/donors?${params.toString()}`);
       const data = await response.json() as DonorResponse;
@@ -34,7 +38,7 @@ export const OnlineDonors: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, sort, direction]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -68,7 +72,7 @@ export const OnlineDonors: React.FC = () => {
         {error && <div className="card" style={{ padding: 16, color: 'var(--red)', marginBottom: 16 }}>{error}</div>}
         <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading donors from the cloud...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th>Donor</th><th>Phone</th><th>Email</th><th>Address</th><th style={{ textAlign: 'right' }}>Total given</th><th /></tr></thead>
+            <thead><tr><SortableTh column="name" label="Donor" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="phone" label="Phone" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="email" label="Email" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="address" label="Address" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="total" label="Total given" sort={sort} direction={direction} onSort={changeSort} align="right"/><th /></tr></thead>
             <tbody>{items.map(donor => <tr key={donor.id} onClick={() => setProfileId(donor.id)} style={{ cursor: 'pointer' }}>
               <td><div style={{ fontWeight: 800 }}>{donor.name}</div><div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{donor.displayId || donor.id}</div>{(donor.hebFirstName || donor.hebLastName) && <div dir="rtl" style={{ color: 'var(--navy-light)', fontSize: 13, textAlign: 'left' }}>{[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ')}</div>}</td>
               <td>{donor.phone}</td><td>{donor.email || ''}</td><td>{donor.address || ''}</td>

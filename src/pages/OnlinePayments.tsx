@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { OnlinePaymentForm } from '../components/OnlinePaymentForm';
 import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
+import { SortableTh, type SortDirection } from '../components/SortableTh';
 
 type OnlinePayment = {
   id: string;
@@ -50,6 +51,9 @@ export const OnlinePayments: React.FC = () => {
   const [notice, setNotice] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<OnlinePayment | null>(null);
+  const [sort, setSort] = useState('date');
+  const [direction, setDirection] = useState<SortDirection>('desc');
+  const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'date' || column === 'amount' ? 'desc' : 'asc')); setSort(column); setPage(1); };
 
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
@@ -58,6 +62,7 @@ export const OnlinePayments: React.FC = () => {
     if (method) params.set('method', method);
     if (from) params.set('from', from);
     if (to) params.set('to', to);
+    params.set('sort', sort); params.set('direction', direction);
     try {
       const response = await fetch(`/api/v3/payments?${params.toString()}`);
       const data = await response.json() as PaymentResponse;
@@ -71,7 +76,7 @@ export const OnlinePayments: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, search, method, from, to, status]);
+  }, [page, search, method, from, to, status, sort, direction]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -141,7 +146,7 @@ export const OnlinePayments: React.FC = () => {
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th>Date</th><th>Donor</th><th>Status</th><th>Method</th><th>Notes</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead>
+                <thead><tr><SortableTh column="date" label="Date" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="status" label="Status" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="method" label="Method" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="notes" label="Notes" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="amount" label="Amount" sort={sort} direction={direction} onSort={changeSort} align="right" /><th /></tr></thead>
                 <tbody>
                   {items.map(payment => (
                     <tr key={payment.id} onClick={() => setSelectedPayment(payment)} style={{ cursor: 'pointer' }}>
