@@ -453,11 +453,11 @@ describe('server-driven bank deposit matching', () => {
     seedRecord(db, 'donors', 'donor-first', { id: 'donor-first', name: 'Same Name' });
     seedRecord(db, 'donors', 'donor-second', { id: 'donor-second', name: 'Same Name' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
-    const schedule = { scheduleId: 'duplicate-name', name: 'Same Name', donorId: 'donor-second', amount: 40, active: true, frequency: 'Monthly', nextDate: '2026-08-20' };
+    const schedule = { scheduleId: 'duplicate-name', name: 'Same Name', donorId: 'donor-second', amount: 40, active: true, frequency: 'Monthly', nextDate: '2026-08-20', paymentsRemaining: 4, totalPayments: 12 };
     const response = await app.request('/v3/sola/schedules/import', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'selected-donor-import' }, body: JSON.stringify({ schedules: [schedule] }) }, { DB: db } as any);
     expect(response.status).toBe(200);
     const saved: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='sola-schedule-duplicate-name'").get();
-    expect(JSON.parse(saved.data).donorId).toBe('donor-second');
+    expect(JSON.parse(saved.data)).toMatchObject({ donorId: 'donor-second', paymentsRemaining: 4, totalPayments: 12, endDate: '2026-11-20' });
     const mapping: any = db.database.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings'").get();
     expect(JSON.parse(mapping.data)).toMatchObject({ solaName: 'Same Name', donorId: 'donor-second' });
   });

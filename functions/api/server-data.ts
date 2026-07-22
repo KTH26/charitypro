@@ -983,7 +983,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         startDate: String(value.StartDate || value.InitialRunTime || value.startDate || '').slice(0, 10),
         endDate: String(value.EndDate || value.endDate || '').slice(0, 10),
         nextDate: String(value.NextScheduledRunTime || value.NextRunTime || '').slice(0, 10),
-        paymentsRemaining: Number(value.PaymentsRemaining ?? value.RemainingPayments ?? 0)
+        paymentsRemaining: Number(value.PaymentsRemaining ?? value.RemainingPayments ?? value.NumberOfPaymentsRemaining ?? value.RemainingNumberOfPayments ?? value.PaymentsLeft ?? 0),
+        totalPayments: Number(value.TotalPayments ?? value.NumberOfPayments ?? value.TotalNumberOfPayments ?? value.PaymentCount ?? 0)
         };
       }).filter((value: any) => value.scheduleId);
       const [mappingRows, importedRows] = await c.env.DB.batch([
@@ -1068,7 +1069,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const nextDate = String(source?.nextDate || source?.startDate || '').slice(0, 10);
       if (!Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { unmatched.push({ scheduleId, name, reason: 'Missing a valid amount or next payment date.' }); continue; }
       const frequency = frequencyMap[String(source?.frequency || '').trim().toLowerCase()] || 'monthly';
-      const record = { id, donorId: selectedDonor.id, amount, currency: 'CAD', frequency, nextDate, ...(String(source?.endDate || '').slice(0, 10) ? { endDate: String(source.endDate).slice(0, 10) } : {}), method: 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
+      const paymentsRemaining = Math.max(0, Math.min(500, Number.parseInt(String(source?.paymentsRemaining || '0'), 10) || 0));
+      const totalPayments = Math.max(0, Math.min(10000, Number.parseInt(String(source?.totalPayments || '0'), 10) || 0));
+      let calculatedEndDate = isoDate(source?.endDate);
+      if (!calculatedEndDate && paymentsRemaining > 0) { calculatedEndDate = nextDate; for (let payment = 1; payment < paymentsRemaining; payment++) calculatedEndDate = addUtc(calculatedEndDate, frequency); }
+      const record = { id, donorId: selectedDonor.id, amount, currency: 'CAD', frequency, nextDate, ...(calculatedEndDate ? { endDate: calculatedEndDate } : {}), ...(paymentsRemaining ? { paymentsRemaining } : {}), ...(totalPayments ? { totalPayments } : {}), method: 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
       const data = JSON.stringify(record); const operationId = `${mutationId}-${scheduleId}`;
       if (found) {
         const nextRevision = Number(found.revision) + 1;
