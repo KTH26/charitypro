@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 
 type Donor = { id: string; name: string; email?: string };
 type Account = { id: string; name: string; type: string; currency: 'CAD' | 'USD' };
+type Choice = { id: string; name: string };
+type PledgeChoice = { id: string; amount: number; currency?: string; date?: string; balance?: number };
 type PaymentStatus = 'approved' | 'pending';
 
 const methods = [
@@ -18,6 +20,9 @@ export const OnlinePaymentForm: React.FC<{
   const [donors, setDonors] = useState<Donor[]>(donor ? [donor] : []);
   const [donorId, setDonorId] = useState(donor?.id || '');
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [projects, setProjects] = useState<Choice[]>([]);
+  const [fundraisers, setFundraisers] = useState<Choice[]>([]);
+  const [pledges, setPledges] = useState<PledgeChoice[]>([]);
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [method, setMethod] = useState('other');
@@ -25,6 +30,10 @@ export const OnlinePaymentForm: React.FC<{
   const [sourceAccountId, setSourceAccountId] = useState('');
   const [offsetAccountId, setOffsetAccountId] = useState('');
   const [notes, setNotes] = useState('');
+  const [projectId, setProjectId] = useState('');
+  const [fundraiserId, setFundraiserId] = useState('');
+  const [pledgeId, setPledgeId] = useState('');
+  const [sponsor, setSponsor] = useState('');
   const [loadingDonors, setLoadingDonors] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -32,13 +41,11 @@ export const OnlinePaymentForm: React.FC<{
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/v3/accounts?limit=100', { signal: controller.signal })
-      .then(async response => {
-        const data = await response.json();
-        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load accounts.');
-        setAccounts(data.items);
+    Promise.all(['/api/v3/accounts?limit=100','/api/v3/records/projects?limit=100','/api/v3/records/fundraisers?limit=100'].map(url=>fetch(url,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load payment choices.');return data;})))
+      .then(([accountData,projectData,fundraiserData]) => {
+        setAccounts(accountData.items||[]); setProjects(projectData.items||[]); setFundraisers(fundraiserData.items||[]);
       })
-      .catch(e => { if (e.name !== 'AbortError') setError(e.message || 'Unable to load accounts.'); });
+      .catch(e => { if (e.name !== 'AbortError') setError(e.message || 'Unable to load payment choices.'); });
     return () => controller.abort();
   }, []);
 
@@ -68,6 +75,8 @@ export const OnlinePaymentForm: React.FC<{
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [donor, donorQuery]);
 
+  useEffect(()=>{setPledgeId('');setPledges([]);if(!donorId)return;const controller=new AbortController();fetch(`/api/v3/donors/${encodeURIComponent(donorId)}/pledge-choices?limit=100`,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load this donor’s pledges.');setPledges(data.items||[]);}).catch(e=>{if(e.name!=='AbortError')setError(e.message||'Unable to load this donor’s pledges.');});return()=>controller.abort();},[donorId]);
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
@@ -89,7 +98,7 @@ export const OnlinePaymentForm: React.FC<{
       const response = await fetch('/api/v3/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, type: status })
+        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, pledgeId, sponsor, type: status })
       });
       const data = await response.json();
       if (!response.ok || !data.success) {
@@ -127,6 +136,10 @@ export const OnlinePaymentForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Paid into (asset)</span><select value={sourceAccountId} onChange={e => setSourceAccountId(e.target.value)}><option value="">Select receiving account</option>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Allocated to (revenue)</span><select value={offsetAccountId} onChange={e => setOffsetAccountId(e.target.value)}><option value="">Select revenue account</option>{revenueAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>
+          <label className="form-group" style={{ margin: 0 }}><span>Project (optional)</span><select value={projectId} onChange={e=>setProjectId(e.target.value)}><option value="">— No Project —</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="form-group" style={{ margin: 0 }}><span>Fundraiser / Campaign (optional)</span><select value={fundraiserId} onChange={e=>setFundraiserId(e.target.value)}><option value="">— No Fundraiser —</option>{fundraisers.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="form-group" style={{ margin: 0 }}><span>Apply to pledge (optional)</span><select value={pledgeId} onChange={e=>setPledgeId(e.target.value)} disabled={!donorId}><option value="">{donorId?'— No Specific Pledge —':'Choose a donor first'}</option>{pledges.map(item=><option key={item.id} value={item.id}>{item.date||'Pledge'} · {item.currency||'CAD'} ${Number(item.amount||0).toLocaleString()} · Balance ${Number(item.balance??item.amount??0).toLocaleString()}</option>)}</select></label>
+          <label className="form-group" style={{ margin: 0 }}><span>Sponsor / Source (optional)</span><input value={sponsor} onChange={e=>setSponsor(e.target.value)} maxLength={300}/></label>
         </div>
         <label className="form-group" style={{ margin: '14px 0 0' }}><span>Notes (optional)</span><textarea value={notes} onChange={e => setNotes(e.target.value)} maxLength={2000} rows={2} /></label>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}><button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button><button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving securely...' : 'Save Payment'}</button></div>

@@ -766,6 +766,21 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({success:true,items:listResult.results,page,limit,total,totalPages:tab==='monthly'?1:Math.ceil(total/limit),grandTotal:Number(summary.grand_total||0)});
   });
 
+  app.get('/v3/projects/:id/ledger', async (c: any) => {
+    const denied = requirePermission(c, 'reports.read');
+    if (denied) return denied;
+    const id = String(c.req.param('id') || '');
+    const project: any = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(id).first();
+    if (!project) return c.json({ success: false, error: 'Project not found.' }, 404);
+    const [transactions, bills] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.projectId')=? ORDER BY json_extract(t.data,'$.date') DESC,t.id DESC LIMIT 500").bind(id),
+      c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.projectId')=? ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT 500").bind(id)
+    ]);
+    const income = transactions.results.reduce((sum: number,row: any)=>{const item=JSON.parse(String(row.data));return sum+(item.type==='approved'?Number(item.amountCAD??item.amount??0):0);},0);
+    const cost = bills.results.reduce((sum: number,row: any)=>sum+Number(JSON.parse(String(row.data)).amount||0),0);
+    return c.json({ success:true, project:{ id, ...JSON.parse(String(project.data)) }, transactions:transactions.results.map((row:any)=>({...parseRecord(row),donorName:row.donor_name||'Unknown Donor'})), bills:bills.results.map(parseRecord), income, cost });
+  });
+
   app.get('/v3/profit-loss', async (c: any) => {
     const denied = requirePermission(c, 'reports.read');
     if (denied) return denied;
@@ -1100,6 +1115,30 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     catch (reason: any) { return c.json({ success: false, error: `Unable to import Sola schedules: ${reason.message || 'database error'}` }, 409); }
   });
 
+  app.post('/v3/sola/donor-mapping', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.create'); if (denied) return denied;
+    const body = await c.req.json(); const solaName = String(body.solaName || '').trim().slice(0, 300); const donorId = String(body.donorId || '').trim();
+    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
+    if (!requestId || !solaName || !donorId) return c.json({ success: false, error: 'Sola name, donor, and Idempotency-Key are required.' }, 400);
+    const donor = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();
+    if (!donor) return c.json({ success: false, error: 'The selected donor no longer exists.' }, 409);
+    const mutationId = `v3-sola-donor-mapping-${requestId}`; const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const mappingId = `sola-map-${encodeURIComponent(solaName.toLowerCase()).slice(0, 170)}`;
+    const current: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='solaDonorMappings' AND id=?").bind(mappingId).first();
+    const now = Date.now(); const revision = Number(current?.revision || 0) + 1; const data = JSON.stringify({ id: mappingId, solaName, donorId, updatedAt: now }); const operationId = `${mutationId}-mapping`;
+    const result = { success: true, solaName, donorId, revision };
+    const statements: any[] = current ? [
+      c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,is_deleted=0,last_operation_id=? WHERE type='solaDonorMappings' AND id=? AND revision=?").bind(data, revision, now, operationId, mappingId, current.revision),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',?,'update',?,?,?,?)").bind(mappingId, revision, data, now, mutationId, operationId)
+    ] : [
+      c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaDonorMappings',?,?,1,0,?)").bind(mappingId, data, now, operationId),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',1,'insert',?,?,?,?)").bind(mappingId, data, now, mutationId, operationId)
+    ];
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), now));
+    try { await c.env.DB.batch(statements); return c.json(result); } catch { return c.json({ success: false, error: 'This donor mapping changed. Reload and try again.', conflict: true }, 409); }
+  });
+
   app.get('/v3/sola/view', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const startDate=String(c.req.query('startDate')||'0000-01-01');const endDate=String(c.req.query('endDate')||'9999-12-31');const page=boundedPage(c.req.query('page'));const limit=boundedLimit(c.req.query('limit'));const offset=(page-1)*limit;
@@ -1114,7 +1153,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const sola=solaRows.results.map((row:any)=>parseSetting(row.data,null)).filter((item:any)=>item&&!dismissed.has(item.ref)).slice(0,limit);const appItems=appRows.results.map((row:any)=>({...parseRecord(row),donorName:row.donor_name||'Unknown',aliases:parseSetting(row.aliases,[])}));
     const mappings=new Map(mappingRows.results.map((row:any)=>{const value=parseSetting(row.data,null);return [String(value?.solaName||'').trim().toLowerCase(),String(value?.donorId||'')];}));
     const autoMatches:any[]=[];const used=new Set<string>();for(const tx of appItems){const amount=Number(tx.amount||0);const names=[tx.donorName,...(Array.isArray(tx.aliases)?tx.aliases:[])].map((name:any)=>String(name).toLowerCase());const match=sola.find((item:any)=>!used.has(item.ref)&&Math.abs(Number(item.amount)-amount)<0.005&&((mappings.get(String(item.name||'').trim().toLowerCase())||'')===String(tx.donorId||'')||names.some(name=>{const first=name.split(' ')[0];const solaFirst=String(item.name).toLowerCase().split(' ')[0];return name===String(item.name).toLowerCase()||(first&&solaFirst&&(first.includes(solaFirst)||solaFirst.includes(first)));})));if(match){used.add(match.ref);const remembered=Boolean(mappings.get(String(match.name||'').trim().toLowerCase()));autoMatches.push({transactionId:tx.id,solaRef:match.ref,...(remembered?{remembered:true}:{})});}}
-    return c.json({success:true,sola,appItems,autoMatches,page,limit,totalPages:Math.max(1,Math.ceil(Math.max(Number(solaCount.results[0]?.count||0),Number(appCount.results[0]?.count||0))/limit))});
+    return c.json({success:true,sola:sola.map((item:any)=>({...item,matchedDonorId:mappings.get(String(item.name||'').trim().toLowerCase())||''})),appItems,autoMatches,page,limit,totalPages:Math.max(1,Math.ceil(Math.max(Number(solaCount.results[0]?.count||0),Number(appCount.results[0]?.count||0))/limit))});
   });
 
   app.post('/v3/sola/resolve', async (c:any) => {
@@ -2041,14 +2080,21 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const offsetAccountId = String(body.offsetAccountId || '');
     if (!donorId || !sourceAccountId || !offsetAccountId) return c.json({ success: false, error: 'Donor, receiving account, and offset account are required.' }, 400);
 
+    const projectId = String(body.projectId || '');
+    const fundraiserId = String(body.fundraiserId || '');
+    const pledgeId = String(body.pledgeId || '');
     const refs = await c.env.DB.prepare(`
       SELECT type,id,data FROM sync_records
-      WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='accounts' AND id IN (?,?)) OR type='exchangeRate')
-    `).bind(donorId, sourceAccountId, offsetAccountId).all();
+      WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='accounts' AND id IN (?,?)) OR (type='projects' AND id=?) OR (type='fundraisers' AND id=?) OR (type='pledges' AND id=?) OR type='exchangeRate')
+    `).bind(donorId, sourceAccountId, offsetAccountId, projectId, fundraiserId, pledgeId).all();
     const found = new Set(refs.results.map((row: any) => `${row.type}:${row.id}`));
     if (!found.has(`donors:${donorId}`) || !found.has(`accounts:${sourceAccountId}`) || !found.has(`accounts:${offsetAccountId}`)) {
       return c.json({ success: false, error: 'A referenced donor or account does not exist.' }, 409);
     }
+    if (projectId && !found.has(`projects:${projectId}`)) return c.json({ success:false,error:'The selected project does not exist.' },409);
+    if (fundraiserId && !found.has(`fundraisers:${fundraiserId}`)) return c.json({ success:false,error:'The selected fundraiser does not exist.' },409);
+    const pledgeRow: any = refs.results.find((row:any)=>row.type==='pledges'&&row.id===pledgeId);
+    if (pledgeId && (!pledgeRow || String(JSON.parse(String(pledgeRow.data)).donorId||'')!==donorId)) return c.json({ success:false,error:'The selected pledge does not belong to this donor.' },409);
 
     const id = crypto.randomUUID();
     const now = Date.now();
@@ -2066,6 +2112,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
     const notes = String(body.notes || '').trim();
     if (notes.length > 2000) return c.json({ success: false, error: 'Notes must be 2,000 characters or fewer.' }, 400);
+    const sponsor = String(body.sponsor || '').trim();
+    if (sponsor.length > 300) return c.json({ success:false,error:'Sponsor / source must be 300 characters or fewer.' },400);
     const undeposited = sourceAccountId === 'sys-undeposited-funds' || body.depositStatus === 'undeposited';
     const record = {
       id, donorId, amount, amountCAD,
@@ -2075,10 +2123,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       sourceAccountId: undeposited ? 'sys-undeposited-funds' : sourceAccountId,
       offsetAccountId,
       depositStatus: undeposited ? 'undeposited' : 'direct',
-      ...(body.fundraiserId ? { fundraiserId: String(body.fundraiserId) } : {}),
-      ...(body.projectId ? { projectId: String(body.projectId) } : {}),
-      ...(body.pledgeId ? { pledgeId: String(body.pledgeId) } : {}),
-      ...(body.sponsor ? { sponsor: String(body.sponsor) } : {}),
+      ...(fundraiserId ? { fundraiserId } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(pledgeId ? { pledgeId } : {}),
+      ...(sponsor ? { sponsor } : {}),
       ...(notes ? { notes } : {})
     };
     const data = JSON.stringify(record);
