@@ -1,5 +1,6 @@
 import type { Hono } from 'hono';
 import { validatePayload } from './validation';
+import { buildDonorSheetPlan } from './donor-sheet';
 
 const parseRecord = (row: any) => ({
   ...JSON.parse(String(row.data)),
@@ -788,6 +789,26 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const value = row ? parseSetting(row.data,'') : '';
     return typeof value === 'string' ? value.trim() : String(value?.apiKey || value?.key || '').trim();
   };
+  const getDonorSheetCsv = async (c: any) => {
+    const row: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='googleSheetSyncUrl' AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1").first();
+    const configured = row ? String(parseSetting(row.data, '') || '').trim() : '';
+    if (!configured) throw new Error('Add the published Google Sheet CSV link in Settings first.');
+    let url: URL;
+    try { url = new URL(configured); } catch { throw new Error('The saved Google Sheet link is not valid.'); }
+    const hostname = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || !['docs.google.com', 'docs.googleusercontent.com'].includes(hostname)) {
+      throw new Error('For safety, the donor sync accepts only a published Google Sheets CSV link.');
+    }
+    const response = await fetch(url.toString(), { headers: { Accept: 'text/csv,text/plain;q=0.9,*/*;q=0.1' } });
+    if (!response.ok) throw new Error(`Google Sheets returned HTTP ${response.status}. Make sure the sheet is published as CSV.`);
+    const csv = await response.text();
+    if (!csv.trim()) throw new Error('Google Sheets returned an empty file.');
+    if (csv.length > 8_000_000) throw new Error('The Google Sheet CSV is too large to import safely.');
+    if (/^\s*<!doctype html/i.test(csv) || /^\s*<html/i.test(csv)) throw new Error('Google returned a web page instead of CSV. Publish the donor tab as CSV and save that link.');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(csv));
+    const sheetHash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+    return { csv, sheetHash };
+  };
 
   app.get('/v3/settings', async (c: any) => {
     const denied = requirePermission(c, 'system.manage');
@@ -893,27 +914,36 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const key = await getSolaKey(c); if (!key) return c.json({ success: false, error: 'Sola is not configured on the server.' }, 409);
     try {
-      const response = await fetch('https://api.cardknox.com/v2/ListSchedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: key, 'X-Recurring-Api-Version': '2.1' },
-        body: JSON.stringify({ SoftwareName: 'CharityPro', SoftwareVersion: '1.0', PageSize: 100, SortOrder: 'Desc' })
-      });
-      const text = await response.text(); let payload: any;
-      try { payload = JSON.parse(text); } catch { return c.json({ success: false, error: `Sola recurring schedules returned an unreadable response (${response.status}).` }, 502); }
-      if (!response.ok) return c.json({ success: false, error: String(payload?.Error || payload?.error || payload?.Message || `Sola recurring schedules request failed (${response.status}).`) }, 502);
-      const raw = Array.isArray(payload) ? payload : Array.isArray(payload?.Schedules) ? payload.Schedules : Array.isArray(payload?.Data) ? payload.Data : Array.isArray(payload?.Results) ? payload.Results : [];
+      const raw: any[] = [];
+      let nextToken = '';
+      let pages = 0;
+      do {
+        const response = await fetch('https://api.cardknox.com/v2/ListSchedules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: key, 'X-Recurring-Api-Version': '2.1' },
+          body: JSON.stringify({ SoftwareName: 'CharityPro', SoftwareVersion: '1.0', PageSize: 100, SortOrder: 'Descending', Filters: { IsDeleted: false }, ...(nextToken ? { NextToken: nextToken } : {}) })
+        });
+        const text = await response.text(); let payload: any;
+        try { payload = JSON.parse(text); } catch { return c.json({ success: false, error: `Sola recurring schedules returned an unreadable response (${response.status}).` }, 502); }
+        if (!response.ok || String(payload?.Result || '').toUpperCase() === 'E') return c.json({ success: false, error: String(payload?.Error || payload?.error || payload?.Message || `Sola recurring schedules request failed (${response.status}).`) }, 502);
+        const pageItems = Array.isArray(payload) ? payload : Array.isArray(payload?.Schedules) ? payload.Schedules : Array.isArray(payload?.Data) ? payload.Data : Array.isArray(payload?.Results) ? payload.Results : [];
+        raw.push(...pageItems);
+        nextToken = String(payload?.NextToken || '').trim();
+        pages++;
+      } while (nextToken && pages < 100);
       const items = raw.map((value: any) => ({
         scheduleId: String(value.ScheduleId || value.Id || value.scheduleId || '').trim(),
         customerId: String(value.CustomerId || value.customerId || '').trim(),
-        name: String(value.BillName || value.Name || value.CustomerName || [value.FirstName, value.LastName].filter(Boolean).join(' ') || 'Unknown').trim(),
+        name: String(value.BillName || value.Name || value.CustomerName || [value.BillFirstName || value.FirstName, value.BillLastName || value.LastName].filter(Boolean).join(' ') || 'Unknown').trim(),
         amount: Number(value.Amount || value.amount || 0),
-        active: value.Active ?? value.IsActive ?? value.Status === 'Active',
+        active: value.IsActive ?? value.Active ?? value.Status === 'Active',
         frequency: String(value.IntervalType || value.Frequency || value.frequency || ''),
-        startDate: String(value.StartDate || value.startDate || '').slice(0, 10),
+        startDate: String(value.StartDate || value.InitialRunTime || value.startDate || '').slice(0, 10),
         endDate: String(value.EndDate || value.endDate || '').slice(0, 10),
+        nextDate: String(value.NextScheduledRunTime || value.NextRunTime || '').slice(0, 10),
         paymentsRemaining: Number(value.PaymentsRemaining ?? value.RemainingPayments ?? 0)
       })).filter((value: any) => value.scheduleId);
-      return c.json({ success: true, items, count: items.length, readOnly: true, message: 'Preview only. No CharityPro or Sola records were changed.' });
+      return c.json({ success: true, items, count: items.length, pages, readOnly: true, message: 'Preview only. No CharityPro or Sola records were changed.' });
     } catch (reason: any) { return c.json({ success: false, error: `Unable to read Sola recurring schedules: ${reason.message || 'network error'}` }, 502); }
   });
 
@@ -998,6 +1028,84 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), totalGiven: Number(row.total_given || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.post('/v3/donors/google-sheet/preview', async (c: any) => {
+    const denied = requirePermission(c, 'donors.update');
+    if (denied) return denied;
+    const clearBlankFields = false;
+    try {
+      const [{ csv, sheetHash }, rows] = await Promise.all([
+        getDonorSheetCsv(c),
+        c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='donors' AND is_deleted=0").all()
+      ]);
+      const plan = buildDonorSheetPlan(csv, rows.results as any[], clearBlankFields);
+      return c.json({ success: true, sheetHash, clearBlankFields, summary: plan.summary, samples: plan.samples, warnings: plan.warnings, columns: plan.columns });
+    } catch (error: any) {
+      return c.json({ success: false, error: error.message || 'Unable to preview the Google Sheet.' }, 400);
+    }
+  });
+
+  app.post('/v3/donors/google-sheet/apply', async (c: any) => {
+    const denied = requirePermission(c, 'donors.update');
+    if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const expectedHash = String(body.sheetHash || '').trim();
+    if (!/^[a-f0-9]{64}$/i.test(expectedHash)) return c.json({ success: false, error: 'Preview the Google Sheet before applying it.' }, 400);
+    const mutationId = `v3-donor-sheet-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const clearBlankFields = false;
+    try {
+      const { csv, sheetHash } = await getDonorSheetCsv(c);
+      if (sheetHash !== expectedHash) return c.json({ success: false, error: 'The Google Sheet changed after the preview. Preview it again before applying.', changed: true }, 409);
+      const rows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='donors' AND is_deleted=0").all();
+      const plan = buildDonorSheetPlan(csv, rows.results as any[], clearBlankFields);
+      const userId = String(c.get('userId') || 'unknown');
+      const userEmail = String(c.get('userEmail') || 'unknown');
+      let appliedCreates = 0;
+      let appliedUpdates = 0;
+
+      for (let start = 0; start < plan.operations.length; start += 18) {
+        const chunk = plan.operations.slice(start, start + 18);
+        const statements: any[] = [];
+        for (let index = 0; index < chunk.length; index++) {
+          const operation = chunk[index];
+          const now = Date.now();
+          const operationId = `${mutationId}-${start + index}`;
+          const data = JSON.stringify(operation.data);
+          if (operation.action === 'create') {
+            statements.push(
+              c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'donors',?,?,1,0,?)").bind(operation.id, data, now, operationId),
+              c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'donors',1,'insert',?,?,?,?)").bind(operation.id, data, now, mutationId, operationId),
+              c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'donors','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(operation.id, data, userId, userEmail, now, mutationId, operationId, 'Added from Google Sheet donor sync')
+            );
+          } else {
+            const nextRevision = operation.revision + 1;
+            statements.push(
+              c.env.DB.prepare('INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type=\'donors\' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END').bind(operationId, operation.id, operation.revision),
+              c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='donors' AND id=? AND revision=? AND is_deleted=0").bind(data, nextRevision, now, operationId, operation.id, operation.revision),
+              c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='donors' AND id=? AND revision=?").bind(mutationId, operationId, operation.id, nextRevision),
+              c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',?,revision,?,data,?,?,updated_at,?,?,? FROM sync_records WHERE type='donors' AND id=? AND revision=?").bind(operation.revision, operation.previousData, userId, userEmail, mutationId, operationId, 'Updated from Google Sheet donor sync', operation.id, nextRevision),
+              c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId)
+            );
+          }
+        }
+        await c.env.DB.batch(statements);
+        appliedCreates += chunk.filter(operation => operation.action === 'create').length;
+        appliedUpdates += chunk.filter(operation => operation.action === 'update').length;
+      }
+
+      const result = { success: true, created: appliedCreates, updated: appliedUpdates, unchanged: plan.summary.unchanged, skipped: plan.summary.skipped, conflicts: plan.summary.conflicts, warnings: plan.warnings };
+      await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), Date.now()).run();
+      return c.json(result);
+    } catch (error: any) {
+      const repeated: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: 'A donor changed while the sheet was being applied. No donor was deleted. Preview again to safely finish the remaining updates.', detail: error.message, conflict: true }, 409);
+    }
   });
 
   app.get('/v3/donors/:id/profile', async (c: any) => {

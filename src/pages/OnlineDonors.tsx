@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { OnlineDonorForm, type OnlineDonor } from '../components/OnlineDonorForm';
 import { CloudDonorProfileModal } from '../components/CloudDonorProfileModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { GoogleSheetDonorSyncModal } from '../components/GoogleSheetDonorSyncModal';
 
 type DonorResponse = { success: boolean; items: OnlineDonor[]; page: number; total: number; totalPages: number; error?: string };
 
@@ -17,6 +18,7 @@ export const OnlineDonors: React.FC = () => {
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<OnlineDonor | 'new' | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [sheetSyncOpen, setSheetSyncOpen] = useState(false);
   const [sort, setSort] = useState('name'); const [direction, setDirection] = useState<SortDirection>('asc');
   const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'total' ? 'desc' : 'asc')); setSort(column); setPage(1); };
 
@@ -60,7 +62,7 @@ export const OnlineDonors: React.FC = () => {
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'center', marginBottom: 22 }}>
           <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Donors ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Cloud records and calculated giving totals. Updates automatically every 3 seconds.</div></div>
-          <button className="btn btn-primary" onClick={() => { setEditing('new'); setNotice(''); }}>Add Donor</button>
+          <div style={{ display: 'flex', gap: 10 }}><button className="btn btn-secondary" onClick={() => { setSheetSyncOpen(true); setNotice(''); }}>Sync Google Sheet</button><button className="btn btn-primary" onClick={() => { setEditing('new'); setNotice(''); }}>Add Donor</button></div>
         </div>
 
         {editing && <OnlineDonorForm donor={editing === 'new' ? undefined : editing} onCancel={() => setEditing(null)} onSaved={saved} onConflict={message => { setEditing(null); setNotice(message); void load(); }} />}
@@ -84,6 +86,10 @@ export const OnlineDonors: React.FC = () => {
         </section>
       </div>
       {profileId && <CloudDonorProfileModal donorId={profileId} onClose={() => setProfileId(null)} onEdit={donor => { setProfileId(null); setEditing(donor); }} />}
+      {sheetSyncOpen && <GoogleSheetDonorSyncModal
+        onClose={() => setSheetSyncOpen(false)}
+        onApplied={message => { setSheetSyncOpen(false); setNotice(message); setPage(1); void load(); }}
+      />}
     </main>
   );
 };

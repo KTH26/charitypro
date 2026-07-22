@@ -36,7 +36,7 @@ class MockD1 {
 }
 
 const databases: MockD1[] = [];
-afterEach(() => { while (databases.length) databases.pop()!.close(); });
+afterEach(() => { vi.restoreAllMocks(); while (databases.length) databases.pop()!.close(); });
 
 const seedRecord = (db: MockD1, type: string, id: string, data: any, revision = 1) => {
   db.database.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES(?,?,?,?,?,0)').run(id, type, JSON.stringify(data), 1, revision);
@@ -433,7 +433,42 @@ describe('server-driven bank deposit matching', () => {
     const response = await app.request('/v3/sola/schedules/preview', { method: 'POST' }, { DB: db } as any); const body = await response.json() as any;
     expect(response.status).toBe(200); expect(body).toMatchObject({ success: true, count: 1, readOnly: true }); expect(body.items[0]).toMatchObject({ scheduleId: 'sch-1', name: 'Jane Donor', amount: 75, active: true });
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaSchedules'").get().count).toBe(0);
-    const [, options] = fetchMock.mock.calls[0]; expect((options?.headers as any).Authorization).toBe('test-secret'); expect((options?.headers as any)['X-Recurring-Api-Version']).toBe('2.1');
-    fetchMock.mockRestore();
+    const [, options] = fetchMock.mock.calls[0]; expect((options?.headers as any).Authorization).toBe('test-secret'); expect((options?.headers as any)['X-Recurring-Api-Version']).toBe('2.1'); expect(JSON.parse(String(options?.body))).toMatchObject({ SortOrder: 'Descending', Filters: { IsDeleted: false } });
+  });
+
+  it('shows a Sola recurring API error instead of reporting a false zero schedule success', async () => {
+    const db = new MockD1(); databases.push(db); seedRecord(db, 'solaApiKey', 'solaApiKey', 'test-secret');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ Result: 'E', Error: 'Recurring API access is not enabled.' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/sola/schedules/preview', { method: 'POST' }, { DB: db } as any);
+    expect(response.status).toBe(502); expect(await response.json()).toMatchObject({ success: false, error: 'Recurring API access is not enabled.' });
+  });
+
+  it('previews and safely applies Google Sheet donor contact updates without deleting or blanking data', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'googleSheetSyncUrl', 'googleSheetSyncUrl', 'https://docs.google.com/spreadsheets/d/e/example/pub?output=csv');
+    seedRecord(db, 'donors', 'existing-1', { id: 'existing-1', displayId: 'C-100', firstName: 'Jane', lastName: 'Donor', name: 'Jane Donor', phone: '111', email: 'keep@example.com', address: 'Old address', notes: 'Keep this', totalGiven: 500, cards: [{ id: 'card-1' }] }, 3);
+    seedRecord(db, 'donors', 'not-in-sheet', { id: 'not-in-sheet', displayId: 'C-999', firstName: 'Remain', lastName: 'Safe', name: 'Remain Safe', phone: '999' }, 2);
+    seedRecord(db, 'transactions', 'payment-safe', { id: 'payment-safe', donorId: 'existing-1', amount: 50, date: '2026-07-20', type: 'approved', method: 'cash', currency: 'CAD' }, 4);
+    const csv = 'CODE,HID First name,Last name,Email,MobilePhone,No.,Street,Type,Postel Code\nC-100,Jane,Donor,,222,10,New Street,Ave,H1H 1H1\nC-200,New,Member,new@example.com,333,20,Fresh Road,St,H2H 2H2\n';
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(csv, { status: 200, headers: { 'Content-Type': 'text/csv' } }));
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'sheet-user'); c.set('userEmail', 'sheet@example.com'); await next(); }); registerServerDataRoutes(app as any);
+
+    const previewResponse = await app.request('/v3/donors/google-sheet/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clearBlankFields: false }) }, { DB: db } as any);
+    expect(previewResponse.status).toBe(200); const preview = await previewResponse.json() as any;
+    expect(preview.summary).toMatchObject({ creates: 1, updates: 1 });
+    const beforeApply = JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='donors' AND id='existing-1'").get() as any).data));
+    expect(beforeApply.phone).toBe('111');
+
+    const requestId = 'sheet-apply-1';
+    const applyResponse = await app.request('/v3/donors/google-sheet/apply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId }, body: JSON.stringify({ requestId, sheetHash: preview.sheetHash, clearBlankFields: false }) }, { DB: db } as any);
+    const applyBody = await applyResponse.json() as any;
+    expect(applyResponse.status, JSON.stringify(applyBody)).toBe(200); expect(applyBody).toMatchObject({ success: true, created: 1, updated: 1 });
+    const existing = JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='donors' AND id='existing-1'").get() as any).data));
+    expect(existing).toMatchObject({ phone: '222', email: 'keep@example.com', address: '10 New Street Ave H1H 1H1', notes: 'Keep this', totalGiven: 500, cards: [{ id: 'card-1' }] });
+    expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='donors' AND id='not-in-sheet' AND is_deleted=0").get() as any).count)).toBe(1);
+    expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='donors' AND json_extract(data,'$.displayId')='C-200' AND is_deleted=0").get() as any).count)).toBe(1);
+    expect(Number((db.database.prepare("SELECT revision FROM sync_records WHERE type='transactions' AND id='payment-safe'").get() as any).revision)).toBe(4);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
