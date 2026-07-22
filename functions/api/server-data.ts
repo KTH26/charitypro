@@ -921,7 +921,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         const response = await fetch('https://api.cardknox.com/v2/ListSchedules', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: key, 'X-Recurring-Api-Version': '2.1' },
-          body: JSON.stringify({ SoftwareName: 'CharityPro', SoftwareVersion: '1.0', PageSize: 100, SortOrder: 'Descending', Filters: { IsDeleted: false }, ...(nextToken ? { NextToken: nextToken } : {}) })
+          body: JSON.stringify({ SoftwareName: 'CharityPro', SoftwareVersion: '1.0', PageSize: 100, SortOrder: 'Descending', Filters: { IsDeleted: false, Active: true }, ...(nextToken ? { NextToken: nextToken } : {}) })
         });
         const text = await response.text(); let payload: any;
         try { payload = JSON.parse(text); } catch { return c.json({ success: false, error: `Sola recurring schedules returned an unreadable response (${response.status}).` }, 502); }
@@ -942,7 +942,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         endDate: String(value.EndDate || value.endDate || '').slice(0, 10),
         nextDate: String(value.NextScheduledRunTime || value.NextRunTime || '').slice(0, 10),
         paymentsRemaining: Number(value.PaymentsRemaining ?? value.RemainingPayments ?? 0)
-      })).filter((value: any) => value.scheduleId);
+      })).filter((value: any) => value.scheduleId && value.active === true);
       return c.json({ success: true, items, count: items.length, pages, readOnly: true, message: 'Preview only. No CharityPro or Sola records were changed.' });
     } catch (reason: any) { return c.json({ success: false, error: `Unable to read Sola recurring schedules: ${reason.message || 'network error'}` }, 502); }
   });
