@@ -1004,34 +1004,48 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const normalizeName = (value: unknown) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const donorRows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='donors' AND is_deleted=0").all();
     const donorsByName = new Map<string, any[]>();
+    const donorsById = new Map<string, any>();
     for (const row of donorRows.results as any[]) {
       const donor = parseSetting(row.data, {});
+      donorsById.set(String(row.id), { id: String(row.id), name: donor.name || `${donor.firstName || ''} ${donor.lastName || ''}`.trim() });
       const names = new Set([donor.name, [donor.firstName, donor.lastName].filter(Boolean).join(' '), [donor.lastName, donor.firstName].filter(Boolean).join(' ')] .map(normalizeName).filter(Boolean));
       for (const name of names) donorsByName.set(name, [...(donorsByName.get(name) || []), { id: row.id, name: donor.name || `${donor.firstName || ''} ${donor.lastName || ''}`.trim() }]);
     }
+    const savedMappingRows = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings' AND is_deleted=0").all();
+    const savedMappings = new Map<string, string>();
+    for (const row of savedMappingRows.results as any[]) { const value = parseSetting(row.data, {}); if (value.solaName && value.donorId) savedMappings.set(normalizeName(value.solaName), String(value.donorId)); }
 
     const imported: any[] = []; const unmatched: any[] = []; const ambiguous: any[] = []; const inactive: any[] = []; const existing: any[] = [];
     const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
     const frequencyMap: Record<string, string> = { daily: 'daily', weekly: 'weekly', biweekly: 'biweekly', 'bi-weekly': 'biweekly', monthly: 'monthly', quarterly: 'quarterly', yearly: 'yearly', annually: 'yearly', annual: 'yearly' };
-    const statements: any[] = []; const mappedNames = new Set<string>();
+    const statements: any[] = []; const mappedNames = new Set<string>(); const seenScheduleIds = new Set<string>();
     for (const source of schedules) {
       const scheduleId = String(source?.scheduleId || '').trim().slice(0, 200);
       const name = String(source?.name || '').trim().slice(0, 300);
       const active = source?.active === true;
       if (!scheduleId || !name) continue;
       if (!active) { inactive.push({ scheduleId, name }); continue; }
-      const matches = donorsByName.get(normalizeName(name)) || [];
-      if (!matches.length) { unmatched.push({ scheduleId, name }); continue; }
-      if (matches.length > 1) { ambiguous.push({ scheduleId, name, donorCount: matches.length }); continue; }
+      const nameKey = normalizeName(name);
+      const matches = donorsByName.get(nameKey) || [];
+      const requestedDonorId = String(source?.donorId || '').trim();
+      const rememberedDonorId = savedMappings.get(nameKey) || '';
+      const selectedDonor = donorsById.get(requestedDonorId) || donorsById.get(rememberedDonorId) || (matches.length === 1 ? matches[0] : null);
+      if (!selectedDonor) {
+        if (matches.length > 1) ambiguous.push({ scheduleId, name, donorCount: matches.length });
+        else unmatched.push({ scheduleId, name, ...(requestedDonorId ? { reason: 'The selected donor no longer exists.' } : {}) });
+        continue;
+      }
+      if (seenScheduleIds.has(scheduleId)) { existing.push({ scheduleId, name, donorId: selectedDonor.id }); continue; }
+      seenScheduleIds.add(scheduleId);
       const mappingKey = name.toLowerCase();
       if (!mappedNames.has(mappingKey)) {
         mappedNames.add(mappingKey);
         const mappingId = `sola-map-${encodeURIComponent(mappingKey).slice(0, 170)}`;
-        const mapping: any = await c.env.DB.prepare("SELECT revision FROM sync_records WHERE type='solaDonorMappings' AND id=? AND is_deleted=0").bind(mappingId).first();
-        const mappingData = JSON.stringify({ id: mappingId, solaName: name, donorId: matches[0].id, updatedAt: now });
+        const mapping: any = await c.env.DB.prepare("SELECT revision FROM sync_records WHERE type='solaDonorMappings' AND id=?").bind(mappingId).first();
+        const mappingData = JSON.stringify({ id: mappingId, solaName: name, donorId: selectedDonor.id, updatedAt: now });
         const mappingRevision = Number(mapping?.revision || 0) + 1; const mappingOperation = `${mutationId}-mapping-${scheduleId}`;
         if (mapping) statements.push(
-          c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='solaDonorMappings' AND id=? AND revision=? AND is_deleted=0").bind(mappingData, mappingRevision, now, mappingOperation, mappingId, mapping.revision),
+          c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,is_deleted=0,last_operation_id=? WHERE type='solaDonorMappings' AND id=? AND revision=?").bind(mappingData, mappingRevision, now, mappingOperation, mappingId, mapping.revision),
           c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',?,'update',?,?,?,?)").bind(mappingId, mappingRevision, mappingData, now, mutationId, mappingOperation)
         ); else statements.push(
           c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaDonorMappings',?,?,1,0,?)").bind(mappingId, mappingData, now, mappingOperation),
@@ -1039,20 +1053,27 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         );
       }
       const id = `sola-schedule-${scheduleId}`;
-      const found = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='recurringPayments' AND (id=? OR json_extract(data,'$.solaScheduleId')=?) AND is_deleted=0 LIMIT 1").bind(id, scheduleId).first();
-      if (found) { existing.push({ scheduleId, name, donorId: matches[0].id }); continue; }
+      const found: any = await c.env.DB.prepare("SELECT id,data,revision,is_deleted FROM sync_records WHERE type='recurringPayments' AND (id=? OR (json_extract(data,'$.solaScheduleId')=? AND is_deleted=0)) ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1").bind(id, scheduleId, id).first();
+      if (found && !Number(found.is_deleted)) { existing.push({ scheduleId, name, donorId: selectedDonor.id }); continue; }
       const amount = Number(source?.amount);
       const nextDate = String(source?.nextDate || source?.startDate || '').slice(0, 10);
       if (!Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { unmatched.push({ scheduleId, name, reason: 'Missing a valid amount or next payment date.' }); continue; }
       const frequency = frequencyMap[String(source?.frequency || '').trim().toLowerCase()] || 'monthly';
-      const record = { id, donorId: matches[0].id, amount, currency: 'CAD', frequency, nextDate, ...(String(source?.endDate || '').slice(0, 10) ? { endDate: String(source.endDate).slice(0, 10) } : {}), method: 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
+      const record = { id, donorId: selectedDonor.id, amount, currency: 'CAD', frequency, nextDate, ...(String(source?.endDate || '').slice(0, 10) ? { endDate: String(source.endDate).slice(0, 10) } : {}), method: 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
       const data = JSON.stringify(record); const operationId = `${mutationId}-${scheduleId}`;
-      statements.push(
-        c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'recurringPayments',?,?,1,0,?)").bind(id, data, now, operationId),
-        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',1,'insert',?,?,?,?)").bind(id, data, now, mutationId, operationId),
-        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, mutationId, operationId, 'Imported active recurring schedule from Sola')
-      );
-      imported.push({ scheduleId, name, donorId: matches[0].id, donorName: matches[0].name, id });
+      if (found) {
+        const nextRevision = Number(found.revision) + 1;
+        statements.push(
+          c.env.DB.prepare("UPDATE sync_records SET data=?,updated_at=?,revision=?,is_deleted=0,last_operation_id=? WHERE type='recurringPayments' AND id=? AND revision=?").bind(data, now, nextRevision, operationId, id, found.revision),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',?,'update',?,?,?,?)").bind(id, nextRevision, data, now, mutationId, operationId),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','update',?,?,?,?,?,?,?,?,?,?)").bind(id, found.revision, nextRevision, found.data, data, userId, userEmail, now, mutationId, operationId, 'Restored recurring schedule from Sola')
+        );
+      } else statements.push(
+          c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'recurringPayments',?,?,1,0,?)").bind(id, data, now, operationId),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',1,'insert',?,?,?,?)").bind(id, data, now, mutationId, operationId),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, mutationId, operationId, 'Imported active recurring schedule from Sola')
+        );
+      imported.push({ scheduleId, name, donorId: selectedDonor.id, donorName: selectedDonor.name, id });
     }
     const result = { success: true, imported, unmatched, ambiguous, inactive, existing, counts: { imported: imported.length, unmatched: unmatched.length, ambiguous: ambiguous.length, inactive: inactive.length, existing: existing.length } };
     statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), now));

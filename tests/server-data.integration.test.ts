@@ -446,6 +446,32 @@ describe('server-driven bank deposit matching', () => {
     const mapping: any = db.database.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings'").get(); expect(JSON.parse(mapping.data)).toMatchObject({ solaName: 'Jane Donor', donorId: 'donor-jane' });
   });
 
+  it('uses a selected donor ID for duplicate Sola names and remembers it', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'donor-first', { id: 'donor-first', name: 'Same Name' });
+    seedRecord(db, 'donors', 'donor-second', { id: 'donor-second', name: 'Same Name' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const schedule = { scheduleId: 'duplicate-name', name: 'Same Name', donorId: 'donor-second', amount: 40, active: true, frequency: 'Monthly', nextDate: '2026-08-20' };
+    const response = await app.request('/v3/sola/schedules/import', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'selected-donor-import' }, body: JSON.stringify({ schedules: [schedule] }) }, { DB: db } as any);
+    expect(response.status).toBe(200);
+    const saved: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='sola-schedule-duplicate-name'").get();
+    expect(JSON.parse(saved.data).donorId).toBe('donor-second');
+    const mapping: any = db.database.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings'").get();
+    expect(JSON.parse(mapping.data)).toMatchObject({ solaName: 'Same Name', donorId: 'donor-second' });
+  });
+
+  it('restores a previously deleted Sola schedule instead of inserting its key again', async () => {
+    const db = new MockD1(); databases.push(db); seedRecord(db, 'donors', 'restore-donor', { id: 'restore-donor', name: 'Restore Donor' });
+    seedRecord(db, 'recurringPayments', 'sola-schedule-restore-me', { id: 'sola-schedule-restore-me', donorId: 'restore-donor', solaScheduleId: 'restore-me', amount: 10, active: true });
+    db.database.prepare("UPDATE sync_records SET is_deleted=1,revision=2 WHERE type='recurringPayments' AND id='sola-schedule-restore-me'").run();
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const schedule = { scheduleId: 'restore-me', name: 'Restore Donor', amount: 25, active: true, frequency: 'Monthly', nextDate: '2026-08-20' };
+    const response = await app.request('/v3/sola/schedules/import', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'restore-schedule-import' }, body: JSON.stringify({ schedules: [schedule] }) }, { DB: db } as any);
+    expect(response.status).toBe(200);
+    const saved: any = db.database.prepare("SELECT data,revision,is_deleted FROM sync_records WHERE type='recurringPayments' AND id='sola-schedule-restore-me'").get();
+    expect(saved).toMatchObject({ revision: 3, is_deleted: 0 }); expect(JSON.parse(saved.data).amount).toBe(25);
+  });
+
   it('soft deletes every CharityPro schedule without touching Sola', async () => {
     const db = new MockD1(); databases.push(db); seedRecord(db, 'recurringPayments', 'schedule-1', { id: 'schedule-1', donorId: 'donor-1', amount: 10, nextDate: '2026-08-01', active: true }); seedRecord(db, 'recurringPayments', 'schedule-2', { id: 'schedule-2', donorId: 'donor-2', amount: 20, nextDate: '2026-08-01', active: false });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'tester'); c.set('userEmail', 'tester@example.com'); await next(); }); registerServerDataRoutes(app as any);
