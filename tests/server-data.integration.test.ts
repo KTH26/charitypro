@@ -383,6 +383,17 @@ describe('server-driven bank deposit matching', () => {
     expect(backupResponse.status).toBe(200); expect(backup.items.some((item: any) => item.id === 'backup-payment')).toBe(true); expect(backup.items.some((item: any) => item.type === 'solaApiKey')).toBe(false);
   });
 
+  it('accepts a Sola key in online Settings without returning or syncing the secret', async () => {
+    const db = new MockD1(); databases.push(db);
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/sola/configuration', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'save-sola-secret' }, body: JSON.stringify({ apiKey: 'ProductionKey123456' }) }, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body).toEqual({ success: true, configured: true }); expect(JSON.stringify(body)).not.toContain('ProductionKey123456');
+    const stored: any = db.database.prepare("SELECT value FROM server_secrets WHERE key='SOLA_API_KEY'").get(); expect(stored.value).toBe('ProductionKey123456');
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaApiKey'").get().count).toBe(0);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_changes WHERE type='solaApiKey'").get().count).toBe(0);
+    const settings = await (await app.request('/v3/settings', {}, { DB: db } as any)).json() as any; expect(settings.solaConfigured).toBe(true); expect(JSON.stringify(settings)).not.toContain('ProductionKey123456');
+  });
+
   it('matches a saved Sola charge to an online transaction exactly once', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'solaTransactions', 'sola-ref-1', { ref: 'sola-ref-1', name: 'Jane Donor', date: '2026-07-21', amount: 50, status: 'Approved', last4: '1234', batch: 'batch-1' });

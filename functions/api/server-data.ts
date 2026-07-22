@@ -778,6 +778,16 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
   const settingDefaults: Record<string, any> = { isRtl: false, currency: 'CAD', exchangeRate: 1.35, donorSortBy: 'lastName', googleSheetSyncUrl: '' };
   const parseSetting = (raw: unknown, fallback: any) => { try { return JSON.parse(String(raw)); } catch { return fallback; } };
+  const getSolaKey = async (c: any) => {
+    if (c.env.SOLA_API_KEY) return String(c.env.SOLA_API_KEY).trim();
+    try {
+      const secret: any = await c.env.DB.prepare("SELECT value FROM server_secrets WHERE key='SOLA_API_KEY' LIMIT 1").first();
+      if (secret?.value) return String(secret.value).trim();
+    } catch { /* The server-only secrets table is created on first secure save. */ }
+    const row: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaApiKey' AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1").first();
+    const value = row ? parseSetting(row.data,'') : '';
+    return typeof value === 'string' ? value.trim() : String(value?.apiKey || value?.key || '').trim();
+  };
 
   app.get('/v3/settings', async (c: any) => {
     const denied = requirePermission(c, 'system.manage');
@@ -785,8 +795,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const result = await c.env.DB.prepare("SELECT type,id,data,revision,updated_at FROM sync_records WHERE type IN ('isRtl','currency','exchangeRate','donorSortBy','googleSheetSyncUrl') AND is_deleted=0 ORDER BY updated_at DESC").all();
     const settings = { ...settingDefaults }; const revisions: Record<string, number> = {};
     for (const row of result.results as any[]) if (revisions[row.type] === undefined) { settings[row.type] = parseSetting(row.data, settingDefaults[row.type]); revisions[row.type] = Number(row.revision); }
-    const sola: any = await c.env.DB.prepare("SELECT 1 AS configured FROM sync_records WHERE type='solaApiKey' AND is_deleted=0 AND data NOT IN ('','\"\"','null') LIMIT 1").first();
-    return c.json({ success: true, settings, revisions, solaConfigured: Boolean(c.env.SOLA_API_KEY || sola?.configured), balances: 'calculated-live' });
+    return c.json({ success: true, settings, revisions, solaConfigured: Boolean(await getSolaKey(c)), balances: 'calculated-live' });
   });
 
   app.put('/v3/settings/:key', async (c: any) => {
@@ -835,17 +844,32 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, items: rows.results.map((row: any) => ({ type: row.type,id: row.id,data: parseSetting(row.data,null),revision: Number(row.revision),updatedAt: Number(row.updated_at) })), page, limit, total, totalPages: Math.ceil(total/limit) });
   });
 
-  const getSolaKey = async (c: any) => {
-    if (c.env.SOLA_API_KEY) return String(c.env.SOLA_API_KEY);
-    const row: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaApiKey' AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1").first();
-    const value = row ? parseSetting(row.data,'') : '';
-    return typeof value === 'string' ? value.trim() : String(value?.apiKey || value?.key || '').trim();
-  };
-
   app.get('/v3/sola/status', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const key = await getSolaKey(c); const metadata: any = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_sync_status'").first();
     return c.json({ success: true, configured: Boolean(key), sync: metadata ? parseSetting(metadata.value,null) : null });
+  });
+
+  app.put('/v3/sola/configuration', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage'); if (denied) return denied;
+    const body = await c.req.json(); const apiKey = String(body.apiKey || '').trim();
+    if (!/^[A-Za-z0-9]{8,250}$/.test(apiKey)) return c.json({ success: false, error: 'Enter a valid Sola production API key.' }, 400);
+    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-sola-configuration-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const now = Date.now(); const response = { success: true, configured: true };
+    const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
+      await c.env.DB.batch([
+        c.env.DB.prepare("INSERT INTO server_secrets(key,value,updated_at) VALUES('SOLA_API_KEY',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(apiKey, now),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES('SOLA_API_KEY','serverSecret','update',NULL,NULL,NULL,?,?,?,?,?,?,?)").bind(JSON.stringify({ configured: true, secret: '[REDACTED]' }), userId, userEmail, now, mutationId, `${mutationId}-save`, 'Sola API key configured through secure online settings'),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response);
+    } catch (reason: any) { return c.json({ success: false, error: `Unable to save the Sola key securely: ${reason.message || 'database error'}` }, 500); }
   });
 
   app.post('/v3/sola/sync', async (c: any) => {
