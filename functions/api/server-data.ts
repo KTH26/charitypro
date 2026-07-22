@@ -986,7 +986,16 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         paymentsRemaining: Number(value.PaymentsRemaining ?? value.RemainingPayments ?? 0)
         };
       }).filter((value: any) => value.scheduleId);
-      return c.json({ success: true, items, count: items.length, pages, readOnly: true, message: 'Preview only. No CharityPro or Sola records were changed.' });
+      const [mappingRows, importedRows] = await c.env.DB.batch([
+        c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings' AND is_deleted=0"),
+        c.env.DB.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.solaScheduleId') IS NOT NULL")
+      ]);
+      const normalizeName = (value: unknown) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const mappedDonors = new Map<string,string>();
+      for (const row of mappingRows.results as any[]) { const value = parseSetting(row.data, {}); if (value.solaName && value.donorId) mappedDonors.set(normalizeName(value.solaName), String(value.donorId)); }
+      const importedIds = new Set(importedRows.results.map((row: any) => String(parseSetting(row.data, {})?.solaScheduleId || '')).filter(Boolean));
+      const enrichedItems = items.map((item: any) => ({ ...item, matchedDonorId: mappedDonors.get(normalizeName(item.name)) || '', imported: importedIds.has(String(item.scheduleId)) }));
+      return c.json({ success: true, items: enrichedItems, count: enrichedItems.length, pages, readOnly: true, message: 'Preview only. No CharityPro or Sola records were changed.' });
     } catch (reason: any) { return c.json({ success: false, error: `Unable to read Sola recurring schedules: ${reason.message || 'network error'}` }, 502); }
   });
 
