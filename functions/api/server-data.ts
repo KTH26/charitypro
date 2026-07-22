@@ -973,6 +973,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         const activeValue = value.IsActive ?? value.Active ?? value.isActive ?? value.active ?? value.Status ?? value.status;
         const normalizedActive = typeof activeValue === 'string' ? activeValue.trim().toLowerCase() : activeValue;
         const active = normalizedActive === true || normalizedActive === 1 || normalizedActive === 'true' || normalizedActive === '1' || normalizedActive === 'active' || normalizedActive === 'enabled';
+        const totalPayments = Number(value.TotalPayments ?? value.NumberOfPayments ?? value.TotalNumberOfPayments ?? value.PaymentCount ?? 0);
+        const paymentsProcessed = Number(value.PaymentsProcessed ?? value.NumberOfPaymentsProcessed ?? value.ProcessedPayments ?? 0);
+        const reportedRemaining = Number(value.PaymentsRemaining ?? value.RemainingPayments ?? value.NumberOfPaymentsRemaining ?? value.RemainingNumberOfPayments ?? value.PaymentsLeft ?? 0);
         return {
         scheduleId: String(value.ScheduleId || value.Id || value.scheduleId || '').trim(),
         customerId: String(value.CustomerId || value.customerId || '').trim(),
@@ -981,10 +984,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         active,
         frequency: String(value.IntervalType || value.Frequency || value.frequency || ''),
         startDate: String(value.StartDate || value.InitialRunTime || value.startDate || '').slice(0, 10),
-        endDate: String(value.EndDate || value.endDate || '').slice(0, 10),
+        endDate: String(value.LastProjectedPaymentDate || value.EndDate || value.endDate || '').slice(0, 10),
         nextDate: String(value.NextScheduledRunTime || value.NextRunTime || '').slice(0, 10),
-        paymentsRemaining: Number(value.PaymentsRemaining ?? value.RemainingPayments ?? value.NumberOfPaymentsRemaining ?? value.RemainingNumberOfPayments ?? value.PaymentsLeft ?? 0),
-        totalPayments: Number(value.TotalPayments ?? value.NumberOfPayments ?? value.TotalNumberOfPayments ?? value.PaymentCount ?? 0)
+        paymentsRemaining: reportedRemaining || Math.max(0, totalPayments - paymentsProcessed),
+        totalPayments,
+        paymentsProcessed
         };
       }).filter((value: any) => value.scheduleId);
       const [mappingRows, importedRows] = await c.env.DB.batch([
@@ -1062,9 +1066,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
           c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',1,'insert',?,?,?,?)").bind(mappingId, mappingData, now, mutationId, mappingOperation)
         );
       }
-      const id = `sola-schedule-${scheduleId}`;
-      const found: any = await c.env.DB.prepare("SELECT id,data,revision,is_deleted FROM sync_records WHERE type='recurringPayments' AND (id=? OR (json_extract(data,'$.solaScheduleId')=? AND is_deleted=0)) ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1").bind(id, scheduleId, id).first();
-      if (found && !Number(found.is_deleted)) { existing.push({ scheduleId, name, donorId: selectedDonor.id }); continue; }
+      const generatedId = `sola-schedule-${scheduleId}`;
+      const found: any = await c.env.DB.prepare("SELECT id,data,revision,is_deleted FROM sync_records WHERE type='recurringPayments' AND (id=? OR (json_extract(data,'$.solaScheduleId')=? AND is_deleted=0)) ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1").bind(generatedId, scheduleId, generatedId).first();
+      const id = String(found?.id || generatedId);
       const amount = Number(source?.amount);
       const nextDate = String(source?.nextDate || source?.startDate || '').slice(0, 10);
       if (!Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { unmatched.push({ scheduleId, name, reason: 'Missing a valid amount or next payment date.' }); continue; }
@@ -1073,21 +1077,22 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const totalPayments = Math.max(0, Math.min(10000, Number.parseInt(String(source?.totalPayments || '0'), 10) || 0));
       let calculatedEndDate = isoDate(source?.endDate);
       if (!calculatedEndDate && paymentsRemaining > 0) { calculatedEndDate = nextDate; for (let payment = 1; payment < paymentsRemaining; payment++) calculatedEndDate = addUtc(calculatedEndDate, frequency); }
-      const record = { id, donorId: selectedDonor.id, amount, currency: 'CAD', frequency, nextDate, ...(calculatedEndDate ? { endDate: calculatedEndDate } : {}), ...(paymentsRemaining ? { paymentsRemaining } : {}), ...(totalPayments ? { totalPayments } : {}), method: 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
+      const previous = found ? parseSetting(found.data, {}) : {};
+      const record = { ...previous, id, donorId: selectedDonor.id, amount, currency: previous.currency || 'CAD', frequency, nextDate, ...(calculatedEndDate ? { endDate: calculatedEndDate } : {}), ...(paymentsRemaining ? { paymentsRemaining } : {}), ...(totalPayments ? { totalPayments } : {}), ...(Number(source?.paymentsProcessed || 0) ? { paymentsProcessed: Number(source.paymentsProcessed) } : {}), method: previous.method || 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
       const data = JSON.stringify(record); const operationId = `${mutationId}-${scheduleId}`;
       if (found) {
         const nextRevision = Number(found.revision) + 1;
         statements.push(
           c.env.DB.prepare("UPDATE sync_records SET data=?,updated_at=?,revision=?,is_deleted=0,last_operation_id=? WHERE type='recurringPayments' AND id=? AND revision=?").bind(data, now, nextRevision, operationId, id, found.revision),
           c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',?,'update',?,?,?,?)").bind(id, nextRevision, data, now, mutationId, operationId),
-          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','update',?,?,?,?,?,?,?,?,?,?)").bind(id, found.revision, nextRevision, found.data, data, userId, userEmail, now, mutationId, operationId, 'Restored recurring schedule from Sola')
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','update',?,?,?,?,?,?,?,?,?,?)").bind(id, found.revision, nextRevision, found.data, data, userId, userEmail, now, mutationId, operationId, Number(found.is_deleted) ? 'Restored recurring schedule from Sola' : 'Refreshed recurring schedule term details from Sola')
         );
       } else statements.push(
           c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'recurringPayments',?,?,1,0,?)").bind(id, data, now, operationId),
           c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',1,'insert',?,?,?,?)").bind(id, data, now, mutationId, operationId),
           c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, mutationId, operationId, 'Imported active recurring schedule from Sola')
         );
-      imported.push({ scheduleId, name, donorId: selectedDonor.id, donorName: selectedDonor.name, id });
+      if (found && !Number(found.is_deleted)) existing.push({ scheduleId, name, donorId: selectedDonor.id, donorName: selectedDonor.name, id }); else imported.push({ scheduleId, name, donorId: selectedDonor.id, donorName: selectedDonor.name, id });
     }
     const result = { success: true, imported, unmatched, ambiguous, inactive, existing, counts: { imported: imported.length, unmatched: unmatched.length, ambiguous: ambiguous.length, inactive: inactive.length, existing: existing.length } };
     statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), now));
