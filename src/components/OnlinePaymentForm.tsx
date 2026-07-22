@@ -100,7 +100,8 @@ export const OnlinePaymentForm: React.FC<{
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
         body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, pledgeId, sponsor, type: status })
       });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data: any; try { data = JSON.parse(responseText); } catch { throw new Error(response.ok ? 'The server returned an unreadable response.' : `The payment server failed (${response.status}). Please try again.`); }
       if (!response.ok || !data.success) {
         pendingRequestId.current = '';
         throw new Error(data.error || 'The payment could not be saved.');
@@ -118,7 +119,7 @@ export const OnlinePaymentForm: React.FC<{
   const revenueAccounts = accounts.filter(account => account.type === 'revenue');
 
   return (
-    <section className="card" style={{ padding: 22, marginBottom: 18, border: '2px solid var(--green)' }}>
+    <section className="card" style={{ padding: 22, marginBottom: 18, border: '2px solid var(--green)', background: '#ffffff', boxShadow: '0 18px 55px rgba(15,23,42,.22)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 16, marginBottom: 18 }}>
         <div><h2 style={{ margin: 0, color: 'var(--navy)' }}>Record a payment in the cloud</h2><div style={{ color: 'var(--text-muted)', marginTop: 4 }}>This saves directly to the shared database. It cannot create a local sync conflict.</div></div>
         <button type="button" className="btn btn-ghost" onClick={onCancel}>Close</button>

@@ -229,6 +229,22 @@ describe('server-driven bank deposit matching', () => {
     expect(ledger.items[0].recordType).toBe('transactions');
   });
 
+  it('creates a payment routed to a project with its donor associations', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'payment-donor', { id: 'payment-donor', name: 'Project Donor' });
+    seedRecord(db, 'accounts', 'payment-bank', { id: 'payment-bank', name: 'Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'payment-revenue', { id: 'payment-revenue', name: 'Donations', type: 'revenue', currency: 'CAD' });
+    seedRecord(db, 'projects', 'payment-project', { id: 'payment-project', name: 'Building Project' });
+    seedRecord(db, 'fundraisers', 'payment-fundraiser', { id: 'payment-fundraiser', name: 'Campaign' });
+    seedRecord(db, 'pledges', 'payment-pledge', { id: 'payment-pledge', donorId: 'payment-donor', amount: 500, date: '2026-07-01', currency: 'CAD' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/payments', { method:'POST', headers:{'Content-Type':'application/json','Idempotency-Key':'project-payment'}, body:JSON.stringify({requestId:'project-payment',donorId:'payment-donor',amount:75,currency:'CAD',method:'cash',date:'2026-07-22',sourceAccountId:'payment-bank',offsetAccountId:'payment-revenue',projectId:'payment-project',fundraiserId:'payment-fundraiser',pledgeId:'payment-pledge',sponsor:'Dinner'}) }, { DB:db } as any);
+    const body = await response.json() as any;
+    expect(response.status).toBe(201); expect(body.item).toMatchObject({projectId:'payment-project',fundraiserId:'payment-fundraiser',pledgeId:'payment-pledge'});
+    const ledger = await app.request('/v3/projects/payment-project/ledger', {}, {DB:db} as any); const ledgerBody=await ledger.json() as any;
+    expect(ledger.status).toBe(200); expect(ledgerBody.transactions).toHaveLength(1); expect(ledgerBody.income).toBe(75);
+  });
+
   it('loads paginated vendor totals and original-style vendor bill details', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'vendors', 'vendor-1', { id: 'vendor-1', name: 'Office Supply', phone: '555-0199' });
