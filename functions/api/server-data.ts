@@ -314,11 +314,23 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0";
     const order = requestedOrder(c, { date: "json_extract(p.data,'$.date')", donor: "lower(COALESCE(json_extract(d.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0) AS REAL)", currency: "json_extract(p.data,'$.currency')", notes: "lower(COALESCE(json_extract(p.data,'$.notes'),''))" }, "json_extract(p.data,'$.date')");
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records p ${join} WHERE ${where} ORDER BY ${order},p.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.preTitle') AS donor_pre_title,json_extract(d.data,'$.hebFirstName') AS donor_heb_first,json_extract(d.data,'$.hebLastName') AS donor_heb_last,json_extract(d.data,'$.title') AS donor_title FROM sync_records p ${join} WHERE ${where} ORDER BY ${order},p.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records p ${join} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
-    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor' })), page, limit, total, totalPages: Math.ceil(total / limit) });
+    const donorIds = [...new Set(listResult.results.map((row: any) => String(parseRecord(row).donorId || '')).filter(Boolean))];
+    const calculationsById = new Map<string, any>();
+    if (donorIds.length) {
+      const placeholders = donorIds.map(() => '?').join(',');
+      const related = await c.env.DB.prepare(`SELECT id,type,data,revision,updated_at FROM sync_records WHERE type IN ('pledges','transactions','recurringPayments') AND is_deleted=0 AND json_extract(data,'$.donorId') IN (${placeholders})`).bind(...donorIds).all();
+      for (const donorId of donorIds) {
+        const donorRecords = related.results.filter((row: any) => String(parseSetting(row.data, {})?.donorId || '') === donorId);
+        const financials = calculatePledgeFinancials(donorRecords.filter((row: any) => row.type === 'pledges').map(parseRecord), donorRecords.filter((row: any) => row.type === 'transactions').map(parseRecord), donorRecords.filter((row: any) => row.type === 'recurringPayments').map(parseRecord));
+        for (const calculation of financials) calculationsById.set(String(calculation.id), calculation);
+      }
+    }
+    const items = listResult.results.map((row: any) => { const item = parseRecord(row); const calculation = calculationsById.get(String(item.id)); return { ...item, donorName: row.donor_name || 'Unknown Donor', donorHebrewName: [row.donor_pre_title,row.donor_heb_first,row.donor_heb_last,row.donor_title].filter(Boolean).join(' '), paid: Number(calculation?.paid || 0), pending: Number(calculation?.pending || 0), scheduled: Number(calculation?.scheduled || 0), balance: Number(calculation?.balance ?? item.amountCAD ?? item.amount ?? 0) }; });
+    return c.json({ success: true, items, page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.get('/v3/donors/:id/pledge-choices', async (c: any) => {
@@ -401,6 +413,32 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor' })), page, limit, total, totalPages: Math.ceil(total / limit) });
+  });
+
+  app.delete('/v3/schedules', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.reverse'); if (denied) return denied;
+    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-delete-all-schedules-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const rows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 ORDER BY id").all();
+    const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    for (let index = 0; index < rows.results.length; index += 20) {
+      const statements: any[] = [];
+      for (const row of rows.results.slice(index, index + 20) as any[]) {
+        const revision = Number(row.revision) + 1; const operationId = `${mutationId}-${row.id}`;
+        statements.push(
+          c.env.DB.prepare("UPDATE sync_records SET revision=?,updated_at=?,is_deleted=1,last_operation_id=? WHERE type='recurringPayments' AND id=? AND revision=? AND is_deleted=0").bind(revision, now, operationId, row.id, row.revision),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',?,'delete',?,?,?,?)").bind(row.id, revision, row.data, now, mutationId, operationId),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','delete',?,?,?,NULL,?,?,?,?,?,?)").bind(row.id, row.revision, revision, row.data, userId, userEmail, now, mutationId, operationId, 'Deleted through Delete all scheduled payments')
+        );
+      }
+      if (statements.length) await c.env.DB.batch(statements);
+    }
+    const result = { success: true, deleted: rows.results.length };
+    await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), now).run();
+    return c.json(result);
   });
 
   app.post('/v3/schedules/process-due', async (c: any) => {
@@ -947,9 +985,79 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         nextDate: String(value.NextScheduledRunTime || value.NextRunTime || '').slice(0, 10),
         paymentsRemaining: Number(value.PaymentsRemaining ?? value.RemainingPayments ?? 0)
         };
-      }).filter((value: any) => value.scheduleId && value.active);
+      }).filter((value: any) => value.scheduleId);
       return c.json({ success: true, items, count: items.length, pages, readOnly: true, message: 'Preview only. No CharityPro or Sola records were changed.' });
     } catch (reason: any) { return c.json({ success: false, error: `Unable to read Sola recurring schedules: ${reason.message || 'network error'}` }, 502); }
+  });
+
+  app.post('/v3/sola/schedules/import', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.create'); if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-sola-schedule-import-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const schedules = Array.isArray(body.schedules) ? body.schedules.slice(0, 500) : [];
+    if (!schedules.length) return c.json({ success: false, error: 'No Sola schedules were supplied.' }, 400);
+
+    const normalizeName = (value: unknown) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const donorRows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='donors' AND is_deleted=0").all();
+    const donorsByName = new Map<string, any[]>();
+    for (const row of donorRows.results as any[]) {
+      const donor = parseSetting(row.data, {});
+      const names = new Set([donor.name, [donor.firstName, donor.lastName].filter(Boolean).join(' '), [donor.lastName, donor.firstName].filter(Boolean).join(' ')] .map(normalizeName).filter(Boolean));
+      for (const name of names) donorsByName.set(name, [...(donorsByName.get(name) || []), { id: row.id, name: donor.name || `${donor.firstName || ''} ${donor.lastName || ''}`.trim() }]);
+    }
+
+    const imported: any[] = []; const unmatched: any[] = []; const ambiguous: any[] = []; const inactive: any[] = []; const existing: any[] = [];
+    const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    const frequencyMap: Record<string, string> = { daily: 'daily', weekly: 'weekly', biweekly: 'biweekly', 'bi-weekly': 'biweekly', monthly: 'monthly', quarterly: 'quarterly', yearly: 'yearly', annually: 'yearly', annual: 'yearly' };
+    const statements: any[] = []; const mappedNames = new Set<string>();
+    for (const source of schedules) {
+      const scheduleId = String(source?.scheduleId || '').trim().slice(0, 200);
+      const name = String(source?.name || '').trim().slice(0, 300);
+      const active = source?.active === true;
+      if (!scheduleId || !name) continue;
+      if (!active) { inactive.push({ scheduleId, name }); continue; }
+      const matches = donorsByName.get(normalizeName(name)) || [];
+      if (!matches.length) { unmatched.push({ scheduleId, name }); continue; }
+      if (matches.length > 1) { ambiguous.push({ scheduleId, name, donorCount: matches.length }); continue; }
+      const mappingKey = name.toLowerCase();
+      if (!mappedNames.has(mappingKey)) {
+        mappedNames.add(mappingKey);
+        const mappingId = `sola-map-${encodeURIComponent(mappingKey).slice(0, 170)}`;
+        const mapping: any = await c.env.DB.prepare("SELECT revision FROM sync_records WHERE type='solaDonorMappings' AND id=? AND is_deleted=0").bind(mappingId).first();
+        const mappingData = JSON.stringify({ id: mappingId, solaName: name, donorId: matches[0].id, updatedAt: now });
+        const mappingRevision = Number(mapping?.revision || 0) + 1; const mappingOperation = `${mutationId}-mapping-${scheduleId}`;
+        if (mapping) statements.push(
+          c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='solaDonorMappings' AND id=? AND revision=? AND is_deleted=0").bind(mappingData, mappingRevision, now, mappingOperation, mappingId, mapping.revision),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',?,'update',?,?,?,?)").bind(mappingId, mappingRevision, mappingData, now, mutationId, mappingOperation)
+        ); else statements.push(
+          c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaDonorMappings',?,?,1,0,?)").bind(mappingId, mappingData, now, mappingOperation),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',1,'insert',?,?,?,?)").bind(mappingId, mappingData, now, mutationId, mappingOperation)
+        );
+      }
+      const id = `sola-schedule-${scheduleId}`;
+      const found = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='recurringPayments' AND (id=? OR json_extract(data,'$.solaScheduleId')=?) AND is_deleted=0 LIMIT 1").bind(id, scheduleId).first();
+      if (found) { existing.push({ scheduleId, name, donorId: matches[0].id }); continue; }
+      const amount = Number(source?.amount);
+      const nextDate = String(source?.nextDate || source?.startDate || '').slice(0, 10);
+      if (!Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { unmatched.push({ scheduleId, name, reason: 'Missing a valid amount or next payment date.' }); continue; }
+      const frequency = frequencyMap[String(source?.frequency || '').trim().toLowerCase()] || 'monthly';
+      const record = { id, donorId: matches[0].id, amount, currency: 'CAD', frequency, nextDate, ...(String(source?.endDate || '').slice(0, 10) ? { endDate: String(source.endDate).slice(0, 10) } : {}), method: 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
+      const data = JSON.stringify(record); const operationId = `${mutationId}-${scheduleId}`;
+      statements.push(
+        c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'recurringPayments',?,?,1,0,?)").bind(id, data, now, operationId),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',1,'insert',?,?,?,?)").bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, mutationId, operationId, 'Imported active recurring schedule from Sola')
+      );
+      imported.push({ scheduleId, name, donorId: matches[0].id, donorName: matches[0].name, id });
+    }
+    const result = { success: true, imported, unmatched, ambiguous, inactive, existing, counts: { imported: imported.length, unmatched: unmatched.length, ambiguous: ambiguous.length, inactive: inactive.length, existing: existing.length } };
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), now));
+    try { await c.env.DB.batch(statements); return c.json(result); }
+    catch (reason: any) { return c.json({ success: false, error: `Unable to import Sola schedules: ${reason.message || 'database error'}` }, 409); }
   });
 
   app.get('/v3/sola/view', async (c: any) => {
@@ -1032,7 +1140,19 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records d WHERE d.type='donors' AND d.is_deleted=0 ${condition}`).bind(...searchBindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
-    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), totalGiven: Number(row.total_given || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+    const donorIds = listResult.results.map((row: any) => String(row.id));
+    const recordsByDonor = new Map<string, { pledges: any[]; payments: any[]; schedules: any[] }>();
+    for (const id of donorIds) recordsByDonor.set(id, { pledges: [], payments: [], schedules: [] });
+    if (donorIds.length) {
+      const placeholders = donorIds.map(() => '?').join(',');
+      const related = await c.env.DB.prepare(`SELECT type,data FROM sync_records WHERE type IN ('pledges','transactions','recurringPayments') AND is_deleted=0 AND json_extract(data,'$.donorId') IN (${placeholders})`).bind(...donorIds).all();
+      for (const row of related.results as any[]) {
+        const value = parseSetting(row.data, null); const group = recordsByDonor.get(String(value?.donorId || '')); if (!group || !value) continue;
+        if (row.type === 'pledges') group.pledges.push(value); else if (row.type === 'transactions') group.payments.push(value); else group.schedules.push(value);
+      }
+    }
+    const items = listResult.results.map((row: any) => { const group = recordsByDonor.get(String(row.id)) || { pledges: [], payments: [], schedules: [] }; const openBalance = calculatePledgeFinancials(group.pledges, group.payments, group.schedules).reduce((sum, pledge) => sum + Math.max(0, Number(pledge.balance || 0)), 0); return { ...parseRecord(row), totalGiven: Number(row.total_given || 0), openBalance }; });
+    return c.json({ success: true, items, page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.post('/v3/donors/google-sheet/preview', async (c: any) => {

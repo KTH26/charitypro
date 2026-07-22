@@ -19,6 +19,7 @@ export type OnlineDonor = {
   homePhone?: string;
   mobilePhone?: string;
   totalGiven: number;
+  openBalance?: number;
 };
 
 export const OnlineDonorForm: React.FC<{

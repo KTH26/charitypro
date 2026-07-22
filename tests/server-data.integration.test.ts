@@ -431,9 +431,26 @@ describe('server-driven bank deposit matching', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ Schedules: [{ ScheduleId: 'sch-1', BillName: 'Jane Donor', Amount: 75, Active: 'true', IntervalType: 'Monthly', StartDate: '2026-03-20', EndDate: '2027-02-20' }, { ScheduleId: 'sch-2', BillName: 'John Donor', Amount: 25, Status: 'Active' }, { ScheduleId: 'sch-inactive', BillName: 'Old Donor', Amount: 50, Active: 'false' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
     const response = await app.request('/v3/sola/schedules/preview', { method: 'POST' }, { DB: db } as any); const body = await response.json() as any;
-    expect(response.status).toBe(200); expect(body).toMatchObject({ success: true, count: 2, readOnly: true }); expect(body.items[0]).toMatchObject({ scheduleId: 'sch-1', name: 'Jane Donor', amount: 75, active: true }); expect(body.items[1]).toMatchObject({ scheduleId: 'sch-2', active: true });
+    expect(response.status).toBe(200); expect(body).toMatchObject({ success: true, count: 3, readOnly: true }); expect(body.items[0]).toMatchObject({ scheduleId: 'sch-1', name: 'Jane Donor', amount: 75, active: true }); expect(body.items[1]).toMatchObject({ scheduleId: 'sch-2', active: true }); expect(body.items[2]).toMatchObject({ scheduleId: 'sch-inactive', active: false });
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaSchedules'").get().count).toBe(0);
     const [, options] = fetchMock.mock.calls[0]; expect((options?.headers as any).Authorization).toBe('test-secret'); expect((options?.headers as any)['X-Recurring-Api-Version']).toBe('2.1'); expect(JSON.parse(String(options?.body))).toMatchObject({ SortOrder: 'Descending', Filters: { IsDeleted: false } }); expect(JSON.parse(String(options?.body)).Filters).not.toHaveProperty('Active');
+  });
+
+  it('imports active Sola schedules by exact donor name and remembers the donor mapping', async () => {
+    const db = new MockD1(); databases.push(db); seedRecord(db, 'donors', 'donor-jane', { id: 'donor-jane', firstName: 'Jane', lastName: 'Donor', name: 'Jane Donor' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'tester'); c.set('userEmail', 'tester@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const schedules = [{ scheduleId: 'sch-active', name: 'Jane Donor', amount: 75, active: true, frequency: 'Monthly', nextDate: '2026-08-20', endDate: '2027-02-20' }, { scheduleId: 'sch-inactive', name: 'Jane Donor', amount: 25, active: false, frequency: 'Monthly', nextDate: '2026-08-20' }, { scheduleId: 'sch-unknown', name: 'Unknown Person', amount: 10, active: true, frequency: 'Monthly', nextDate: '2026-08-20' }];
+    const response = await app.request('/v3/sola/schedules/import', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'import-schedules-1' }, body: JSON.stringify({ schedules }) }, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.counts).toMatchObject({ imported: 1, inactive: 1, unmatched: 1 });
+    const schedule: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='sola-schedule-sch-active'").get(); expect(JSON.parse(schedule.data)).toMatchObject({ donorId: 'donor-jane', solaScheduleId: 'sch-active', active: true, amount: 75 });
+    const mapping: any = db.database.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings'").get(); expect(JSON.parse(mapping.data)).toMatchObject({ solaName: 'Jane Donor', donorId: 'donor-jane' });
+  });
+
+  it('soft deletes every CharityPro schedule without touching Sola', async () => {
+    const db = new MockD1(); databases.push(db); seedRecord(db, 'recurringPayments', 'schedule-1', { id: 'schedule-1', donorId: 'donor-1', amount: 10, nextDate: '2026-08-01', active: true }); seedRecord(db, 'recurringPayments', 'schedule-2', { id: 'schedule-2', donorId: 'donor-2', amount: 20, nextDate: '2026-08-01', active: false });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'tester'); c.set('userEmail', 'tester@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/schedules', { method: 'DELETE', headers: { 'Idempotency-Key': 'delete-schedules-1' } }, { DB: db } as any); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body).toMatchObject({ success: true, deleted: 2 }); expect((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='recurringPayments' AND is_deleted=0").get() as any).count).toBe(0);
   });
 
   it('shows a Sola recurring API error instead of reporting a false zero schedule success', async () => {
