@@ -239,6 +239,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const pledge: any = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(String(record.pledgeId), String(record.donorId || '')).first();
       if (!pledge) return c.json({ success: false, error: 'The selected pledge does not belong to this donor.' }, 409);
     }
+    if (type === 'transactions' && record.projectId) {
+      const project = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(String(record.projectId)).first();
+      if (!project) return c.json({ success:false,error:'The selected project does not exist.' },409);
+    }
     const now = Date.now();
     const nextRevision = expectedRevision + 1;
     const data = JSON.stringify(record);

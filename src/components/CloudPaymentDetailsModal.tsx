@@ -12,16 +12,17 @@ export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => v
   const [allocating, setAllocating] = useState(false);
   const [error, setError] = useState('');
   const [accounts, setAccounts] = useState<Choice[]>([]);
+  const [projects, setProjects] = useState<Choice[]>([]);
   const [donors, setDonors] = useState<Choice[]>([]);
   const [donorSearch, setDonorSearch] = useState(initialPayment.donorName || '');
   const [allocation, setAllocation] = useState(initialPayment.pledgeId || '');
-  const [form, setForm] = useState({ donorId: initialPayment.donorId || '', amount: String(initialPayment.amount || ''), currency: initialPayment.currency || 'CAD', amountCAD: String(initialPayment.amountCAD || ''), exchangeRate: String(initialPayment.exchangeRate || 1.35), date: initialPayment.date || '', type: initialPayment.type || 'approved', method: initialPayment.method || 'credit_card', depositStatus: initialPayment.depositStatus || '', checkNumber: initialPayment.checkNumber || '', sourceAccountId: initialPayment.sourceAccountId || '', offsetAccountId: initialPayment.offsetAccountId || '', notes: initialPayment.notes || '', pledgeId: initialPayment.pledgeId || '' });
+  const [form, setForm] = useState({ donorId: initialPayment.donorId || '', amount: String(initialPayment.amount || ''), currency: initialPayment.currency || 'CAD', amountCAD: String(initialPayment.amountCAD || ''), exchangeRate: String(initialPayment.exchangeRate || 1.35), date: initialPayment.date || '', type: initialPayment.type || 'approved', method: initialPayment.method || 'credit_card', depositStatus: initialPayment.depositStatus || '', checkNumber: initialPayment.checkNumber || '', sourceAccountId: initialPayment.sourceAccountId || '', offsetAccountId: initialPayment.offsetAccountId || '', projectId: initialPayment.projectId || '', notes: initialPayment.notes || '', pledgeId: initialPayment.pledgeId || '' });
   const requestId = useRef('');
   const allocationRequestId = useRef('');
 
   useEffect(() => {
     if (!editing || accounts.length) return;
-    fetch('/api/v3/accounts?limit=100').then(response => response.json()).then(data => { if (data.success) setAccounts(data.items); }).catch(() => setError('Unable to load account choices.'));
+    Promise.all([fetch('/api/v3/accounts?limit=100').then(response=>response.json()),fetch('/api/v3/records/projects?limit=100').then(response=>response.json())]).then(([accountData,projectData])=>{if(accountData.success)setAccounts(accountData.items);if(projectData.success)setProjects(projectData.items);}).catch(() => setError('Unable to load account and project choices.'));
   }, [editing, accounts.length]);
   useEffect(() => {
     if (!editing) return;
@@ -46,7 +47,7 @@ export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => v
     if (!form.donorId || !Number.isFinite(amount) || amount <= 0 || !form.date || !form.sourceAccountId || !form.offsetAccountId) { setError('Donor, amount, date, asset account, and revenue account are required.'); return; }
     setSaving(true); const key = requestId.current || crypto.randomUUID(); requestId.current = key;
     try {
-      const data: any = { donorId: form.donorId, amount, currency: form.currency, date: form.date, type: form.type, method: form.method, sourceAccountId: form.sourceAccountId, offsetAccountId: form.offsetAccountId, notes: form.notes.trim(), depositStatus: form.depositStatus || undefined, checkNumber: form.checkNumber.trim() || undefined, pledgeId: form.pledgeId.trim() || null };
+      const data: any = { donorId: form.donorId, amount, currency: form.currency, date: form.date, type: form.type, method: form.method, sourceAccountId: form.sourceAccountId, offsetAccountId: form.offsetAccountId, projectId: form.projectId || null, notes: form.notes.trim(), depositStatus: form.depositStatus || undefined, checkNumber: form.checkNumber.trim() || undefined, pledgeId: form.pledgeId.trim() || null };
       if (form.currency === 'USD') { data.exchangeRate = Number(form.exchangeRate) || 1.35; data.amountCAD = Number(form.amountCAD) || amount * data.exchangeRate; } else data.amountCAD = amount;
       const response = await fetch(`/api/v3/records/transactions/${encodeURIComponent(payment.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ revision: payment.revision, data }) });
       const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || 'Unable to save transaction changes.');
@@ -79,6 +80,7 @@ export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => v
       <Field label="Deposit Status"><select value={form.depositStatus} onChange={event => set('depositStatus', event.target.value)}><option value="">Direct</option><option value="undeposited">Undeposited</option><option value="deposited">Deposited</option></select></Field>
       <Field label="Asset / Deposit Account *"><select value={form.sourceAccountId} onChange={event => set('sourceAccountId', event.target.value)}><option value="">Select account</option>{accounts.filter(account => account.type === 'asset' || account.type === 'liability').map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
       <Field label="Revenue / Offset Account *"><select value={form.offsetAccountId} onChange={event => set('offsetAccountId', event.target.value)}><option value="">Select account</option>{accounts.filter(account => account.type === 'revenue' || account.type === 'equity').map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+      <Field label="Project"><select value={form.projectId} onChange={event=>set('projectId',event.target.value)}><option value="">— No Project —</option>{projects.map(project=><option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>
       <Field label="Check Number"><input value={form.checkNumber} onChange={event => set('checkNumber', event.target.value)} /></Field>
       <CloudPledgePicker donorId={form.donorId} paymentDate={form.date} value={form.pledgeId} onChange={value => set('pledgeId', value)} />
       <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Notes</span><textarea rows={4} value={form.notes} onChange={event => set('notes', event.target.value)} /></label>
