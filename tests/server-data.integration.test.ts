@@ -180,7 +180,7 @@ describe('server-driven bank deposit matching', () => {
 
   it('searches donors with a bounded server-side page', async () => {
     const db = new MockD1(); databases.push(db);
-    seedRecord(db, 'donors', 'donor-search-1', { id: 'donor-search-1', name: 'Sarah Smith', firstName: 'Sarah', lastName: 'Smith', phone: '555-0100', email: 'sarah@example.com', displayId: 'D-100' });
+    seedRecord(db, 'donors', 'donor-search-1', { id: 'donor-search-1', name: 'Sarah Smith', firstName: 'Sarah', lastName: 'Smith', hebFirstName: 'שרה', hebLastName: 'סמיט', phone: '555-0100', email: 'sarah@example.com', displayId: 'D-100' });
     seedRecord(db, 'transactions', 'donor-payment-1', { id: 'donor-payment-1', donorId: 'donor-search-1', amount: 40, amountCAD: 40, currency: 'CAD', date: '2026-07-20', type: 'approved', method: 'cash' });
     seedRecord(db, 'pledges', 'donor-pledge-1', { id: 'donor-pledge-1', donorId: 'donor-search-1', amount: 100, currency: 'CAD', date: '2026-07-19' });
     const app = new Hono();
@@ -192,6 +192,8 @@ describe('server-driven bank deposit matching', () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0].name).toBe('Sarah Smith');
     expect(body.limit).toBe(50);
+    const yiddishResponse=await app.request(`/v3/donors?limit=50&search=${encodeURIComponent('שרה')}`,{}, {DB:db} as any);const yiddish=await yiddishResponse.json() as any;
+    expect(yiddishResponse.status).toBe(200);expect(yiddish.items[0]).toMatchObject({id:'donor-search-1',hebFirstName:'שרה'});
     const profileResponse = await app.request('/v3/donors/donor-search-1/profile', {}, { DB: db } as any);
     const profile = await profileResponse.json() as any;
     expect(profileResponse.status).toBe(200);
