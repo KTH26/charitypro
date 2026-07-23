@@ -463,6 +463,7 @@ describe('server-driven bank deposit matching', () => {
 
   it('saves the Sola schedule inbox and reloads it without another Sola request', async () => {
     const db = new MockD1(); databases.push(db); seedRecord(db, 'solaApiKey', 'solaApiKey', 'test-secret');
+    seedRecord(db, 'donors', 'donor-jane', { id:'donor-jane',name:'Jane Donor',hebFirstName:'דזשיין',hebLastName:'דאָנאָר' });
     seedRecord(db, 'solaDonorMappings', 'sola-map-jane', { solaName: 'Jane Donor', donorId: 'donor-jane' });
     seedRecord(db, 'recurringPayments', 'sola-schedule-sch-1', { solaScheduleId: 'sch-1', donorId: 'donor-jane', amount: 75, active: true });
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ Schedules: [{ ScheduleId: 'sch-1', BillName: 'Jane Donor', Amount: 75, Active: 'true', IntervalType: 'Monthly', StartDate: '2026-03-20', LastProjectedPaymentDate: '2027-02-20', TotalPayments: 12, PaymentsProcessed: 5 }, { ScheduleId: 'sch-2', BillName: 'John Donor', Amount: 25, Status: 'Active' }, { ScheduleId: 'sch-inactive', BillName: 'Old Donor', Amount: 50, Active: 'false' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -470,7 +471,7 @@ describe('server-driven bank deposit matching', () => {
     const response = await app.request('/v3/sola/schedules/preview', { method: 'POST' }, { DB: db } as any); const body = await response.json() as any;
     expect(response.status).toBe(200); expect(body).toMatchObject({ success: true, count: 3 }); expect(body.items[0]).toMatchObject({ scheduleId: 'sch-1', name: 'Jane Donor', amount: 75, active: true, endDate: '2027-02-20', totalPayments: 12, paymentsProcessed: 5, paymentsRemaining: 7, matchedDonorId: 'donor-jane', imported: true }); expect(body.items[1]).toMatchObject({ scheduleId: 'sch-2', active: true, imported: false }); expect(body.items[2]).toMatchObject({ scheduleId: 'sch-inactive', active: false });
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaScheduleInbox'").get().count).toBe(3);
-    const savedResponse=await app.request('/v3/sola/schedules/saved-preview',{}, {DB:db} as any);const saved=await savedResponse.json() as any;expect(savedResponse.status).toBe(200);expect(saved.items).toHaveLength(3);expect(saved.items[0]).toMatchObject({scheduleId:'sch-1',matchedDonorId:'donor-jane',imported:true});expect(fetchMock).toHaveBeenCalledTimes(1);
+    const savedResponse=await app.request('/v3/sola/schedules/saved-preview',{}, {DB:db} as any);const saved=await savedResponse.json() as any;expect(savedResponse.status).toBe(200);expect(saved.items).toHaveLength(3);expect(saved.items[0]).toMatchObject({scheduleId:'sch-1',matchedDonorId:'donor-jane',matchedDonorName:'Jane Donor · דזשיין דאָנאָר',imported:true});expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, options] = fetchMock.mock.calls[0]; expect((options?.headers as any).Authorization).toBe('test-secret'); expect((options?.headers as any)['X-Recurring-Api-Version']).toBe('2.1'); expect(JSON.parse(String(options?.body))).toMatchObject({ SortOrder: 'Descending', Filters: { IsDeleted: false } }); expect(JSON.parse(String(options?.body)).Filters).not.toHaveProperty('Active');
   });
 

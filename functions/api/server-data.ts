@@ -969,16 +969,18 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
   app.get('/v3/sola/schedules/saved-preview', async (c:any) => {
     const denied=requirePermission(c,'transactions.read');if(denied)return denied;
-    const [inboxRows,mappingRows,importedRows,metadata]=await c.env.DB.batch([
+    const [inboxRows,mappingRows,importedRows,metadata,donorRows]=await c.env.DB.batch([
       c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaScheduleInbox' AND is_deleted=0 ORDER BY lower(json_extract(data,'$.name')),id"),
       c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings' AND is_deleted=0"),
       c.env.DB.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.solaScheduleId') IS NOT NULL"),
-      c.env.DB.prepare("SELECT value,updated_at FROM sync_metadata WHERE key='sola_schedule_inbox_status'")
+      c.env.DB.prepare("SELECT value,updated_at FROM sync_metadata WHERE key='sola_schedule_inbox_status'"),
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='donors' AND is_deleted=0")
     ]);
     const normalizeName=(value:unknown)=>String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
     const mappedDonors=new Map<string,string>();for(const row of mappingRows.results as any[]){const value=parseSetting(row.data,{});if(value.solaName&&value.donorId)mappedDonors.set(normalizeName(value.solaName),String(value.donorId));}
     const importedIds=new Set(importedRows.results.map((row:any)=>String(parseSetting(row.data,{})?.solaScheduleId||'')).filter(Boolean));
-    const items=inboxRows.results.map((row:any)=>parseSetting(row.data,{})).map((item:any)=>({...item,matchedDonorId:mappedDonors.get(normalizeName(item.name))||'',imported:importedIds.has(String(item.scheduleId))}));
+    const donorNames=new Map(donorRows.results.map((row:any)=>{const donor=parseSetting(row.data,{});const english=donor.name||[donor.firstName,donor.lastName].filter(Boolean).join(' ');const yiddish=[donor.preTitle,donor.hebFirstName,donor.hebLastName,donor.title].filter(Boolean).join(' ');return [String(row.id),[english,yiddish].filter(Boolean).join(' · ')];}));
+    const items=inboxRows.results.map((row:any)=>parseSetting(row.data,{})).map((item:any)=>{const matchedDonorId=mappedDonors.get(normalizeName(item.name))||'';return {...item,matchedDonorId,matchedDonorName:donorNames.get(matchedDonorId)||'',imported:importedIds.has(String(item.scheduleId))};});
     const status:any=metadata.results[0];return c.json({success:true,items,count:items.length,savedAt:Number(status?.updated_at||0),sync:parseSetting(status?.value,null)});
   });
 
@@ -1028,15 +1030,17 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const savedAt=Date.now();
       for(let index=0;index<items.length;index+=50){const statements=items.slice(index,index+50).map((item:any)=>c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaScheduleInbox',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(String(item.scheduleId),JSON.stringify(item),savedAt,`sola-schedule-inbox-${savedAt}-${item.scheduleId}`));if(statements.length)await c.env.DB.batch(statements);}
       await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_schedule_inbox_status',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify({savedAt,count:items.length,pages}),savedAt).run();
-      const [mappingRows, importedRows] = await c.env.DB.batch([
+      const [mappingRows, importedRows, donorRows] = await c.env.DB.batch([
         c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings' AND is_deleted=0"),
-        c.env.DB.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.solaScheduleId') IS NOT NULL")
+        c.env.DB.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.solaScheduleId') IS NOT NULL"),
+        c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='donors' AND is_deleted=0")
       ]);
       const normalizeName = (value: unknown) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
       const mappedDonors = new Map<string,string>();
       for (const row of mappingRows.results as any[]) { const value = parseSetting(row.data, {}); if (value.solaName && value.donorId) mappedDonors.set(normalizeName(value.solaName), String(value.donorId)); }
       const importedIds = new Set(importedRows.results.map((row: any) => String(parseSetting(row.data, {})?.solaScheduleId || '')).filter(Boolean));
-      const enrichedItems = items.map((item: any) => ({ ...item, matchedDonorId: mappedDonors.get(normalizeName(item.name)) || '', imported: importedIds.has(String(item.scheduleId)) }));
+      const donorNames=new Map(donorRows.results.map((row:any)=>{const donor=parseSetting(row.data,{});const english=donor.name||[donor.firstName,donor.lastName].filter(Boolean).join(' ');const yiddish=[donor.preTitle,donor.hebFirstName,donor.hebLastName,donor.title].filter(Boolean).join(' ');return [String(row.id),[english,yiddish].filter(Boolean).join(' · ')];}));
+      const enrichedItems = items.map((item: any) => {const matchedDonorId=mappedDonors.get(normalizeName(item.name))||'';return { ...item, matchedDonorId,matchedDonorName:donorNames.get(matchedDonorId)||'', imported: importedIds.has(String(item.scheduleId)) };});
       return c.json({ success: true, items: enrichedItems, count: enrichedItems.length, pages, savedAt, message: 'Schedules were saved to the CharityPro cloud inbox. Nothing was changed in Sola.' });
     } catch (reason: any) { return c.json({ success: false, error: `Unable to read Sola recurring schedules: ${reason.message || 'network error'}` }, 502); }
   });
