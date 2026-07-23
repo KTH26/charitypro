@@ -347,6 +347,19 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200); expect(body.items).toEqual([{ id: 'plaid-1', accountId: 'bank-1', date: '2026-07-21', description: 'Saved deposit', amount: 125 }]); expect(body.sync.lastSuccessfulDate).toBe('2026-07-21');
   });
 
+  it('reopens the most recently synced bank and reports its saved transaction count', async () => {
+    const db=new MockD1();databases.push(db);
+    seedRecord(db,'accounts','older-bank',{id:'older-bank',name:'Older Bank',type:'asset',currency:'CAD',plaidConnected:true});
+    seedRecord(db,'accounts','recent-bank',{id:'recent-bank',name:'Recent Bank',type:'asset',currency:'CAD',plaidConnected:true});
+    seedRecord(db,'bankFeedTransactions','recent-bank:tx-1',{id:'tx-1',accountId:'recent-bank',date:'2026-07-22',description:'Saved',amount:10});
+    db.database.prepare('CREATE TABLE plaid_tokens(account_id TEXT PRIMARY KEY,access_token TEXT NOT NULL)').run();
+    db.database.prepare('INSERT INTO plaid_tokens(account_id,access_token) VALUES(?,?),(?,?)').run('older-bank','old-token','recent-bank','new-token');
+    db.database.prepare('INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?),(?,?,?)').run('bank_sync:older-bank','{}',10,'bank_sync:recent-bank','{}',20);
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/bank/state',{}, {DB:db} as any);const body=await response.json() as any;
+    expect(response.status).toBe(200);expect(body.accounts[0]).toMatchObject({id:'recent-bank',savedTransactionCount:1,lastBankSync:20});
+  });
+
   it('calculates fundraising reports on the server in bounded pages', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'report-donor', { id: 'report-donor', name: 'Report Donor', phone: '555-0101' });

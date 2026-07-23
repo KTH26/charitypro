@@ -9,7 +9,7 @@ type BillCandidate = { id: string; revision: number; vendor: string; amount: num
 export const OnlineBank: React.FC = () => {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [allAccounts, setAllAccounts] = useState<CloudAccount[]>([]);
-  const [selectedBank, setSelectedBank] = useState('');
+  const [selectedBank, setSelectedBank] = useState(() => window.localStorage.getItem('charitypro:selected-bank-account') || '');
   const [feed, setFeed] = useState<BankTransaction[]>([]);
   const [tab, setTab] = useState<'unmatched' | 'matched'>('unmatched');
   const [startDate, setStartDate] = useState('');
@@ -70,6 +70,7 @@ export const OnlineBank: React.FC = () => {
   };
 
   useEffect(() => { void loadState(); }, [loadState]);
+  useEffect(() => { if (selectedBank) window.localStorage.setItem('charitypro:selected-bank-account', selectedBank); }, [selectedBank]);
   useEffect(() => { const interval = window.setInterval(() => void loadState(true), 3000); return () => window.clearInterval(interval); }, [loadState]);
   useEffect(() => { if (selectedBank) void loadFeed(); }, [selectedBank, feedPage, loadFeed]);
   useEffect(() => { fetch('/api/v3/accounts?limit=100').then(response => response.json()).then(data => { if (data.success) setAllAccounts(data.items); }).catch(() => undefined); }, []);

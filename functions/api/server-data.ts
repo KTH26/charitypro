@@ -1680,17 +1680,20 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const [accountResult, matchRecord] = await Promise.all([
       c.env.DB.prepare(`
         SELECT a.id,a.data,a.revision,a.updated_at,
-          CASE WHEN p.account_id IS NULL THEN 0 ELSE 1 END AS has_token
+          CASE WHEN p.account_id IS NULL THEN 0 ELSE 1 END AS has_token,
+          COALESCE(s.updated_at,0) AS last_bank_sync,
+          (SELECT COUNT(*) FROM sync_records f WHERE f.type='bankFeedTransactions' AND f.is_deleted=0 AND json_extract(f.data,'$.accountId')=a.id) AS saved_transaction_count
         FROM sync_records a LEFT JOIN plaid_tokens p ON p.account_id=a.id
+        LEFT JOIN sync_metadata s ON s.key='bank_sync:'||a.id
         WHERE a.type='accounts' AND a.is_deleted=0 AND COALESCE(json_extract(a.data,'$.plaidConnected'),0)=1
-        ORDER BY lower(json_extract(a.data,'$.name'))
+        ORDER BY last_bank_sync DESC,lower(json_extract(a.data,'$.name'))
       `).all(),
       c.env.DB.prepare("SELECT data,revision,updated_at FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0").first()
     ]);
     const matchedIds = matchRecord ? JSON.parse(String((matchRecord as any).data)) : [];
     return c.json({
       success: true,
-      accounts: accountResult.results.map((row: any) => ({ ...parseRecord(row), bankConnected: Boolean(row.has_token) })),
+      accounts: accountResult.results.map((row: any) => ({ ...parseRecord(row), bankConnected: Boolean(row.has_token), lastBankSync:Number(row.last_bank_sync||0), savedTransactionCount:Number(row.saved_transaction_count||0) })),
       matchedIds: Array.isArray(matchedIds) ? matchedIds : [],
       matchedRevision: Number((matchRecord as any)?.revision || 0),
       updatedAt: Number((matchRecord as any)?.updated_at || 0)
