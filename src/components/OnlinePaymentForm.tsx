@@ -15,7 +15,10 @@ export const OnlinePaymentForm: React.FC<{
   onCreated: (status: PaymentStatus) => void;
   onCancel: () => void;
   donor?: Donor;
-}> = ({ onCreated, onCancel, donor }) => {
+  defaultAmount?:number;
+  defaultDate?:string;
+  defaultSourceAccountId?:string;
+}> = ({ onCreated, onCancel, donor, defaultAmount, defaultDate, defaultSourceAccountId }) => {
   const [donorQuery, setDonorQuery] = useState(donor?.name || '');
   const [donors, setDonors] = useState<Donor[]>(donor ? [donor] : []);
   const [donorId, setDonorId] = useState(donor?.id || '');
@@ -23,11 +26,11 @@ export const OnlinePaymentForm: React.FC<{
   const [projects, setProjects] = useState<Choice[]>([]);
   const [fundraisers, setFundraisers] = useState<Choice[]>([]);
   const [pledges, setPledges] = useState<PledgeChoice[]>([]);
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(defaultAmount?String(defaultAmount):'');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [method, setMethod] = useState('other');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [sourceAccountId, setSourceAccountId] = useState('');
+  const [date, setDate] = useState(defaultDate||new Date().toISOString().slice(0, 10));
+  const [sourceAccountId, setSourceAccountId] = useState(defaultSourceAccountId||'');
   const [offsetAccountId, setOffsetAccountId] = useState('');
   const [notes, setNotes] = useState('');
   const [projectId, setProjectId] = useState('');

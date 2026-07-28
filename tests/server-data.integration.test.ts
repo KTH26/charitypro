@@ -102,6 +102,13 @@ describe('server-driven bank deposit matching', () => {
     expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(2);
   });
 
+  it('searches and matches deposits using a user-selected payment date window', async()=>{
+    const db=new MockD1();databases.push(db);seedRecord(db,'accounts','bank-custom',{id:'bank-custom',name:'Bank',type:'asset',currency:'CAD',plaidConnected:true});seedRecord(db,'matchedBankTransactions','matchedBankTransactions',[],1);seedRecord(db,'donors','custom-donor',{id:'custom-donor',name:'Custom Donor'});seedRecord(db,'transactions','custom-payment',{id:'custom-payment',donorId:'custom-donor',amount:55,amountCAD:55,date:'2026-06-01',type:'approved',method:'cash',currency:'CAD',sourceAccountId:'sys-undeposited-funds',depositStatus:'undeposited'});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
+    const candidatesResponse=await app.request('/v3/bank/deposit-candidates?bankDate=2026-07-21&from=2026-06-01&to=2026-06-02',{}, {DB:db} as any);const candidates=await candidatesResponse.json() as any;expect(candidates.items).toHaveLength(1);expect(candidates.items[0].id).toBe('custom-payment');
+    const matchResponse=await app.request('/v3/bank/match-deposit',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'custom-window-match'},body:JSON.stringify({requestId:'custom-window-match',accountId:'bank-custom',bankTransactionId:'custom-bank-deposit',bankDate:'2026-07-21',candidateFrom:'2026-06-01',candidateTo:'2026-06-02',description:'Deposit',amount:55,transactionIds:['custom-payment']})},{DB:db} as any);expect(matchResponse.status).toBe(200);
+  });
+
   it('atomically links and pays an existing bill', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'accounts', 'bank-1', { id: 'bank-1', name: 'Bank', type: 'asset', currency: 'CAD', plaidConnected: true });

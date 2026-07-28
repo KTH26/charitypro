@@ -1740,7 +1740,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/bank/deposit-candidates', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
-    const window = depositCandidateWindow(String(c.req.query('bankDate') || ''));
+    const defaultWindow = depositCandidateWindow(String(c.req.query('bankDate') || ''));const customFrom=String(c.req.query('from')||'');const customTo=String(c.req.query('to')||'');const customValid=/^\d{4}-\d{2}-\d{2}$/.test(customFrom)&&/^\d{4}-\d{2}-\d{2}$/.test(customTo)&&customFrom<=customTo;const window=customValid?{start:customFrom,end:customTo}:defaultWindow;
     if (!window) return c.json({ success: false, error: 'A valid bank date is required.' }, 400);
     const result = await c.env.DB.prepare(`
       SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name
@@ -1772,7 +1772,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const bankDate = String(body.bankDate || '').trim();
     const description = String(body.description || 'Bank Deposit').trim().slice(0, 500);
     const amount = Number(body.amount);
-    const window = depositCandidateWindow(bankDate);
+    const defaultWindow=depositCandidateWindow(bankDate);const candidateFrom=String(body.candidateFrom||'');const candidateTo=String(body.candidateTo||'');const customValid=/^\d{4}-\d{2}-\d{2}$/.test(candidateFrom)&&/^\d{4}-\d{2}-\d{2}$/.test(candidateTo)&&candidateFrom<=candidateTo;const window=customValid?{start:candidateFrom,end:candidateTo}:defaultWindow;
     const transactionIds = [...new Set(Array.isArray(body.transactionIds) ? body.transactionIds.map((id: any) => String(id)) : [])];
     if (!accountId || !bankTransactionId || !window || !Number.isFinite(amount) || amount <= 0 || transactionIds.length === 0 || transactionIds.length > 500) {
       return c.json({ success: false, error: 'Bank account, deposit, positive amount, and selected payments are required.' }, 400);
