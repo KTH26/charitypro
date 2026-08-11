@@ -438,12 +438,13 @@ describe('server-driven bank deposit matching', () => {
 
   it('matches a saved Sola charge to an online transaction exactly once', async () => {
     const db = new MockD1(); databases.push(db);
-    seedRecord(db, 'solaTransactions', 'sola-ref-1', { ref: 'sola-ref-1', name: 'Jane Donor', date: '2026-07-21', amount: 50, status: 'Approved', last4: '1234', batch: 'batch-1' });
+    seedRecord(db, 'solaTransactions', 'sola-ref-1', { ref: 'sola-ref-1', name: 'Jane Donor', date: '2026-07-27', amount: 50, status: 'Approved', last4: '1234', batch: 'batch-1' });
     seedRecord(db, 'dismissedSolaRefs', 'dismissedSolaRefs', []);
     seedRecord(db, 'donors', 'donor-sola', { id: 'donor-sola', name: 'Jane Donor', aliases: [] });
-    seedRecord(db, 'transactions', 'pending-sola', { id: 'pending-sola', donorId: 'donor-sola', amount: 50, amountCAD: 50, currency: 'CAD', method: 'credit_card', date: '2026-07-21', type: 'pending' });
+    seedRecord(db, 'transactions', 'pending-sola', { id: 'pending-sola', donorId: 'donor-sola', amount: 50, amountCAD: 50, currency: 'CAD', method: 'credit_card', date: '2026-07-01', type: 'pending' });
+    for (let index = 0; index < 60; index++) seedRecord(db, 'transactions', `newer-pending-${index}`, { id: `newer-pending-${index}`, donorId: 'donor-sola', amount: 999, currency: 'CAD', method: 'credit_card', date: '2026-07-28', type: 'pending' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
-    const viewResponse = await app.request('/v3/sola/view?startDate=2026-07-01&endDate=2026-07-31&limit=50', {}, { DB: db } as any); const view = await viewResponse.json() as any;
+    const viewResponse = await app.request('/v3/sola/view?startDate=2026-07-27&endDate=2026-07-31&limit=50', {}, { DB: db } as any); const view = await viewResponse.json() as any;
     expect(viewResponse.status).toBe(200); expect(view.autoMatches).toEqual([{ transactionId: 'pending-sola', solaRef: 'sola-ref-1' }]);
     const resolveRequest = () => app.request('/v3/sola/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'resolve-sola-1' }, body: JSON.stringify({ action: 'match', ref: 'sola-ref-1', transactionId: 'pending-sola', revision: 1 }) }, { DB: db } as any);
     expect((await resolveRequest()).status).toBe(200); expect((await resolveRequest()).status).toBe(200);
