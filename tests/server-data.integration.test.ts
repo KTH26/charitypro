@@ -453,6 +453,20 @@ describe('server-driven bank deposit matching', () => {
     expect(JSON.parse(mapping.data)).toMatchObject({ solaName: 'Jane Donor', donorId: 'donor-sola' });
   });
 
+  it('permanently removes inactive Sola schedules from the saved matching inbox', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'solaScheduleInbox', 'inactive-sola-1', { scheduleId: 'inactive-sola-1', name: 'Old Schedule', active: false });
+    seedRecord(db, 'solaScheduleInbox', 'active-sola-1', { scheduleId: 'active-sola-1', name: 'Current Schedule', active: true });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const request = () => app.request('/v3/sola/schedules/remove-inactive', { method: 'POST', headers: { 'Idempotency-Key': 'remove-inactive-sola' } }, { DB: db } as any);
+    const response = await request(); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.removed).toBe(1); expect((await request()).status).toBe(200);
+    const saved = await (await app.request('/v3/sola/schedules/saved-preview', {}, { DB: db } as any)).json() as any;
+    expect(saved.items.map((item: any) => item.scheduleId)).toEqual(['active-sola-1']);
+    const removed: any = db.database.prepare("SELECT value FROM sync_metadata WHERE key='sola_schedule_removed_ids'").get();
+    expect(JSON.parse(removed.value)).toEqual(['inactive-sola-1']);
+  });
+
   it('materializes a due schedule once as pending verification without approving it', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });

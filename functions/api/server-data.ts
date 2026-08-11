@@ -996,6 +996,24 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const status:any=metadata.results[0];return c.json({success:true,items,count:items.length,savedAt:Number(status?.updated_at||0),sync:parseSetting(status?.value,null)});
   });
 
+  app.post('/v3/sola/schedules/remove-inactive', async (c:any) => {
+    const denied=requirePermission(c,'transactions.approve');if(denied)return denied;
+    const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);
+    const mutationId=`v3-sola-remove-inactive-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
+    const [inactiveRows,removedRow]=await c.env.DB.batch([
+      c.env.DB.prepare("SELECT id FROM sync_records WHERE type='solaScheduleInbox' AND is_deleted=0 AND COALESCE(json_extract(data,'$.active'),0)=0"),
+      c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_schedule_removed_ids'")
+    ]);
+    const ids=(inactiveRows.results as any[]).map(row=>String(row.id));const removed=new Set<string>(parseSetting((removedRow.results[0] as any)?.value,[]));ids.forEach(id=>removed.add(id));const now=Date.now();const result={success:true,removed:ids.length};
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='solaScheduleInbox' AND is_deleted=0 AND COALESCE(json_extract(data,'$.active'),0)=0").bind(now,mutationId),
+      c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_schedule_removed_ids',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify([...removed]),now),
+      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES('inactive-sola-schedules','solaScheduleInbox','delete',NULL,NULL,NULL,?,?,?,?,?,?,?)").bind(JSON.stringify({removed:ids.length}),String(c.get('userId')||'unknown'),String(c.get('userEmail')||'unknown'),now,mutationId,mutationId,'Permanently removed inactive schedules from the Sola matching inbox'),
+      c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now)
+    ]);
+    return c.json(result);
+  });
+
   app.post('/v3/sola/schedules/preview', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const key = await getSolaKey(c); if (!key) return c.json({ success: false, error: 'Sola is not configured on the server.' }, 409);
@@ -1017,7 +1035,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         nextToken = String(payload?.NextToken || '').trim();
         pages++;
       } while (nextToken && pages < 100);
-      const items = raw.map((value: any) => {
+      let items = raw.map((value: any) => {
         const activeValue = value.IsActive ?? value.Active ?? value.isActive ?? value.active ?? value.Status ?? value.status;
         const normalizedActive = typeof activeValue === 'string' ? activeValue.trim().toLowerCase() : activeValue;
         const active = normalizedActive === true || normalizedActive === 1 || normalizedActive === 'true' || normalizedActive === '1' || normalizedActive === 'active' || normalizedActive === 'enabled';
@@ -1039,6 +1057,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         paymentsProcessed
         };
       }).filter((value: any) => value.scheduleId);
+      const removedRow:any=await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_schedule_removed_ids'").first();const removedIds=new Set<string>(parseSetting(removedRow?.value,[]));items=items.filter((item:any)=>!removedIds.has(String(item.scheduleId)));
       const savedAt=Date.now();
       for(let index=0;index<items.length;index+=50){const statements=items.slice(index,index+50).map((item:any)=>c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaScheduleInbox',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(String(item.scheduleId),JSON.stringify(item),savedAt,`sola-schedule-inbox-${savedAt}-${item.scheduleId}`));if(statements.length)await c.env.DB.batch(statements);}
       await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_schedule_inbox_status',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify({savedAt,count:items.length,pages}),savedAt).run();
@@ -1181,17 +1200,19 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const startDate=String(c.req.query('startDate')||'0000-01-01');const endDate=String(c.req.query('endDate')||'9999-12-31');const page=boundedPage(c.req.query('page'));const limit=boundedLimit(c.req.query('limit'));const offset=(page-1)*limit;
     const dismissedRow:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='dismissedSolaRefs' AND is_deleted=0 ORDER BY updated_at DESC LIMIT 1").first();const dismissed=new Set<string>(Array.isArray(parseSetting(dismissedRow?.data,'') )?parseSetting(dismissedRow.data,[]):[]);
-    const [solaRows,appRows,solaCount,appCount,mappingRows]=await c.env.DB.batch([
+    const [solaRows,appRows,solaCount,appCount,mappingRows,donorRows]=await c.env.DB.batch([
       c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaTransactions' AND is_deleted=0 AND lower(json_extract(data,'$.status'))='approved' AND substr(json_extract(data,'$.date'),1,10) BETWEEN ? AND ? ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT ? OFFSET ?").bind(startDate,endDate,limit*2,offset),
       c.env.DB.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.aliases') AS aliases FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.method')='credit_card' AND json_extract(t.data,'$.date') BETWEEN ? AND ? AND (json_extract(t.data,'$.type')='pending' OR (json_extract(t.data,'$.type')='approved' AND instr(COALESCE(json_extract(t.data,'$.notes'),''),'Ref:')=0)) ORDER BY json_extract(t.data,'$.date') DESC,t.id DESC LIMIT ? OFFSET ?").bind(startDate,endDate,limit,offset),
       c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaTransactions' AND is_deleted=0 AND lower(json_extract(data,'$.status'))='approved' AND substr(json_extract(data,'$.date'),1,10) BETWEEN ? AND ?").bind(startDate,endDate),
       c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.method')='credit_card' AND json_extract(data,'$.date') BETWEEN ? AND ? AND (json_extract(data,'$.type')='pending' OR (json_extract(data,'$.type')='approved' AND instr(COALESCE(json_extract(data,'$.notes'),''),'Ref:')=0))").bind(startDate,endDate),
-      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings' AND is_deleted=0")
+      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings' AND is_deleted=0"),
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='donors' AND is_deleted=0")
     ]);
     const sola=solaRows.results.map((row:any)=>parseSetting(row.data,null)).filter((item:any)=>item&&!dismissed.has(item.ref)).slice(0,limit);const appItems=appRows.results.map((row:any)=>({...parseRecord(row),donorName:row.donor_name||'Unknown',aliases:parseSetting(row.aliases,[])}));
     const mappings=new Map(mappingRows.results.map((row:any)=>{const value=parseSetting(row.data,null);return [String(value?.solaName||'').trim().toLowerCase(),String(value?.donorId||'')];}));
+    const donorNames=new Map(donorRows.results.map((row:any)=>{const donor=parseSetting(row.data,{});const english=donor.name||[donor.firstName,donor.lastName].filter(Boolean).join(' ');const yiddish=[donor.preTitle,donor.hebFirstName,donor.hebLastName,donor.title].filter(Boolean).join(' ');return [String(row.id),[english,yiddish].filter(Boolean).join(' · ')];}));
     const autoMatches:any[]=[];const used=new Set<string>();for(const tx of appItems){const amount=Number(tx.amount||0);const names=[tx.donorName,...(Array.isArray(tx.aliases)?tx.aliases:[])].map((name:any)=>String(name).toLowerCase());const match=sola.find((item:any)=>!used.has(item.ref)&&Math.abs(Number(item.amount)-amount)<0.005&&((mappings.get(String(item.name||'').trim().toLowerCase())||'')===String(tx.donorId||'')||names.some(name=>{const first=name.split(' ')[0];const solaFirst=String(item.name).toLowerCase().split(' ')[0];return name===String(item.name).toLowerCase()||(first&&solaFirst&&(first.includes(solaFirst)||solaFirst.includes(first)));})));if(match){used.add(match.ref);const remembered=Boolean(mappings.get(String(match.name||'').trim().toLowerCase()));autoMatches.push({transactionId:tx.id,solaRef:match.ref,...(remembered?{remembered:true}:{})});}}
-    return c.json({success:true,sola:sola.map((item:any)=>({...item,matchedDonorId:mappings.get(String(item.name||'').trim().toLowerCase())||''})),appItems,autoMatches,page,limit,totalPages:Math.max(1,Math.ceil(Math.max(Number(solaCount.results[0]?.count||0),Number(appCount.results[0]?.count||0))/limit))});
+    return c.json({success:true,sola:sola.map((item:any)=>{const matchedDonorId=mappings.get(String(item.name||'').trim().toLowerCase())||'';return {...item,matchedDonorId,matchedDonorName:donorNames.get(matchedDonorId)||''};}),appItems,autoMatches,page,limit,totalPages:Math.max(1,Math.ceil(Math.max(Number(solaCount.results[0]?.count||0),Number(appCount.results[0]?.count||0))/limit))});
   });
 
   app.post('/v3/sola/resolve', async (c:any) => {
