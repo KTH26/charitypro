@@ -1216,6 +1216,27 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({success:true,sola:sola.map((item:any)=>{const matchedDonorId=mappings.get(String(item.name||'').trim().toLowerCase())||'';return {...item,matchedDonorId,matchedDonorName:donorNames.get(matchedDonorId)||''};}),appItems,autoMatches,page,limit,totalPages:Math.max(1,Math.ceil(Number(solaCount.results[0]?.count||0)/limit)),pendingSearch:{startDate:pendingStart,endDate:pendingEnd,count:Number(appCount.results[0]?.count||0)}});
   });
 
+  app.post('/v3/sola/import-new', async (c:any) => {
+    const denied=requirePermission(c,'transactions.approve');if(denied)return denied;
+    try {
+      const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const mutationId=`v3-sola-import-new-${requestId}`;
+      const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
+      const ref=String(body.ref||'').trim();const donorId=String(body.donorId||'').trim();const [solaRow,donor,existing]=await c.env.DB.batch([
+        c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaTransactions' AND id=? AND is_deleted=0").bind(ref),
+        c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId),
+        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.notes') LIKE ? LIMIT 1").bind(`%Ref: ${ref}`)
+      ]);const savedSola:any=solaRow.results[0];if(!savedSola)return c.json({success:false,error:'Sola transaction was not found in the saved report.'},404);if(!donor.results[0])return c.json({success:false,error:'Choose a valid donor before importing.'},409);
+      if(existing.results[0]){const row:any=existing.results[0];const item={...parseSetting(row.data,{}),id:String(row.id),revision:Number(row.revision),updatedAt:Number(row.updated_at)};const result={success:true,item,ref,existing:true};await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),Date.now()).run();return c.json(result);}
+      const sola=parseSetting(savedSola.data,{});const date=normalizeExternalDate(sola.date);if(!date)return c.json({success:false,error:'This Sola transaction has an invalid date.'},409);const now=Date.now();const id=crypto.randomUUID();const item={id,donorId,amount:Number(sola.amount),amountCAD:Number(sola.amount),date,type:'approved',method:'credit_card',currency:'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaBatchId:sola.batch||'',notes:`Imported as new via Sola Sync. Ref: ${ref}`};const data=JSON.stringify(item);const operationId=`${mutationId}-transaction`;const result={success:true,item:{...item,revision:1,updatedAt:now},ref,existing:false};
+      await c.env.DB.batch([
+        c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(id,data,now,operationId),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,String(c.get('userId')||'unknown'),String(c.get('userEmail')||'unknown'),now,mutationId,operationId,'Imported through dedicated Sola import action'),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now)
+      ]);return c.json(result);
+    } catch(reason:any){return c.json({success:false,error:`Unable to import this Sola payment: ${reason.message||'database error'}`},500);}
+  });
+
   app.post('/v3/sola/resolve', async (c:any) => {
     const denied=requirePermission(c,'transactions.approve');if(denied)return denied;const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const action=String(body.action||'');if(!['match','import','dismiss'].includes(action))return c.json({success:false,error:'Choose a valid Sola action.'},400);
     const mutationId=`v3-sola-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));const ref=String(body.ref||'');const solaRow:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaTransactions' AND id=? AND is_deleted=0").bind(ref).first();if(!solaRow)return c.json({success:false,error:'Sola transaction not found in the saved online report.'},404);const sola=parseSetting(solaRow.data,null);const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const statements:any[]=[];let item:any=null;

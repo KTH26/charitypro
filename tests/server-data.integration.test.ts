@@ -471,6 +471,18 @@ describe('server-driven bank deposit matching', () => {
     expect(JSON.parse(removed.value)).toEqual(['inactive-sola-1']);
   });
 
+  it('imports a Sola actual through the dedicated retry-safe payment action', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'solaTransactions', 'sola-import-ref', { ref: 'sola-import-ref', name: 'New Donor', date: '07/27/2026 12:00:00', amount: 75, status: 'Approved', batch: 'batch-new' });
+    seedRecord(db, 'donors', 'sola-import-donor', { id: 'sola-import-donor', name: 'New Donor' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const request = () => app.request('/v3/sola/import-new', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'dedicated-sola-import' }, body: JSON.stringify({ ref: 'sola-import-ref', donorId: 'sola-import-donor' }) }, { DB: db } as any);
+    const response = await request(); const body = await response.json() as any;
+    expect(response.status).toBe(200); expect(body.item).toMatchObject({ donorId: 'sola-import-donor', amount: 75, date: '2026-07-27', type: 'approved', method: 'credit_card' });
+    expect((await request()).status).toBe(200);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.notes') LIKE '%Ref: sola-import-ref'").get().count).toBe(1);
+  });
+
   it('materializes a due schedule once as pending verification without approving it', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });
