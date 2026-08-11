@@ -481,6 +481,8 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200); expect(body.item).toMatchObject({ donorId: 'sola-import-donor', amount: 75, date: '2026-07-27', type: 'approved', method: 'credit_card' });
     expect((await request()).status).toBe(200);
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.notes') LIKE '%Ref: sola-import-ref'").get().count).toBe(1);
+    const refreshed = await (await app.request('/v3/sola/view?startDate=2026-07-01&endDate=2026-07-31&limit=50', {}, { DB: db } as any)).json() as any;
+    expect(refreshed.sola).toEqual([]);
   });
 
   it('materializes a due schedule once as pending verification without approving it', async () => {
