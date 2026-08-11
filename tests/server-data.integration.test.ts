@@ -442,7 +442,7 @@ describe('server-driven bank deposit matching', () => {
     seedRecord(db, 'dismissedSolaRefs', 'dismissedSolaRefs', []);
     seedRecord(db, 'solaDonorMappings', 'sola-map-jane%20donor', { id: 'sola-map-jane%20donor', solaName: 'Jane Donor', donorId: 'donor-sola' });
     seedRecord(db, 'donors', 'donor-sola', { id: 'donor-sola', name: 'Jane Donor', aliases: [] });
-    seedRecord(db, 'transactions', 'pending-sola', { id: 'pending-sola', donorId: 'donor-sola', amount: 50, amountCAD: 50, currency: 'CAD', method: 'credit_card', date: '2026-07-01', type: 'pending' });
+    seedRecord(db, 'transactions', 'pending-sola', { id: 'pending-sola', donorId: 'donor-sola', amount: 50, amountCAD: 50, currency: 'CAD', method: 'Credit Card', date: '2026-07-01', type: 'Pending' });
     db.database.prepare("UPDATE sync_records SET is_deleted=1 WHERE (type='dismissedSolaRefs' AND id='dismissedSolaRefs') OR (type='solaDonorMappings' AND id='sola-map-jane%20donor')").run();
     for (let index = 0; index < 60; index++) seedRecord(db, 'transactions', `newer-pending-${index}`, { id: `newer-pending-${index}`, donorId: 'donor-sola', amount: 999, currency: 'CAD', method: 'credit_card', date: '2026-07-28', type: 'pending' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
