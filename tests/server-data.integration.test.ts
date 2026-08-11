@@ -483,6 +483,7 @@ describe('server-driven bank deposit matching', () => {
     const freshRetry = await app.request('/v3/sola/import-new', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'dedicated-sola-import-fresh-retry' }, body: JSON.stringify({ ref: 'sola-import-ref', donorId: 'sola-import-donor' }) }, { DB: db } as any);
     expect(freshRetry.status).toBe(200);
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.notes') LIKE '%Ref: sola-import-ref'").get().count).toBe(1);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='processedSolaRefs' AND id='sola-import-ref' AND is_deleted=0").get().count).toBe(1);
     const refreshed = await (await app.request('/v3/sola/view?startDate=2026-07-01&endDate=2026-07-31&limit=50', {}, { DB: db } as any)).json() as any;
     expect(refreshed.sola).toEqual([]);
   });
