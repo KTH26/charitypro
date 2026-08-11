@@ -19,6 +19,17 @@ const requestedOrder = (c: any, columns: Record<string, string>, fallback: strin
 };
 
 const isoDate = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
+const normalizeExternalDate = (value: unknown) => {
+  const raw = String(value || '').trim();
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  const northAmerican = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const parts = iso ? [iso[1], iso[2], iso[3]] : northAmerican ? [northAmerican[3], northAmerican[1], northAmerican[2]] : null;
+  if (!parts) return '';
+  const [year, month, day] = parts.map(Number);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (candidate.getUTCFullYear() !== year || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) return '';
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
 const addUtc = (value: string, frequency: string) => {
   const date = new Date(`${value}T00:00:00Z`);
   if (frequency === 'weekly') date.setUTCDate(date.getUTCDate() + 7);
@@ -960,8 +971,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if(!response.ok)return c.json({success:false,error:`Sola report request failed (${response.status}).`},502);
       const payload:any=await response.json(); if(payload.xResult==='E')return c.json({success:false,error:String(payload.xError||'Sola returned an error.')},502);
       const raw=Array.isArray(payload.ReportData)?payload.ReportData:Array.isArray(payload.xReportData)?payload.xReportData:[]; const now=Date.now();
-      const records=raw.map((item:any)=>({ref:String(item.RefNum||item.xRefNum||'').trim(),name:String(item.Name||item.xName||'Unknown').slice(0,300),date:String(item.Date||item.xEnteredDate||'').slice(0,30),amount:Number(item.Amount||item.xAmount||0),status:String(item.Status||item.xResponseResult||'Unknown').slice(0,50),last4:String(item.Last4||(item.xMaskedCardNumber||'').slice(-4)||'****').slice(-4),cardType:String(item.CardType||'Credit').slice(0,50),batch:String(item.Batch||item.xBatch||'').slice(0,100)})).filter((item:any)=>item.ref&&Number.isFinite(item.amount));
+      const records=raw.map((item:any)=>({ref:String(item.RefNum||item.xRefNum||'').trim(),name:String(item.Name||item.xName||'Unknown').slice(0,300),date:normalizeExternalDate(item.Date||item.xEnteredDate),amount:Number(item.Amount||item.xAmount||0),status:String(item.Status||item.xResponseResult||'Unknown').slice(0,50),last4:String(item.Last4||(item.xMaskedCardNumber||'').slice(-4)||'****').slice(-4),cardType:String(item.CardType||'Credit').slice(0,50),batch:String(item.Batch||item.xBatch||'').slice(0,100)})).filter((item:any)=>item.ref&&item.date&&Number.isFinite(item.amount));
       for(let index=0;index<records.length;index+=50){const statements=records.slice(index,index+50).map((record:any)=>c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaTransactions',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(record.ref,JSON.stringify(record),now,`sola-sync-${now}-${record.ref}`));await c.env.DB.batch(statements);}
+      for(let index=0;index<records.length;index+=50){const repairs=records.slice(index,index+50).map((record:any)=>c.env.DB.prepare("UPDATE sync_records SET data=json_set(data,'$.date',?),updated_at=?,revision=revision+1,last_operation_id=? WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.notes') LIKE ? AND COALESCE(json_extract(data,'$.date'),'')<>?").bind(record.date,now,`sola-date-repair-${now}-${record.ref}`,`%Ref: ${record.ref}`,record.date));await c.env.DB.batch(repairs);}
       const sync={lastSyncAt:now,startDate,endDate,count:records.length};await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_sync_status',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify(sync),now).run();
       return c.json({success:true,sync});
     } catch(reason:any){return c.json({success:false,error:`Unable to communicate with Sola: ${reason.message||'network error'}`},502);}

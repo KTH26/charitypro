@@ -12,13 +12,14 @@ const methods = [
 ] as const;
 
 export const OnlinePaymentForm: React.FC<{
-  onCreated: (status: PaymentStatus) => void;
+  onCreated: (status: PaymentStatus, item?: any) => void;
   onCancel: () => void;
   donor?: Donor;
   defaultAmount?:number;
   defaultDate?:string;
   defaultSourceAccountId?:string;
-}> = ({ onCreated, onCancel, donor, defaultAmount, defaultDate, defaultSourceAccountId }) => {
+  forceApproved?:boolean;
+}> = ({ onCreated, onCancel, donor, defaultAmount, defaultDate, defaultSourceAccountId, forceApproved = false }) => {
   const [donorQuery, setDonorQuery] = useState(donor?.name || '');
   const [donors, setDonors] = useState<Donor[]>(donor ? [donor] : []);
   const [donorId, setDonorId] = useState(donor?.id || '');
@@ -97,7 +98,7 @@ export const OnlinePaymentForm: React.FC<{
     const requestId = pendingRequestId.current || crypto.randomUUID();
     pendingRequestId.current = requestId;
     try {
-      const status: PaymentStatus = method === 'check' ? 'pending' : 'approved';
+      const status: PaymentStatus = forceApproved ? 'approved' : method === 'check' ? 'pending' : 'approved';
       const response = await fetch('/api/v3/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
@@ -110,7 +111,7 @@ export const OnlinePaymentForm: React.FC<{
         throw new Error(data.error || 'The payment could not be saved.');
       }
       pendingRequestId.current = '';
-      onCreated(status);
+      onCreated(status, data.item);
     } catch (e: any) {
       setError(e.message || 'The payment could not be saved. You can safely try again.');
     } finally {
