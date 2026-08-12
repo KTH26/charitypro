@@ -1608,6 +1608,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ name: row.vendor, billCount: Number(row.bill_count || 0), totalBilled: Number(row.total_billed || 0), balanceOwed: Number(row.balance_owed || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
+  app.get('/v3/vendor-choices', async (c:any) => {
+    const denied=requirePermission(c,'bills.read');if(denied)return denied;
+    const result=await c.env.DB.prepare("SELECT name FROM (SELECT trim(json_extract(data,'$.name')) AS name FROM sync_records WHERE type='vendors' AND is_deleted=0 UNION SELECT trim(json_extract(data,'$.vendor')) AS name FROM sync_records WHERE type='bills' AND is_deleted=0) WHERE name<>'' ORDER BY lower(name) LIMIT 1000").all();
+    return c.json({success:true,items:result.results.map((row:any)=>({id:String(row.name),name:String(row.name)}))});
+  });
+
   app.get('/v3/vendors/details', async (c: any) => {
     const denied = requirePermission(c, 'bills.read');
     if (denied) return denied;
@@ -1974,7 +1980,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (!vendor || !categoryRow || JSON.parse(String(categoryRow.data)).type !== 'expense') return c.json({ success: false, error: 'Vendor and a valid expense category are required.' }, 409);
       const id = crypto.randomUUID();
       const operationId = `${mutationId}-bill-insert`;
-      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', dueDate: bankDate, paidDate: bankDate, status: 'paid', category, sourceAccountId: accountId, offsetAccountId: category, taxable: Boolean(body.taxable), memo: description, bankTransactionId };
+      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, sourceAccountId: accountId, offsetAccountId: category, ...(body.creditAccountId?{creditAccountId:String(body.creditAccountId)}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId };
       const data = JSON.stringify(record);
       resultItem = { ...record, revision: 1, updatedAt: now };
       statements.push(
