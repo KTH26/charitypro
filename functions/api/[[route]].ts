@@ -49,18 +49,23 @@ const getPlaidUrl = (envVal?: string) => {
 app.post('/plaid/create_link_token', async (c) => {
   try {
     const PLAID_URL = getPlaidUrl(c.env.PLAID_ENV);
+    const body = await c.req.json().catch(() => ({} as any));
+    const accountId = String(body?.accountId || '').trim();
+    let accessToken = '';
+    if (accountId) {
+      await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS plaid_tokens (account_id TEXT PRIMARY KEY, access_token TEXT)').run();
+      const tokenRow: any = await c.env.DB.prepare('SELECT access_token FROM plaid_tokens WHERE account_id = ?').bind(accountId).first();
+      accessToken = String(tokenRow?.access_token || '').trim();
+    }
 
-    const reqBody = {
+    const reqBody: any = {
       client_id: c.env.PLAID_CLIENT_ID?.trim(),
       secret: c.env.PLAID_SECRET?.trim(),
       client_name: "Charity App",
       country_codes: ["US", "CA"],
       language: "en",
-      user: { client_user_id: "user_1" },
-      products: ["transactions"],
-      transactions: {
-        days_requested: 730
-      }
+      user: { client_user_id: "charitypro_shared_user" },
+      ...(accessToken ? { access_token: accessToken } : { products: ["transactions"], transactions: { days_requested: 730 } })
     };
 
     const res = await fetch(`${PLAID_URL}/link/token/create`, {
@@ -75,7 +80,7 @@ app.post('/plaid/create_link_token', async (c) => {
     }
 
     const data = await res.json();
-    return c.json(data);
+    return c.json({ ...data, mode: accessToken ? 'reconnect' : accountId ? 'relink' : 'add' });
   } catch (err: any) {
     return c.json({ error: 'Worker crash', message: err.message, stack: err.stack }, 500);
   }

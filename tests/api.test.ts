@@ -81,10 +81,16 @@ describe('Backend API & Security Rules', () => {
     expect(expensesSource).toContain('expenseQueueItems');
     expect(expensesSource).toContain('<option value="all">All expenses</option>');
     const bankSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineBank.tsx'), 'utf8');
+    const workerSource = readFileSync(join(process.cwd(), 'functions', 'api', '[[route]].ts'), 'utf8');
     expect(appSource).toContain('path="/online/bank"');
-    expect(bankSource).toContain("fetch('/api/v3/bank/match-deposit'");
-    expect(bankSource).toContain("fetch('/api/v3/bank/match-outgoing'");
+    expect(bankSource).toContain('fetch("/api/v3/bank/match-deposit"');
+    expect(bankSource).toContain('fetch("/api/v3/bank/match-outgoing"');
     expect(bankSource).toContain('Exact match');
+    expect(bankSource).toContain('+ Add New Bank');
+    expect(bankSource).toContain('Reconnect Bank');
+    expect(bankSource).toContain("usePlaidLink");
+    expect(workerSource).toContain("access_token: accessToken");
+    expect(workerSource).toContain("mode: accessToken ? 'reconnect'");
     const pledgesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePledges.tsx'), 'utf8');
     const schedulesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineSchedules.tsx'), 'utf8');
     expect(pledgesSource).toContain('limit=50');

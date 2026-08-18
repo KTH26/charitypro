@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePlaidLink } from "react-plaid-link";
 import { OnlinePaymentForm } from "../components/OnlinePaymentForm";
 import { CloudTransactionModal } from "../components/CloudTransactionModal";
 
@@ -83,7 +84,18 @@ export const OnlineBank: React.FC = () => {
   const [billCandidates, setBillCandidates] = useState<BillCandidate[]>([]);
   const [saving, setSaving] = useState(false);
   const [showFullExpense, setShowFullExpense] = useState(false);
+  const [linkToken,setLinkToken]=useState<string|null>(null);
+  const [connectionMode,setConnectionMode]=useState<'add'|'reconnect'>('add');
+  const [connectionAccountId,setConnectionAccountId]=useState('');
+  const [connectionNeedsExchange,setConnectionNeedsExchange]=useState(false);
+  const [launchPlaid,setLaunchPlaid]=useState(false);
   const matchRequestIds = useRef<Record<string, string>>({});
+
+  const beginBankConnection=async(mode:'add'|'reconnect',accountId='')=>{setLoading(true);setError('');setNotice('');setConnectionMode(mode);setConnectionAccountId(accountId);try{const response=await fetch('/api/plaid/create_link_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode==='reconnect'?{accountId}:{})});const data=await response.json();if(!response.ok||!data.link_token)throw new Error(data.error||'Unable to start the secure bank connection.');setConnectionNeedsExchange(data.mode!=='reconnect');setLinkToken(data.link_token);setLaunchPlaid(true);}catch(reason:any){setError(reason.message||'Unable to start the secure bank connection.');setLoading(false);}};
+  const onPlaidSuccess=useCallback(async(publicToken:string,metadata:any)=>{setLoading(true);setError('');try{if(connectionMode==='reconnect'){if(connectionNeedsExchange){const exchangeResponse=await fetch('/api/plaid/exchange_public_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({public_token:publicToken,accountId:connectionAccountId})});const exchange=await exchangeResponse.json();if(!exchangeResponse.ok||!exchange.success)throw new Error(exchange.error||'Unable to save the repaired bank connection.');}setNotice('Bank connection repaired successfully. You can sync transactions again.');}else{const accountId=crypto.randomUUID();const name=String(metadata?.institution?.name||'Connected Bank').trim();const createKey=crypto.randomUUID();const createResponse=await fetch('/api/v3/records/accounts',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':createKey},body:JSON.stringify({data:{id:accountId,name,type:'asset',subType:'checking',currency:'CAD',startingBalance:0,plaidConnected:true}})});const created=await createResponse.json();if(!createResponse.ok||!created.success)throw new Error(created.error||'Unable to add the bank account.');const exchangeResponse=await fetch('/api/plaid/exchange_public_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({public_token:publicToken,accountId})});const exchange=await exchangeResponse.json();if(!exchangeResponse.ok||!exchange.success)throw new Error(exchange.error||'The bank was added, but its secure connection could not be saved. Use Reconnect Bank to finish.');setSelectedBank(accountId);setNotice(`${name} was added successfully.`);}const stateResponse=await fetch('/api/v3/bank/state');const state=await stateResponse.json();if(stateResponse.ok&&state.success)setAccounts(state.accounts||[]);}catch(reason:any){setError(reason.message||'Unable to finish the bank connection.');}finally{setLaunchPlaid(false);setLoading(false);setLinkToken(null);}},[connectionMode,connectionNeedsExchange,connectionAccountId]);
+  const onPlaidExit=useCallback((reason:any)=>{setLaunchPlaid(false);setLoading(false);setLinkToken(null);if(reason)setError(reason.display_message||reason.error_message||'The bank connection was not completed.');},[]);
+  const {open:openPlaid,ready:plaidReady}=usePlaidLink({token:linkToken,onSuccess:onPlaidSuccess,onExit:onPlaidExit});
+  useEffect(()=>{if(launchPlaid&&plaidReady)openPlaid();},[launchPlaid,plaidReady,openPlaid]);
 
   const loadState = useCallback(async (silent = false) => {
     if (!silent) {
@@ -428,8 +440,11 @@ export const OnlineBank: React.FC = () => {
           <div style={{ color: "var(--text-muted)" }}>Plaid feed with cloud-owned match history. Match state updates automatically every 3 seconds.</div>
         </div>
         {accounts.length === 0 && !loading && (
-          <div className="card" style={{ padding: 24 }}>
-            No connected cloud bank was found. Use the current bank page to connect one.
+          <div className="card" style={{ padding: 24, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+            <span>No connected cloud bank was found.</span>
+            <button className="btn btn-primary" onClick={() => void beginBankConnection("add")}>
+              + Add New Bank
+            </button>
           </div>
         )}
         {accounts.length > 0 && (
@@ -470,17 +485,22 @@ export const OnlineBank: React.FC = () => {
                   </small>
                 </button>
               ))}
+              <button className="btn btn-secondary" style={{whiteSpace:'nowrap'}} disabled={loading} onClick={()=>void beginBankConnection('add')}>+ Add New Bank</button>
             </div>
+            {selectedAccount&&!selectedAccount.bankConnected&&<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,padding:14,marginBottom:14,border:'1px solid var(--red)',borderRadius:10,background:'var(--red-bg)'}}><div><strong style={{color:'var(--red)'}}>This bank is disconnected.</strong><div style={{fontSize:13,color:'var(--text-muted)'}}>Reconnect it securely before syncing new transactions.</div></div><button className="btn btn-primary" disabled={loading} onClick={()=>void beginBankConnection('reconnect',selectedAccount.id)}>{loading&&connectionMode==='reconnect'&&connectionAccountId===selectedAccount.id?'Opening Plaid...':'Reconnect Bank'}</button></div>}
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(190px,1fr) auto",
+                gridTemplateColumns: "minmax(190px,1fr) auto auto",
                 gap: 10,
               }}
             >
               <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} title="Optional: choose an earlier date for this sync" />
               <button className="btn btn-primary" onClick={() => void syncFeed()} disabled={loading || !selectedAccount?.bankConnected}>
                 {loading ? "Syncing..." : `Sync New Transactions for ${selectedAccount?.name || "Bank"}`}
+              </button>
+              <button className="btn btn-secondary" onClick={() => selectedAccount && void beginBankConnection("reconnect", selectedAccount.id)} disabled={loading || !selectedAccount}>
+                Reconnect Bank
               </button>
             </div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Each bank keeps its own saved feed. Transactions load automatically when you open a bank tab. Sync only checks for newer transactions, starting from {startDate ? `your selected date (${startDate})` : lastSyncDate ? `the last successful sync (${lastSyncDate})` : "the last 30 days for this first sync"}.</div>
