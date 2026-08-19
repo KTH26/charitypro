@@ -42,6 +42,28 @@ const seedRecord = (db: MockD1, type: string, id: string, data: any, revision = 
   db.database.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES(?,?,?,?,?,0)').run(id, type, JSON.stringify(data), 1, revision);
 };
 
+describe('expense category hierarchy totals', () => {
+  it('rolls every subcategory amount into its main category total', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'travel', { id: 'travel', name: 'Travel', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'flights', { id: 'flights', name: 'Flights', type: 'expense', currency: 'CAD', parentId: 'travel' });
+    seedRecord(db, 'accounts', 'hotels', { id: 'hotels', name: 'Hotels', type: 'expense', currency: 'CAD', parentId: 'travel' });
+    seedRecord(db, 'bills', 'direct', { id: 'direct', vendor: 'Travel direct', amount: 25, currency: 'CAD', dueDate: '2026-02-01', category: 'travel' });
+    seedRecord(db, 'bills', 'flight-bill', { id: 'flight-bill', vendor: 'Airline', amount: 100, currency: 'CAD', dueDate: '2026-03-01', category: 'flights' });
+    seedRecord(db, 'bills', 'hotel-bill', { id: 'hotel-bill', vendor: 'Hotel', amount: 200, currency: 'CAD', dueDate: '2026-04-01', category: 'hotels' });
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); });
+    registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/expense-categories?year=2026', {}, { DB: db } as any);
+    expect(response.status).toBe(200);
+    const body: any = await response.json();
+    expect(body.totalYTD).toBe(325);
+    expect(body.items.find((item: any) => item.id === 'travel')).toMatchObject({ ownYtd: 25, ytd: 325 });
+    expect(body.items.find((item: any) => item.id === 'flights')).toMatchObject({ ownYtd: 100, ytd: 100, parentId: 'travel' });
+    expect(body.items.find((item: any) => item.id === 'hotels')).toMatchObject({ ownYtd: 200, ytd: 200, parentId: 'travel' });
+  });
+});
+
 describe('server-driven bank deposit matching', () => {
   it('atomically creates one batch, updates children and match history, and safely retries', async () => {
     const db = new MockD1(); databases.push(db);

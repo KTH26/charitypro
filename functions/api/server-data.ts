@@ -1577,16 +1577,20 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
   app.get('/v3/expense-categories', async (c: any) => {
     const denied = requirePermission(c, 'bills.read'); if (denied) return denied;
-    const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase(); const year = /^\d{4}$/.test(String(c.req.query('year') || '')) ? String(c.req.query('year')) : String(new Date().getUTCFullYear());
-    const condition = search ? " AND lower(COALESCE(json_extract(a.data,'$.name'),'')) LIKE ?" : ''; const bindings = search ? [`%${search}%`] : [];
     const base = "a.type='accounts' AND a.is_deleted=0 AND json_extract(a.data,'$.type')='expense'";
-    const [listResult,countResult,totalResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT a.id,a.data,a.revision,a.updated_at,COALESCE(SUM(CASE WHEN substr(json_extract(b.data,'$.dueDate'),1,4)=? THEN CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END ELSE 0 END),0) AS ytd FROM sync_records a LEFT JOIN sync_records b ON b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.category')=a.id WHERE ${base}${condition} GROUP BY a.id ORDER BY lower(json_extract(a.data,'$.name')) LIMIT ? OFFSET ?`).bind(year,...bindings,limit,offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records a WHERE ${base}${condition}`).bind(...bindings),
+    const [listResult,totalResult] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT a.id,a.data,a.revision,a.updated_at,COALESCE(SUM(CASE WHEN substr(json_extract(b.data,'$.dueDate'),1,4)=? THEN CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END ELSE 0 END),0) AS own_ytd FROM sync_records a LEFT JOIN sync_records b ON b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.category')=a.id WHERE ${base} GROUP BY a.id ORDER BY lower(json_extract(a.data,'$.name'))`).bind(year),
       c.env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data,'$.currency')='USD' THEN COALESCE(json_extract(data,'$.amount'),0)*COALESCE(json_extract(data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(data,'$.amount'),0) END),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND substr(json_extract(data,'$.dueDate'),1,4)=?").bind(year)
     ]);
-    const total=Number(countResult.results[0]?.count||0); return c.json({success:true,items:listResult.results.map((row:any)=>({...parseRecord(row),ytd:Number(row.ytd||0)})),page,limit,total,totalPages:Math.ceil(total/limit),year,totalYTD:Number(totalResult.results[0]?.total||0)});
+    const categories = listResult.results.map((row: any) => ({ ...parseRecord(row), ownYtd: Number(row.own_ytd || 0) }));
+    const byId = new Map(categories.map((item: any) => [String(item.id), item]));
+    const children = new Map<string, any[]>();
+    for (const item of categories as any[]) { const parentId = String(item.parentId || ''); if (parentId && byId.has(parentId)) children.set(parentId, [...(children.get(parentId) || []), item]); }
+    const calculateTotal = (item: any, path = new Set<string>()): number => { const id = String(item.id); if (path.has(id)) return Number(item.ownYtd || 0); const next = new Set(path).add(id); return Number(item.ownYtd || 0) + (children.get(id) || []).reduce((sum, child) => sum + calculateTotal(child, next), 0); };
+    const withTotals = categories.map((item: any) => ({ ...item, ytd: calculateTotal(item) }));
+    const matched = search ? withTotals.filter((item: any) => String(item.name || '').toLowerCase().includes(search)) : withTotals;
+    return c.json({success:true,items:matched,page:1,limit:matched.length||1,total:matched.length,totalPages:1,year,totalYTD:Number(totalResult.results[0]?.total||0)});
   });
 
   app.get('/v3/vendors', async (c: any) => {
