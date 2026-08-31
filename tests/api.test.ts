@@ -26,6 +26,8 @@ describe('Backend API & Security Rules', () => {
     expect(source).toContain("app.post('/v3/bank/match-deposit'");
     expect(source).toContain("app.get('/v3/bank/bill-candidates'");
     expect(source).toContain("app.post('/v3/bank/match-outgoing'");
+    expect(source).toContain('xmaxrecords:1000');
+    expect(source).toContain('xgetnewest:false');
     expect(source).toContain("app.get('/v3/records/:type'");
     expect(source).toContain("app.post('/v3/records/:type'");
     expect(source).toContain("app.put('/v3/records/:type/:id'");

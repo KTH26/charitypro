@@ -544,6 +544,10 @@ describe('server-driven bank deposit matching', () => {
     expect(db.database.prepare("SELECT is_deleted FROM sync_records WHERE type='solaDonorMappings' AND id='sola-map-jane%20donor'").get().is_deleted).toBe(0);
   });
 
+  it('automatically proposes the only exact-amount pending payment before requiring donor selection',async()=>{
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaTransactions','sola-unique-amount',{ref:'sola-unique-amount',name:'Different Gateway Name',date:'2026-07-15',amount:88,status:'Approved'});seedRecord(db,'transactions','only-pending-88',{id:'only-pending-88',donorId:'donor-88',amount:88,amountCAD:88,currency:'CAD',method:'credit_card',date:'2026-07-14',type:'pending'});seedRecord(db,'donors','donor-88',{id:'donor-88',name:'Recorded Donor'});const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);const view=await (await app.request('/v3/sola/view?startDate=2026-07-01&endDate=2026-07-31&limit=50',{}, {DB:db} as any)).json() as any;expect(view.autoMatches).toEqual([{transactionId:'only-pending-88',solaRef:'sola-unique-amount',singleExactAmount:true}]);
+  });
+
   it('permanently removes inactive Sola schedules from the saved matching inbox', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'solaScheduleInbox', 'inactive-sola-1', { scheduleId: 'inactive-sola-1', name: 'Old Schedule', active: false });
