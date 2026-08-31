@@ -46,7 +46,7 @@ type RefundCandidate = BillCandidate & {
   refundableAmount: number;
   memo?: string;
 };
-type BankVendorRule = { vendor: string; category: string; taxable: boolean };
+type BankVendorRule = { vendor: string; category: string; taxCategory?: string; taxable: boolean };
 
 export const OnlineBank: React.FC = () => {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -893,6 +893,7 @@ export const OnlineBank: React.FC = () => {
               sourceAccountId: selectedBank,
               memo: outgoing.description,
               category: bankVendorRule?.category,
+              taxCategory: bankVendorRule?.taxCategory || "Not categorized for tax",
               taxable: bankVendorRule?.taxable,
             }}
             bankMatch={{

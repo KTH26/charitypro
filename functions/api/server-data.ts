@@ -742,7 +742,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const sourceAccountId = String(body.sourceAccountId || '');
     if (action === 'payment') { const source: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first(); if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid paid-from account.' }, 409); }
     const entityData = JSON.parse(String((entity as any).data)); const id = crypto.randomUUID(); const now = Date.now(); const categoryId = String((category as any).id); const operationId = `${mutationId}-bill`;
-    const bill: any = { id, vendor: `Payroll: ${entityData.name}`, employeeId: entityId, payrollEntityType: entityType, amount, currency: 'CAD', dueDate: date, status: action === 'payment' ? 'paid' : 'pending', category: categoryId, isPayroll: true, earningType: String(body.earningType || 'Salary').slice(0,100), t4aEligible: Boolean(body.t4aEligible), memo: String(body.memo || '').trim().slice(0,2000) };
+    const bill: any = { id, vendor: `Payroll: ${entityData.name}`, employeeId: entityId, payrollEntityType: entityType, amount, currency: 'CAD', dueDate: date, status: action === 'payment' ? 'paid' : 'pending', category: categoryId, taxCategory: 'Payroll', isPayroll: true, earningType: String(body.earningType || 'Salary').slice(0,100), t4aEligible: Boolean(body.t4aEligible), memo: String(body.memo || '').trim().slice(0,2000) };
     if (action === 'payment') { bill.sourceAccountId = sourceAccountId; bill.offsetAccountId = categoryId; bill.paidDate = date; }
     const billData = JSON.stringify(bill); const statements: any[] = [
       c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bills',?,?,1,0,?)").bind(id, billData, now, operationId),
@@ -1624,6 +1624,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({success:true,items:result.results.map((row:any)=>({id:String(row.name),name:String(row.name)}))});
   });
 
+  app.get('/v3/tax-category-choices', async (c:any) => {
+    const denied=requirePermission(c,'bills.read');if(denied)return denied;
+    const result=await c.env.DB.prepare("SELECT DISTINCT trim(json_extract(data,'$.taxCategory')) AS name FROM sync_records WHERE type='bills' AND is_deleted=0 AND trim(COALESCE(json_extract(data,'$.taxCategory'),''))<>'' ORDER BY lower(name) LIMIT 500").all();
+    return c.json({success:true,items:(result.results as any[]).map((row,index)=>({id:`tax-category-${index}`,name:String(row.name)}))});
+  });
+
   app.get('/v3/vendors/details', async (c: any) => {
     const denied = requirePermission(c, 'bills.read');
     if (denied) return denied;
@@ -1692,7 +1698,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const currency = body.currency === 'USD' ? 'USD' : 'CAD';
     const record: any = {
       id, vendor, amount, currency, exchangeRate: currency === 'USD' ? exchangeRate : undefined,
-      dueDate, status, category, taxable: Boolean(body.taxable), memo: String(body.memo || '').trim().slice(0, 2000)
+      dueDate, status, category, taxCategory: String(body.taxCategory || 'Not categorized for tax').trim().slice(0, 200), taxable: Boolean(body.taxable), memo: String(body.memo || '').trim().slice(0, 2000)
     };
     if (sourceAccountId) record.sourceAccountId = sourceAccountId;
     if (creditAccountId) record.creditAccountId = creditAccountId;
@@ -1898,7 +1904,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const bill=parseSetting(current.data,{});if(bill.status!=='paid'||bill.refundOfBillId)return c.json({success:false,error:'Choose an original paid expense.'},409);const rate=accountData.currency==='CAD'&&bill.currency==='USD'?Number(bill.exchangeRate||1.35):1;const refundAmountInBillCurrency=amount/rate;
     const refundedRow:any=await c.env.DB.prepare("SELECT COALESCE(SUM(ABS(COALESCE(json_extract(data,'$.amount'),0))),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.refundOfBillId')=?").bind(billId).first();const refundable=Math.max(0,Math.abs(Number(bill.amount||0))-Number(refundedRow?.total||0));if(refundAmountInBillCurrency-refundable>=0.005)return c.json({success:false,error:`Only $${(refundable*rate).toFixed(2)} remains refundable for this expense.`},409);
     const matchedIds:string[]=Array.isArray(parseSetting(match.data,[]))?parseSetting(match.data,[]):[];if(matchedIds.includes(bankTransactionId))return c.json({success:false,error:'This bank deposit is already matched.'},409);
-    const now=Date.now();const id=crypto.randomUUID();const operationId=`${mutationId}-refund-insert`;const matchOperationId=`${mutationId}-match-update`;const billAssertionId=`${mutationId}-bill-assertion`;const matchAssertionId=`${mutationId}-match-assertion`;const record={id,vendor:bill.vendor||description,amount:-refundAmountInBillCurrency,currency:bill.currency||accountData.currency||'CAD',...(bill.exchangeRate?{exchangeRate:Number(bill.exchangeRate)}:{}),dueDate:bankDate,paidDate:bankDate,status:'paid',category:bill.category,sourceAccountId:accountId,offsetAccountId:bill.category,taxable:Boolean(bill.taxable),memo:description,refundOfBillId:billId,bankTransactionId};const data=JSON.stringify(record);const nextMatchedData=JSON.stringify([...new Set([...matchedIds,bankTransactionId])]);const response={success:true,item:{...record,revision:1,updatedAt:now},action:'refund',originalBillId:billId};const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');
+    const now=Date.now();const id=crypto.randomUUID();const operationId=`${mutationId}-refund-insert`;const matchOperationId=`${mutationId}-match-update`;const billAssertionId=`${mutationId}-bill-assertion`;const matchAssertionId=`${mutationId}-match-assertion`;const record={id,vendor:bill.vendor||description,amount:-refundAmountInBillCurrency,currency:bill.currency||accountData.currency||'CAD',...(bill.exchangeRate?{exchangeRate:Number(bill.exchangeRate)}:{}),dueDate:bankDate,paidDate:bankDate,status:'paid',category:bill.category,taxCategory:bill.taxCategory||'Not categorized for tax',sourceAccountId:accountId,offsetAccountId:bill.category,taxable:Boolean(bill.taxable),memo:description,refundOfBillId:billId,bankTransactionId};const data=JSON.stringify(record);const nextMatchedData=JSON.stringify([...new Set([...matchedIds,bankTransactionId])]);const response={success:true,item:{...record,revision:1,updatedAt:now},action:'refund',originalBillId:billId};const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');
     try{await c.env.DB.batch([
       c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bills' AND id=? AND revision=? AND is_deleted=0) AND ?+COALESCE((SELECT SUM(ABS(COALESCE(json_extract(data,'$.amount'),0))) FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.refundOfBillId')=?),0)<=ABS(COALESCE((SELECT json_extract(data,'$.amount') FROM sync_records WHERE type='bills' AND id=?),0))+0.005 THEN 1 ELSE 0 END").bind(billAssertionId,billId,expectedRevision,refundAmountInBillCurrency,billId,billId),
       c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(matchAssertionId,match.revision),
@@ -2084,7 +2090,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (!vendor || !categoryRow || JSON.parse(String(categoryRow.data)).type !== 'expense') return c.json({ success: false, error: 'Vendor and a valid expense category are required.' }, 409);
       const id = crypto.randomUUID();
       const operationId = `${mutationId}-bill-insert`;
-      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, sourceAccountId: accountId, offsetAccountId: category, ...(body.creditAccountId?{creditAccountId:String(body.creditAccountId)}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId };
+      const taxCategory = String(body.taxCategory || 'Not categorized for tax').trim().slice(0, 200);
+      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, taxCategory, sourceAccountId: accountId, offsetAccountId: category, ...(body.creditAccountId?{creditAccountId:String(body.creditAccountId)}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId };
       const data = JSON.stringify(record);
       resultItem = { ...record, revision: 1, updatedAt: now };
       statements.push(
@@ -2095,7 +2102,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const normalizedDescription = normalizeBankVendorDescription(description);
       const ruleId = await bankVendorRuleId(normalizedDescription);
       const currentRule: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='bankVendorRules' AND id=? AND is_deleted=0").bind(ruleId).first();
-      const rule = { id: ruleId, bankDescription: description, normalizedDescription, vendor, category, taxable: Boolean(body.taxable) };
+      const rule = { id: ruleId, bankDescription: description, normalizedDescription, vendor, category, taxCategory, taxable: Boolean(body.taxable) };
       const ruleData = JSON.stringify(rule);
       const ruleOperationId = `${mutationId}-vendor-rule`;
       if (currentRule) {
