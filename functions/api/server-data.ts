@@ -126,6 +126,12 @@ export const depositCandidateWindow = (bankDate: string) => {
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 };
 
+const normalizeBankVendorDescription = (value: unknown) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 500);
+const bankVendorRuleId = async (description: string) => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(description));
+  return `bank-vendor-${Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, '0')).join('')}`;
+};
+
 const requirePermission = (c: any, permission: string) => {
   const roles = (c.get('userRoles') || []) as string[];
   if (roles.includes('administrator')) return null;
@@ -1954,6 +1960,18 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
   });
 
+  app.get('/v3/bank/vendor-rule', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read');
+    if (denied) return denied;
+    const normalizedDescription = normalizeBankVendorDescription(c.req.query('description'));
+    if (!normalizedDescription) return c.json({ success: true, rule: null });
+    const id = await bankVendorRuleId(normalizedDescription);
+    const row: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='bankVendorRules' AND id=? AND is_deleted=0").bind(id).first();
+    if (!row) return c.json({ success: true, rule: null });
+    const rule = JSON.parse(String(row.data));
+    return c.json({ success: true, rule: rule.normalizedDescription === normalizedDescription ? rule : null });
+  });
+
   app.get('/v3/bank/bill-candidates', async (c: any) => {
     const denied = requirePermission(c, 'bills.read');
     if (denied) return denied;
@@ -2019,7 +2037,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare(`INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END`).bind(matchAssertionId, matchRecord.revision)
     ];
     let resultItem: any;
-    let recordAssertionId = '';
+    const assertionIds = [matchAssertionId];
 
     if (action === 'expense') {
       const vendor = String(body.vendor || '').trim();
@@ -2036,6 +2054,29 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bills',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
         c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bills','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created from server-driven outgoing bank match')
       );
+      const normalizedDescription = normalizeBankVendorDescription(description);
+      const ruleId = await bankVendorRuleId(normalizedDescription);
+      const currentRule: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='bankVendorRules' AND id=? AND is_deleted=0").bind(ruleId).first();
+      const rule = { id: ruleId, bankDescription: description, normalizedDescription, vendor, category, taxable: Boolean(body.taxable) };
+      const ruleData = JSON.stringify(rule);
+      const ruleOperationId = `${mutationId}-vendor-rule`;
+      if (currentRule) {
+        const ruleAssertionId = `${mutationId}-vendor-rule-assertion`;
+        const nextRuleRevision = Number(currentRule.revision) + 1;
+        assertionIds.push(ruleAssertionId);
+        statements.push(
+          c.env.DB.prepare(`INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bankVendorRules' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END`).bind(ruleAssertionId, ruleId, currentRule.revision),
+          c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bankVendorRules','update',?,?,?, ?,?,?,?,?,?,?)`).bind(ruleId, currentRule.revision, nextRuleRevision, currentRule.data, ruleData, userId, userEmail, now, mutationId, ruleOperationId, 'Updated automatic bank vendor rule'),
+          c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='bankVendorRules' AND id=? AND revision=? AND is_deleted=0").bind(ruleData, nextRuleRevision, now, ruleOperationId, ruleId, currentRule.revision),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bankVendorRules',?,'update',?,?,?,?)").bind(ruleId, nextRuleRevision, ruleData, now, mutationId, ruleOperationId)
+        );
+      } else {
+        statements.push(
+          c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bankVendorRules',?,?,1,0,?)").bind(ruleId, ruleData, now, ruleOperationId),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bankVendorRules',1,'insert',?,?,?,?)").bind(ruleId, ruleData, now, mutationId, ruleOperationId),
+          c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bankVendorRules','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(ruleId, ruleData, userId, userEmail, now, mutationId, ruleOperationId, 'Created automatic bank vendor rule')
+        );
+      }
     } else if (action === 'transfer') {
       const targetAccountId = String(body.targetAccountId || '').trim();
       const target: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(targetAccountId).first();
@@ -2064,7 +2105,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const nextRevision = expectedRevision + 1;
       const data = JSON.stringify(next);
       const operationId = `${mutationId}-bill-update`;
-      recordAssertionId = `${mutationId}-bill-assertion`;
+      const recordAssertionId = `${mutationId}-bill-assertion`;
+      assertionIds.push(recordAssertionId);
       resultItem = { ...next, revision: nextRevision, updatedAt: now };
       statements.push(
         c.env.DB.prepare(`INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bills' AND id=? AND revision=? AND is_deleted=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')='') THEN 1 ELSE 0 END`).bind(recordAssertionId, billId, expectedRevision),
@@ -2079,9 +2121,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',revision,revision+1,data,?, ?,?,?, ?,?,? FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=?`).bind(nextMatchedData, userId, userEmail, now, mutationId, matchOperationId, 'Added server-driven outgoing bank match', matchRecord.revision),
       c.env.DB.prepare(`UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0`).bind(nextMatchedData, nextMatchRevision, now, matchOperationId, matchRecord.revision),
       c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=?`).bind(mutationId, matchOperationId, nextMatchRevision),
-      recordAssertionId
-        ? c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id IN (?,?)').bind(matchAssertionId, recordAssertionId)
-        : c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(matchAssertionId),
+      ...assertionIds.map(id => c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(id)),
       c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
     );
     try {

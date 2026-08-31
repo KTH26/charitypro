@@ -36,7 +36,7 @@ class MockD1 {
 }
 
 const databases: MockD1[] = [];
-afterEach(() => { vi.restoreAllMocks(); while (databases.length) databases.pop()!.close(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); while (databases.length) databases.pop()!.close(); });
 
 const seedRecord = (db: MockD1, type: string, id: string, data: any, revision = 1) => {
   db.database.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES(?,?,?,?,?,0)').run(id, type, JSON.stringify(data), 1, revision);
@@ -111,7 +111,7 @@ describe('server-driven bank deposit matching', () => {
     const app = new Hono();
     app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
     registerServerDataRoutes(app as any);
-    const payload = { requestId: 'expense-request', action: 'expense', accountId: 'bank-1', bankTransactionId: 'bank-expense-1', bankDate: '2026-07-21', description: 'Office Store', amount: 75, vendor: 'Office Store', category: 'expense-1', taxable: true, projectId: 'project-1', creditAccountId: 'credit-1', memo: 'Office supplies', isPayrollExpense: false, t4aEligible: false };
+    const payload = { requestId: 'expense-request', action: 'expense', accountId: 'bank-1', bankTransactionId: 'bank-expense-1', bankDate: '2026-07-21', description: 'POS 123 OFFICE STORE', amount: 75, vendor: 'Correct Office Vendor', category: 'expense-1', taxable: true, projectId: 'project-1', creditAccountId: 'credit-1', memo: 'Office supplies', isPayrollExpense: false, t4aEligible: false };
     const response = await app.request('/v3/bank/match-outgoing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'expense-request' }, body: JSON.stringify(payload) }, { DB: db } as any);
     expect(response.status).toBe(200);
     const bill: any = db.database.prepare("SELECT data FROM sync_records WHERE type='bills'").get();
@@ -124,7 +124,10 @@ describe('server-driven bank deposit matching', () => {
     const match: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='matchedBankTransactions'").get();
     expect(JSON.parse(String(match.data))).toContain('bank-expense-1');
     expect(Number(match.revision)).toBe(2);
-    expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(2);
+    const ruleResponse = await app.request('/v3/bank/vendor-rule?description=%20pos%20%20123%20office%20store%20', {}, { DB: db } as any);
+    const ruleBody: any = await ruleResponse.json();
+    expect(ruleBody.rule).toMatchObject({ bankDescription: 'POS 123 OFFICE STORE', normalizedDescription: 'pos 123 office store', vendor: 'Correct Office Vendor', category: 'expense-1', taxable: true });
+    expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(3);
   });
 
   it('links an incoming bank refund to the original expense and reverses the expense amount', async()=>{
@@ -544,6 +547,7 @@ describe('server-driven bank deposit matching', () => {
   });
 
   it('materializes a due schedule once as pending verification without approving it', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-25T12:00:00Z'));
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });
     seedRecord(db, 'recurringPayments', 'schedule-safe', { id: 'schedule-safe', donorId: 'scheduled-donor', amount: 75, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', endDate: '2026-08-20', method: 'credit_card', active: true });

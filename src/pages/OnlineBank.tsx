@@ -46,6 +46,7 @@ type RefundCandidate = BillCandidate & {
   refundableAmount: number;
   memo?: string;
 };
+type BankVendorRule = { vendor: string; category: string; taxable: boolean };
 
 export const OnlineBank: React.FC = () => {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -84,6 +85,7 @@ export const OnlineBank: React.FC = () => {
   const [billCandidates, setBillCandidates] = useState<BillCandidate[]>([]);
   const [saving, setSaving] = useState(false);
   const [showFullExpense, setShowFullExpense] = useState(false);
+  const [bankVendorRule, setBankVendorRule] = useState<BankVendorRule | null>(null);
   const [linkToken,setLinkToken]=useState<string|null>(null);
   const [connectionMode,setConnectionMode]=useState<'add'|'reconnect'>('add');
   const [connectionAccountId,setConnectionAccountId]=useState('');
@@ -335,9 +337,8 @@ export const OnlineBank: React.FC = () => {
   };
 
   const openOutgoingMatch = async (transaction: BankTransaction) => {
-    setOutgoing(transaction);
     setOutgoingAction("expense");
-    setShowFullExpense(true);
+    setBankVendorRule(null);
     setVendor(transaction.description);
     setCategory("");
     setTaxable(false);
@@ -347,11 +348,18 @@ export const OnlineBank: React.FC = () => {
     setError("");
     setNotice("");
     try {
-      const response = await fetch(`/api/v3/bank/bill-candidates?accountId=${encodeURIComponent(selectedBank)}&amount=${encodeURIComponent(String(Math.abs(transaction.amount)))}`);
-      const data = await response.json();
-      if (response.ok && data.success) setBillCandidates(data.items);
+      const [billResponse, ruleResponse] = await Promise.all([
+        fetch(`/api/v3/bank/bill-candidates?accountId=${encodeURIComponent(selectedBank)}&amount=${encodeURIComponent(String(Math.abs(transaction.amount)))}`),
+        fetch(`/api/v3/bank/vendor-rule?description=${encodeURIComponent(transaction.description)}`),
+      ]);
+      const [billData, ruleData] = await Promise.all([billResponse.json(), ruleResponse.json()]);
+      if (billResponse.ok && billData.success) setBillCandidates(billData.items);
+      if (ruleResponse.ok && ruleData.success && ruleData.rule) setBankVendorRule(ruleData.rule);
     } catch {
       /* New expense and transfer matching remain available. */
+    } finally {
+      setOutgoing(transaction);
+      setShowFullExpense(true);
     }
   };
 
@@ -865,12 +873,14 @@ export const OnlineBank: React.FC = () => {
             initialData={{
               id: outgoing.id,
               revision: 1,
-              vendor: outgoing.description,
+              vendor: bankVendorRule?.vendor || outgoing.description,
               amount: Math.abs(outgoing.amount),
               dueDate: outgoing.date,
               status: "paid",
               sourceAccountId: selectedBank,
               memo: outgoing.description,
+              category: bankVendorRule?.category,
+              taxable: bankVendorRule?.taxable,
             }}
             bankMatch={{
               accountId: selectedBank,
