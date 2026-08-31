@@ -208,6 +208,14 @@ describe('server-driven bank deposit matching', () => {
     expect(transferData.bankTransactionId).toBe('bank-transfer-1');
   });
 
+  it('links a credit-card deposit to the existing payment from a bank account',async()=>{
+    const db=new MockD1();databases.push(db);seedRecord(db,'accounts','bank-pay',{id:'bank-pay',name:'Operating Bank',type:'asset',currency:'CAD',plaidConnected:true});seedRecord(db,'accounts','card-pay',{id:'card-pay',name:'Credit Card',type:'liability',currency:'CAD',plaidConnected:true});seedRecord(db,'matchedBankTransactions','matchedBankTransactions',['bank-outgoing-payment'],1);seedRecord(db,'accountTransfers','card-payment-transfer',{id:'card-payment-transfer',fromAccountId:'bank-pay',toAccountId:'card-pay',amount:125,date:'2026-07-20',notes:'Card payment',bankTransactionId:'bank-outgoing-payment'},2);
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
+    const candidates=await app.request('/v3/bank/incoming-transfer-candidates?accountId=card-pay&amount=125&bankDate=2026-07-22',{}, {DB:db} as any);expect(candidates.status).toBe(200);expect((await candidates.json() as any).items[0].sourceName).toBe('Operating Bank');
+    const response=await app.request('/v3/bank/match-incoming-transfer',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'incoming-card-payment'},body:JSON.stringify({requestId:'incoming-card-payment',accountId:'card-pay',bankTransactionId:'card-deposit-payment',amount:125,transferId:'card-payment-transfer',revision:2})},{DB:db} as any);expect(response.status).toBe(200);
+    const transfer:any=db.database.prepare("SELECT data,revision FROM sync_records WHERE type='accountTransfers' AND id='card-payment-transfer'").get();expect(JSON.parse(String(transfer.data)).destinationBankTransactionId).toBe('card-deposit-payment');expect(Number(transfer.revision)).toBe(3);const matched:any=db.database.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions'").get();expect(JSON.parse(String(matched.data))).toContain('card-deposit-payment');
+  });
+
   it('creates, updates, and deletes a generic cloud record with revisions and audit history', async () => {
     const db = new MockD1(); databases.push(db);
     const app = new Hono();

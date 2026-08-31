@@ -46,6 +46,7 @@ type RefundCandidate = BillCandidate & {
   refundableAmount: number;
   memo?: string;
 };
+type IncomingTransferCandidate = { id:string;revision:number;fromAccountId:string;toAccountId:string;sourceName:string;amount:number;date:string;notes?:string };
 type BankVendorRule = { vendor: string; category: string; internalCategory?: string; taxCategory?: string; taxable: boolean };
 
 export const OnlineBank: React.FC = () => {
@@ -71,9 +72,11 @@ export const OnlineBank: React.FC = () => {
     endDate: "",
   });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [depositAction, setDepositAction] = useState<"payments" | "refund">("payments");
+  const [depositAction, setDepositAction] = useState<"payments" | "refund" | "transfer">("payments");
   const [refundCandidates, setRefundCandidates] = useState<RefundCandidate[]>([]);
   const [refundBillId, setRefundBillId] = useState("");
+  const [incomingTransferCandidates,setIncomingTransferCandidates]=useState<IncomingTransferCandidate[]>([]);
+  const [incomingTransferId,setIncomingTransferId]=useState("");
   const [showMissingPayment, setShowMissingPayment] = useState(false);
   const [outgoing, setOutgoing] = useState<BankTransaction | null>(null);
   const [outgoingAction, setOutgoingAction] = useState<"expense" | "existing_bill" | "transfer">("expense");
@@ -219,11 +222,14 @@ export const OnlineBank: React.FC = () => {
     if (!response.ok || !data.success) throw new Error(data.error || "Unable to load refundable expenses.");
     setRefundCandidates(data.items || []);
   };
+  const loadIncomingTransferCandidates=async(transaction:BankTransaction)=>{const response=await fetch(`/api/v3/bank/incoming-transfer-candidates?accountId=${encodeURIComponent(selectedBank)}&amount=${encodeURIComponent(String(transaction.amount))}&bankDate=${encodeURIComponent(transaction.date)}`);const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||"Unable to load matching bank payments.");setIncomingTransferCandidates(data.items||[]);};
   const openDepositMatch = async (transaction: BankTransaction) => {
     setMatching(transaction);
     setDepositAction("payments");
     setRefundCandidates([]);
     setRefundBillId("");
+    setIncomingTransferCandidates([]);
+    setIncomingTransferId("");
     setSelectedIds([]);
     setCandidates([]);
     setError("");
@@ -303,6 +309,7 @@ export const OnlineBank: React.FC = () => {
     if (!totalsMatch || selectedIds.length === 0) return;
     await matchDepositPayments(selectedIds);
   };
+  const confirmIncomingTransfer=async()=>{if(!matching||!incomingTransferId)return;const candidate=incomingTransferCandidates.find(item=>item.id===incomingTransferId);if(!candidate)return;setSaving(true);setError("");const requestId=matchRequestIds.current[matching.id]||crypto.randomUUID();matchRequestIds.current[matching.id]=requestId;try{const response=await fetch('/api/v3/bank/match-incoming-transfer',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':requestId},body:JSON.stringify({requestId,accountId:selectedBank,bankTransactionId:matching.id,amount:matching.amount,transferId:candidate.id,revision:candidate.revision})});const data=await response.json();if(!response.ok||!data.success){delete matchRequestIds.current[matching.id];throw new Error(data.error||'Unable to match this credit-card payment.');}const matchedId=matching.id;delete matchRequestIds.current[matchedId];removeMatchedFromVisibleFeed(matchedId);setMatching(null);setIncomingTransferCandidates([]);setIncomingTransferId('');setNotice('Credit-card deposit linked to the existing payment from the bank account.');await Promise.all([loadState(true),loadFeed(true)]);}catch(reason:any){setError(reason.message||'Unable to match this credit-card payment.');}finally{setSaving(false);}};
   const confirmRefund = async () => {
     if (!matching || !refundBillId) return;
     const bill = refundCandidates.find((item) => item.id === refundBillId);
@@ -576,14 +583,16 @@ export const OnlineBank: React.FC = () => {
                 <select
                   value={depositAction}
                   onChange={(event) => {
-                    const action = event.target.value as "payments" | "refund";
+                    const action = event.target.value as "payments" | "refund" | "transfer";
                     setDepositAction(action);
                     setError("");
                     if (action === "refund") void loadRefundCandidates(matching);
+                    if (action === "transfer") void loadIncomingTransferCandidates(matching);
                   }}
                 >
                   <option value="payments">Donor payments</option>
                   <option value="refund">Refund from an expense</option>
+                  <option value="transfer">Credit-card payment from a bank account</option>
                 </select>
               </label>
               {depositAction === "payments" && (
@@ -751,6 +760,7 @@ export const OnlineBank: React.FC = () => {
                   </div>
                 </div>
               )}
+              {depositAction === "transfer"&&<div style={{display:'grid',gap:16,marginTop:16}}><label className="form-group" style={{margin:0}}><span>Payment made from bank account *</span><select value={incomingTransferId} onChange={event=>setIncomingTransferId(event.target.value)}><option value="">Select matching bank payment</option>{incomingTransferCandidates.map(item=><option key={item.id} value={item.id}>{item.sourceName} — ${Number(item.amount).toFixed(2)} — {item.date}{item.notes?` — ${item.notes}`:''}</option>)}</select></label>{!incomingTransferCandidates.length&&<div style={{color:'var(--text-muted)'}}>No unlinked bank-to-credit-card payment with this amount was found within 31 days.</div>}<div style={{display:'flex',justifyContent:'flex-end',gap:10}}><button className="btn btn-secondary" onClick={()=>setMatching(null)}>Cancel</button><button className="btn btn-primary" disabled={!incomingTransferId||saving} onClick={()=>void confirmIncomingTransfer()}>{saving?'Matching securely...':'Match Credit-Card Payment'}</button></div></div>}
             </section>
           </div>
         )}
