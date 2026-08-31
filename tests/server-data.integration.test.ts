@@ -412,6 +412,17 @@ describe('server-driven bank deposit matching', () => {
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const response = await app.request('/v3/bank/feed?accountId=bank-1&limit=50', {}, { DB: db } as any); const body = await response.json() as any;
     expect(response.status).toBe(200); expect(body.items).toEqual([{ id: 'plaid-1', accountId: 'bank-1', date: '2026-07-21', description: 'Saved deposit', amount: 125 }]); expect(body.sync.lastSuccessfulDate).toBe('2026-07-21');
+    const dismissRequest = () => app.request('/v3/bank/feed-status', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'dismiss-plaid-1' }, body: JSON.stringify({ action: 'dismiss', accountId: 'bank-1', bankTransactionId: 'plaid-1' }) }, { DB: db } as any);
+    expect((await dismissRequest()).status).toBe(200); expect((await dismissRequest()).status).toBe(200);
+    const unmatchedAfterDismiss: any = await (await app.request('/v3/bank/feed?accountId=bank-1&matchStatus=unmatched', {}, { DB: db } as any)).json();
+    const dismissed: any = await (await app.request('/v3/bank/feed?accountId=bank-1&matchStatus=dismissed', {}, { DB: db } as any)).json();
+    expect(unmatchedAfterDismiss.items).toEqual([]); expect(dismissed.items[0]).toMatchObject({ id: 'plaid-1', reviewStatus: 'dismissed' });
+    const restore = await app.request('/v3/bank/feed-status', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'restore-plaid-1' }, body: JSON.stringify({ action: 'restore', accountId: 'bank-1', bankTransactionId: 'plaid-1' }) }, { DB: db } as any);
+    expect(restore.status).toBe(200);
+    const unmatchedAfterRestore: any = await (await app.request('/v3/bank/feed?accountId=bank-1&matchStatus=unmatched', {}, { DB: db } as any)).json();
+    const dismissedAfterRestore: any = await (await app.request('/v3/bank/feed?accountId=bank-1&matchStatus=dismissed', {}, { DB: db } as any)).json();
+    expect(unmatchedAfterRestore.items[0]).toMatchObject({ id: 'plaid-1' }); expect(dismissedAfterRestore.items).toEqual([]);
+    expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type IN ('bills','transactions','accountTransfers')").get() as any).count)).toBe(0);
   });
 
   it('reopens the most recently synced bank and reports its saved transaction count', async () => {

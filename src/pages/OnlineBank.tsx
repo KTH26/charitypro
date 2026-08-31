@@ -53,7 +53,7 @@ export const OnlineBank: React.FC = () => {
   const [allAccounts, setAllAccounts] = useState<CloudAccount[]>([]);
   const [selectedBank, setSelectedBank] = useState(() => window.localStorage.getItem("charitypro:selected-bank-account") || "");
   const [feed, setFeed] = useState<BankTransaction[]>([]);
-  const [tab, setTab] = useState<"unmatched" | "matched">("unmatched");
+  const [tab, setTab] = useState<"unmatched" | "matched" | "dismissed">("unmatched");
   const [startDate, setStartDate] = useState("");
   const [feedPage, setFeedPage] = useState(1);
   const [feedPages, setFeedPages] = useState(1);
@@ -238,6 +238,19 @@ export const OnlineBank: React.FC = () => {
   const selectedTotal = candidates.filter((candidate) => selectedIds.includes(candidate.id)).reduce((sum, candidate) => sum + Number(candidate.amountCAD ?? candidate.amount), 0);
   const totalsMatch = matching ? Math.abs(selectedTotal - matching.amount) < 0.005 : false;
   const removeMatchedFromVisibleFeed = (bankTransactionId: string) => setFeed((current) => current.filter((transaction) => transaction.id !== bankTransactionId));
+  const changeFeedStatus = async (transaction: BankTransaction, action: "dismiss" | "restore") => {
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const requestId = crypto.randomUUID();
+      const response = await fetch("/api/v3/bank/feed-status", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": requestId }, body: JSON.stringify({ requestId, action, accountId: selectedBank, bankTransactionId: transaction.id }) });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || "Unable to update this bank transaction.");
+      removeMatchedFromVisibleFeed(transaction.id);
+      setNotice(action === "dismiss" ? "Transaction moved to Dismissed. No accounting entry was created." : "Transaction restored to Unmatched and is ready to review.");
+      await loadFeed(true);
+    } catch (reason: any) { setError(reason.message || "Unable to update this bank transaction."); }
+    finally { setSaving(false); }
+  };
   const matchDepositPayments = async (transactionIds: string[]) => {
     if (!matching || transactionIds.length === 0) return;
     setSaving(true);
@@ -962,6 +975,15 @@ export const OnlineBank: React.FC = () => {
             >
               Matched
             </button>
+            <button
+              className={`btn ${tab === "dismissed" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => {
+                setTab("dismissed");
+                setFeedPage(1);
+              }}
+            >
+              Dismissed
+            </button>
             <input
               style={{ marginLeft: "auto", minWidth: 260 }}
               value={search}
@@ -1017,17 +1039,13 @@ export const OnlineBank: React.FC = () => {
                       {transaction.amount > 0 ? "+" : "-"}${Math.abs(transaction.amount).toFixed(2)}
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      {tab === "unmatched" && transaction.amount > 0 && (
-                        <button className="btn btn-primary btn-sm" onClick={() => void openDepositMatch(transaction)}>
-                          Match Deposit
-                        </button>
-                      )}
-                      {tab === "unmatched" && transaction.amount < 0 && (
-                        <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>
-                          Match Transaction
-                        </button>
-                      )}
+                      {tab === "unmatched" && <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                        {transaction.amount > 0 && <button className="btn btn-primary btn-sm" onClick={() => void openDepositMatch(transaction)}>Match Deposit</button>}
+                        {transaction.amount < 0 && <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Match Transaction</button>}
+                        <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"dismiss")}>Dismiss</button>
+                      </div>}
                       {tab === "matched" && <span style={{ color: "var(--green)", fontWeight: 700 }}>Matched</span>}
+                      {tab === "dismissed" && <button className="btn btn-primary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"restore")}>Restore to Unmatched</button>}
                     </td>
                   </tr>
                 ))}

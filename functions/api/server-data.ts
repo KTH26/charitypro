@@ -1799,7 +1799,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (denied) return denied;
     const accountId = String(c.req.query('accountId') || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const search=String(c.req.query('search')||'').trim().toLowerCase();const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const matchStatus=String(c.req.query('matchStatus')||'');
     if (!accountId) return c.json({ success: false, error: 'Choose a bank account.' }, 400);
-    const conditions=["f.type='bankFeedTransactions'",'f.is_deleted=0',"json_extract(f.data,'$.accountId')=?"];const bindings:any[]=[accountId];if(search){conditions.push("lower(f.data) LIKE ?");bindings.push(`%${search}%`);}if(from){conditions.push("json_extract(f.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(f.data,'$.date')<=?");bindings.push(to);}if(matchStatus==='matched')conditions.push("EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");if(matchStatus==='unmatched')conditions.push("NOT EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");const where=conditions.join(' AND ');
+    const conditions=["f.type='bankFeedTransactions'",'f.is_deleted=0',"json_extract(f.data,'$.accountId')=?"];const bindings:any[]=[accountId];if(search){conditions.push("lower(f.data) LIKE ?");bindings.push(`%${search}%`);}if(from){conditions.push("json_extract(f.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(f.data,'$.date')<=?");bindings.push(to);}if(matchStatus==='matched')conditions.push("EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");if(matchStatus==='unmatched'){conditions.push("NOT EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");conditions.push("COALESCE(json_extract(f.data,'$.reviewStatus'),'')<>'dismissed'");}if(matchStatus==='dismissed'){conditions.push("json_extract(f.data,'$.reviewStatus')='dismissed'");conditions.push("NOT EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");}const where=conditions.join(' AND ');
     const [listResult,countResult,syncRow] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT f.data FROM sync_records f WHERE ${where} ORDER BY json_extract(f.data,'$.date') DESC,f.id DESC LIMIT ? OFFSET ?`).bind(...bindings,limit,offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records f WHERE ${where}`).bind(...bindings),
@@ -1807,6 +1807,44 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     ]);
     const total=Number(countResult.results[0]?.count||0); const sync:any=syncRow.results[0]; let syncState:any=null; try{syncState=sync?.value?JSON.parse(String(sync.value)):null;}catch{syncState=null;}
     return c.json({success:true,items:listResult.results.map((row:any)=>JSON.parse(String(row.data))),page,limit,total,totalPages:Math.ceil(total/limit),sync:syncState});
+  });
+
+  app.post('/v3/bank/feed-status', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve');
+    if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    const action = String(body.action || '');
+    const accountId = String(body.accountId || '').trim();
+    const bankTransactionId = String(body.bankTransactionId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    if (!['dismiss','restore'].includes(action) || !accountId || !bankTransactionId) return c.json({ success: false, error: 'Choose a bank transaction and a valid review action.' }, 400);
+    const mutationId = `v3-bank-feed-status-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=? AND json_extract(data,'$.id')=? LIMIT 1").bind(accountId, bankTransactionId).first();
+    if (!current) return c.json({ success: false, error: 'The saved bank transaction was not found.' }, 404);
+    const record = JSON.parse(String(current.data));
+    if (action === 'dismiss') { record.reviewStatus = 'dismissed'; record.dismissedAt = Date.now(); }
+    else { delete record.reviewStatus; delete record.dismissedAt; }
+    const now = Date.now(); const nextRevision = Number(current.revision) + 1; const data = JSON.stringify(record); const operationId = `${mutationId}-${action}`;
+    const response = { success: true, action, item: { ...record, revision: nextRevision, updatedAt: now } };
+    const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bankFeedTransactions' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(operationId, current.id, current.revision),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bankFeedTransactions','update',?,?,?,?,?,?,?,?,?,?)").bind(current.id, current.revision, nextRevision, current.data, data, userId, userEmail, now, mutationId, operationId, action === 'dismiss' ? 'Dismissed bank transaction from accounting review' : 'Restored bank transaction to accounting review'),
+        c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='bankFeedTransactions' AND id=? AND revision=? AND is_deleted=0").bind(data, nextRevision, now, operationId, current.id, current.revision),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bankFeedTransactions',?,'update',?,?,?,?)").bind(current.id, nextRevision, data, now, mutationId, operationId),
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response);
+    } catch {
+      const repeated: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: 'The bank transaction changed. Reloaded the latest saved feed.', conflict: true }, 409);
+    }
   });
 
   app.get('/v3/bank/deposit-candidates', async (c: any) => {
