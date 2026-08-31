@@ -111,7 +111,7 @@ describe('server-driven bank deposit matching', () => {
     const app = new Hono();
     app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
     registerServerDataRoutes(app as any);
-    const payload = { requestId: 'expense-request', action: 'expense', accountId: 'bank-1', bankTransactionId: 'bank-expense-1', bankDate: '2026-07-21', description: 'POS 123 OFFICE STORE', amount: 75, vendor: 'Correct Office Vendor', category: 'expense-1', taxCategory: 'Office costs for tax', taxable: true, projectId: 'project-1', creditAccountId: 'credit-1', memo: 'Office supplies', isPayrollExpense: false, t4aEligible: false };
+    const payload = { requestId: 'expense-request', action: 'expense', accountId: 'bank-1', bankTransactionId: 'bank-expense-1', bankDate: '2026-07-21', description: 'POS 123 OFFICE STORE', amount: 75, vendor: 'Correct Office Vendor', category: 'expense-1', internalCategory: 'Office records', taxable: true, projectId: 'project-1', creditAccountId: 'credit-1', memo: 'Office supplies', isPayrollExpense: false, t4aEligible: false };
     const response = await app.request('/v3/bank/match-outgoing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'expense-request' }, body: JSON.stringify(payload) }, { DB: db } as any);
     expect(response.status).toBe(200);
     const bill: any = db.database.prepare("SELECT data FROM sync_records WHERE type='bills'").get();
@@ -120,16 +120,16 @@ describe('server-driven bank deposit matching', () => {
     expect(billData.bankTransactionId).toBe('bank-expense-1');
     expect(billData.projectId).toBe('project-1');
     expect(billData.creditAccountId).toBe('credit-1');
-    expect(billData.taxCategory).toBe('Office costs for tax');
+    expect(billData.internalCategory).toBe('Office records');
     expect(billData.memo).toBe('Office supplies');
     const match: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='matchedBankTransactions'").get();
     expect(JSON.parse(String(match.data))).toContain('bank-expense-1');
     expect(Number(match.revision)).toBe(2);
     const ruleResponse = await app.request('/v3/bank/vendor-rule?description=%20pos%20%20123%20office%20store%20', {}, { DB: db } as any);
     const ruleBody: any = await ruleResponse.json();
-    expect(ruleBody.rule).toMatchObject({ bankDescription: 'POS 123 OFFICE STORE', normalizedDescription: 'pos 123 office store', vendor: 'Correct Office Vendor', category: 'expense-1', taxCategory: 'Office costs for tax', taxable: true });
-    const taxChoices: any = await (await app.request('/v3/tax-category-choices', {}, { DB: db } as any)).json();
-    expect(taxChoices.items.map((item: any) => item.name)).toContain('Office costs for tax');
+    expect(ruleBody.rule).toMatchObject({ bankDescription: 'POS 123 OFFICE STORE', normalizedDescription: 'pos 123 office store', vendor: 'Correct Office Vendor', category: 'expense-1', internalCategory: 'Office records', taxable: true });
+    const internalChoices: any = await (await app.request('/v3/internal-category-choices', {}, { DB: db } as any)).json();
+    expect(internalChoices.items.map((item: any) => item.name)).toContain('Office records');
     expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(3);
   });
 
