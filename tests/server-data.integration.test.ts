@@ -307,6 +307,9 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200);
     expect(body.items).toHaveLength(2);
     expect(body.total).toBe(2);
+    const paymentAccounts=await (await app.request('/v3/accounts?limit=100&types=asset,liability&sort=name',{}, {DB:db} as any)).json() as any;
+    expect(paymentAccounts.items.map((item:any)=>item.id)).toEqual(['asset-1']);
+    expect(paymentAccounts.total).toBe(1);
     const ledgerResponse = await app.request('/v3/accounts/asset-1/ledger?limit=50', {}, { DB: db } as any);
     const ledger = await ledgerResponse.json() as any;
     expect(ledgerResponse.status).toBe(200);

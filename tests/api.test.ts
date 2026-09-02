@@ -87,6 +87,7 @@ describe('Backend API & Security Rules', () => {
     expect(appSource).toContain('path="/online/bank"');
     expect(bankSource).toContain('fetch("/api/v3/bank/match-deposit"');
     expect(bankSource).toContain('fetch("/api/v3/bank/match-outgoing"');
+    expect(readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePayroll.tsx'), 'utf8')).toContain('types=asset,liability');
     expect(bankSource).toContain('Exact match');
     expect(bankSource).toContain('+ Add New Bank');
     expect(bankSource).toContain('Reconnect Bank');

@@ -2217,6 +2217,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const page = boundedPage(c.req.query('page'));
     const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase();
+    const requestedTypes=String(c.req.query('types')||'').split(',').map(value=>value.trim().toLowerCase()).filter(value=>['asset','liability','expense','revenue','equity'].includes(value));const typesJson=JSON.stringify([...new Set(requestedTypes)]);
     const order = requestedOrder(c, { name: "lower(json_extract(a.data,'$.name'))", type: "json_extract(a.data,'$.type')", currency: "json_extract(a.data,'$.currency')", balance: 'calculated_balance' }, "json_extract(a.data,'$.type')");
     const result = await c.env.DB.prepare(`
       WITH exchange_rate AS (
@@ -2287,10 +2288,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       LEFT JOIN transfer_to tt ON tt.account_id=a.id
       WHERE a.type='accounts' AND a.is_deleted=0
         AND (?='' OR lower(COALESCE(json_extract(a.data,'$.name'),'')) LIKE ?)
+        AND (?='[]' OR json_extract(a.data,'$.type') IN (SELECT value FROM json_each(?)))
       ORDER BY ${order}, lower(json_extract(a.data,'$.name'))
       LIMIT ? OFFSET ?
-    `).bind(search, `%${search}%`, limit, offset).all();
-    const countResult: any = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='accounts' AND is_deleted=0 AND (?='' OR lower(COALESCE(json_extract(data,'$.name'),'')) LIKE ?)").bind(search, `%${search}%`).first();
+    `).bind(search, `%${search}%`,typesJson,typesJson, limit, offset).all();
+    const countResult: any = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='accounts' AND is_deleted=0 AND (?='' OR lower(COALESCE(json_extract(data,'$.name'),'')) LIKE ?) AND (?='[]' OR json_extract(data,'$.type') IN (SELECT value FROM json_each(?)))").bind(search, `%${search}%`,typesJson,typesJson).first();
     const total = Number(countResult?.count || 0);
     return c.json({ success: true, items: result.results.map((row: any) => ({ ...parseRecord(row), balance: Number(row.calculated_balance || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
