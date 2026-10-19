@@ -226,6 +226,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
       if (!campaign) return c.json({ success: false, error: 'The selected campaign does not exist.' }, 409);
     }
+    if (type === 'pledges' && record.followUpDate && !isoDate(String(record.followUpDate))) return c.json({ success: false, error: 'Enter a valid pledge follow-up date.' }, 400);
     const now = Date.now();
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;
@@ -233,12 +234,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const userId = String(c.get('userId') || 'unknown');
     const userEmail = String(c.get('userEmail') || 'unknown');
     try {
-      await c.env.DB.batch([
+      const statements:any[] = [
         c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?, ?,1,0,?)').bind(id, type, data, now, operationId),
         c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(id, type, data, now, mutationId, operationId),
-        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, type, data, userId, userEmail, now, mutationId, operationId, 'Created through generic server-driven record API'),
-        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
-      ]);
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, type, data, userId, userEmail, now, mutationId, operationId, 'Created through generic server-driven record API')
+      ];
+      if(type==='pledges'&&record.followUpDate){const taskId=`pledge-follow-up-${id}`;const task={id:taskId,donorId:record.donorId,title:'Follow up on pledge',notes:String(record.followUpNote||record.notes||'Contact donor about pledge payment.').slice(0,2000),dueDate:String(record.followUpDate),priority:'high',type:'follow_up',completed:false,linkedPledgeId:id,createdAt:new Date(now).toISOString().slice(0,10)};const taskData=JSON.stringify(task);const taskOperation=`${mutationId}-reminder`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?)").bind(taskId,taskData,now,taskOperation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',1,'insert',?,?,?,?)").bind(taskId,taskData,now,mutationId,taskOperation),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'tasks','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(taskId,taskData,userId,userEmail,now,mutationId,taskOperation,'Created pledge follow-up reminder'));}
+      statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));
+      await c.env.DB.batch(statements);
       return c.json(response, 201);
     } catch (error: any) {
       const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
@@ -291,6 +294,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const year = Number(record.year);
       if (!String(record.name || '').trim() || !Number.isInteger(year) || year < 1900 || year > 2200 || !isoDate(record.startDate) || !isoDate(record.endDate) || record.startDate > record.endDate || !['CAD','USD'].includes(record.currency) || !['draft','active','closed'].includes(record.status)) return c.json({ success: false, error: 'Campaign name, year, dates, currency, and status are required.' }, 400);
     }
+    if (type === 'pledges' && record.followUpDate && !isoDate(String(record.followUpDate))) return c.json({ success: false, error: 'Enter a valid pledge follow-up date.' }, 400);
     if (type === 'bills') {
       const categoryId = String(record.category || '').trim();
       const sourceAccountId = String(record.sourceAccountId || '').trim();
@@ -312,15 +316,17 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const response = { success: true, item: { ...record, revision: nextRevision, updatedAt: now } };
     const userId = String(c.get('userId') || 'unknown');
     const userEmail = String(c.get('userEmail') || 'unknown');
+    const pledgeReminder:any=type==='pledges'?await c.env.DB.prepare("SELECT data,revision,is_deleted FROM sync_records WHERE type='tasks' AND id=?").bind(`pledge-follow-up-${id}`).first():null;
     try {
-      await c.env.DB.batch([
+      const statements:any[]=[
         c.env.DB.prepare('INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type=? AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END').bind(operationId, type, id, expectedRevision),
         c.env.DB.prepare('UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(data, nextRevision, now, operationId, type, id, expectedRevision),
         c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(mutationId, operationId, type, id, nextRevision),
         c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'update',?,revision,?,data,?,?,updated_at,?,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(expectedRevision, current.data, userId, userEmail, mutationId, operationId, 'Updated through generic server-driven record API', type, id, nextRevision),
-        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
-        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
-      ]);
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId)
+      ];
+      if(type==='pledges'){const taskId=`pledge-follow-up-${id}`;if(record.followUpDate){const previousTask=parseSetting(pledgeReminder?.data,{});const task={...previousTask,id:taskId,donorId:record.donorId,title:'Follow up on pledge',notes:String(record.followUpNote||record.notes||'Contact donor about pledge payment.').slice(0,2000),dueDate:String(record.followUpDate),priority:'high',type:'follow_up',completed:false,linkedPledgeId:id,createdAt:previousTask.createdAt||new Date(now).toISOString().slice(0,10)};const taskData=JSON.stringify(task);const taskRevision=Number(pledgeReminder?.revision||0)+1;const taskOperation=`${mutationId}-reminder`;if(pledgeReminder)statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,is_deleted=0,last_operation_id=? WHERE type='tasks' AND id=? AND revision=?").bind(taskData,taskRevision,now,taskOperation,taskId,pledgeReminder.revision));else statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?)").bind(taskId,taskData,now,taskOperation));statements.push(c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',?,'update',?,?,?,?)").bind(taskId,taskRevision,taskData,now,mutationId,taskOperation),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'tasks','update',?,?,?,?,?,?,?,?,?,?)").bind(taskId,pledgeReminder?.revision||null,taskRevision,pledgeReminder?.data||null,taskData,userId,userEmail,now,mutationId,taskOperation,'Synchronized pledge follow-up reminder'));}else if(pledgeReminder&&!pledgeReminder.is_deleted){const taskOperation=`${mutationId}-reminder-delete`;statements.push(c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='tasks' AND id=? AND revision=? AND is_deleted=0").bind(now,taskOperation,taskId,pledgeReminder.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',?,'delete','{}',?,?,?)").bind(taskId,Number(pledgeReminder.revision)+1,now,mutationId,taskOperation));}}
+      statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));await c.env.DB.batch(statements);
       return c.json(response);
     } catch (error: any) {
       const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
@@ -357,14 +363,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const userId = String(c.get('userId') || 'unknown');
     const userEmail = String(c.get('userEmail') || 'unknown');
     try {
-      await c.env.DB.batch([
+      const statements:any[]=[
         c.env.DB.prepare('INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type=? AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END').bind(operationId, type, id, expectedRevision),
         c.env.DB.prepare('UPDATE sync_records SET is_deleted=1,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(nextRevision, now, operationId, type, id, expectedRevision),
         c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'delete','{}',updated_at,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(mutationId, operationId, type, id, nextRevision),
         c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) SELECT id,type,'delete',?,revision,?,NULL,?,?,updated_at,?,?,? FROM sync_records WHERE type=? AND id=? AND revision=?").bind(expectedRevision, current.data, userId, userEmail, mutationId, operationId, 'Deleted through generic server-driven record API', type, id, nextRevision),
-        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
-        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
-      ]);
+        c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId)
+      ];
+      if(type==='pledges'){const taskId=`pledge-follow-up-${id}`;const task:any=await c.env.DB.prepare("SELECT revision FROM sync_records WHERE type='tasks' AND id=? AND is_deleted=0").bind(taskId).first();if(task){const taskOperation=`${mutationId}-reminder-delete`;statements.push(c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='tasks' AND id=? AND revision=? AND is_deleted=0").bind(now,taskOperation,taskId,task.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',?,'delete','{}',?,?,?)").bind(taskId,Number(task.revision)+1,now,mutationId,taskOperation));}}
+      statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));await c.env.DB.batch(statements);
       return c.json(response);
     } catch (error: any) {
       const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
