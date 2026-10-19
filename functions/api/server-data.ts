@@ -71,7 +71,7 @@ export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: an
     const appliedPayments = approvedParts.filter(Boolean);
     const paid = appliedPayments.reduce((total, payment: any) => total + Number(payment.allocatedAmountCAD ?? payment.amountCAD ?? payment.amount ?? 0), 0);
     const pendingPayments = paymentsInput.flatMap(payment => {
-      if (payment.type !== 'pending' || payment.isBatch || String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
+      if (payment.type !== 'pending' || payment.method === 'check' || payment.isBatch || String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
       const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations : [];
       if (allocations.length) return allocations.filter((allocation: any) => String(allocation.pledgeId || '') === String(pledge.id)).map((allocation: any) => ({ ...payment, allocationId: allocation.id, allocatedAmount: Number(allocation.amount || 0), allocatedAmountCAD: Number(allocation.amountCAD ?? allocation.amount ?? 0) }));
       if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
@@ -277,6 +277,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const project = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(String(record.projectId)).first();
       if (!project) return c.json({ success:false,error:'The selected project does not exist.' },409);
     }
+    if (type === 'transactions' && existing.method === 'check' && existing.type === 'pending' && record.type === 'approved') return c.json({ success: false, error: 'Use Mark Deposited and choose the receiving account to approve a pending check.' }, 409);
     if (type === 'transactions' && Array.isArray(existing.pledgeAllocations) && existing.pledgeAllocations.length) {
       const allocated = existing.pledgeAllocations.reduce((sum: number, allocation: any) => sum + Number(allocation.amount || 0), 0);
       if (allocated - Number(record.amount || 0) > 0.005) return c.json({ success: false, error: 'This payment has pledge allocations above the new amount. Update its allocations first.' }, 409);
@@ -569,6 +570,18 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const old=parseSetting(current.data,{});const reason=String(body.reason||'Marked declined during payment follow-up.').trim().slice(0,500);const now=Date.now();const next={...old,type:'declined',declinedAt:new Date(now).toISOString(),declineReason:reason,notes:`${String(old.notes||'').trim()}${old.notes?' ':''}${reason}`};const revision=Number(current.revision)+1;const data=JSON.stringify(next);const operationId=`${mutationId}-payment`;const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const statements:any[]=[c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,id,current.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(id,current.revision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Marked payment declined')];
     if(old.expectationId){const expectation:any=await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='paymentExpectations' AND id=? AND is_deleted=0").bind(String(old.expectationId)).first();if(expectation){const expectationOld=parseSetting(expectation.data,{});const expectationNext={...expectationOld,status:'declined',declinedAt:new Date(now).toISOString(),declineReason:reason,pendingTransactionId:id};const expectationRevision=Number(expectation.revision)+1;const expectationData=JSON.stringify(expectationNext);const expectationOperation=`${mutationId}-expectation`;statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='paymentExpectations' AND id=? AND revision=? AND is_deleted=0").bind(expectationData,expectationRevision,now,expectationOperation,old.expectationId,expectation.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentExpectations',?,'update',?,?,?,?)").bind(old.expectationId,expectationRevision,expectationData,now,mutationId,expectationOperation),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentExpectations','update',?,?,?,?,?,?,?,?,?,?)").bind(old.expectationId,expectation.revision,expectationRevision,expectation.data,expectationData,userId,userEmail,now,mutationId,expectationOperation,'Marked expected payment declined'));}}
     const response={success:true,item:{...next,id,revision,updatedAt:now}};statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));await c.env.DB.batch(statements);return c.json(response);
+  });
+
+  app.post('/v3/payments/:id/deposit-check', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const id=String(c.req.param('id')||'');const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||body.requestId||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);
+    const mutationId=`v3-check-deposit-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
+    const current:any=await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id=? AND is_deleted=0").bind(id).first();if(!current)return c.json({success:false,error:'Check payment not found.'},404);if(Number(body.revision)!==Number(current.revision))return c.json({success:false,error:'This check changed. Reload it and try again.',conflict:true},409);
+    const old=parseSetting(current.data,{});if(old.method!=='check'||old.type!=='pending')return c.json({success:false,error:'Only a pending check can be deposited.'},409);const accountId=String(body.accountId||'').trim();const account:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId).first();const accountData=parseSetting(account?.data,{});if(!account||accountData.type!=='asset'||accountId==='sys-undeposited-funds')return c.json({success:false,error:'Choose the bank or cash asset account that received this check.'},409);
+    const depositDate=String(body.depositDate||new Date().toISOString().slice(0,10));if(!isoDate(depositDate))return c.json({success:false,error:'Enter a valid deposit date.'},400);if(old.availabilityDate&&depositDate<String(old.availabilityDate))return c.json({success:false,error:`This check is available on ${old.availabilityDate}. Choose that date or later.`},409);
+    const now=Date.now();const revision=Number(current.revision)+1;const next={...old,type:'approved',sourceAccountId:accountId,depositStatus:'deposited',depositedAt:new Date(now).toISOString(),depositDate};const data=JSON.stringify(next);const operationId=`${mutationId}-payment`;const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const statements:any[]=[c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,id,current.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(id,current.revision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Deposited pending check into selected asset account')];
+    const tasks=await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='tasks' AND is_deleted=0 AND json_extract(data,'$.linkedPaymentId')=? AND COALESCE(json_extract(data,'$.completed'),0)=0").bind(id).all();for(const task of tasks.results as any[]){const oldTask=parseSetting(task.data,{});const nextTask={...oldTask,completed:true,completedAt:new Date(now).toISOString()};const taskData=JSON.stringify(nextTask);const taskRevision=Number(task.revision)+1;const taskOperation=`${mutationId}-task-${task.id}`;statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='tasks' AND id=? AND revision=? AND is_deleted=0").bind(taskData,taskRevision,now,taskOperation,task.id,task.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',?,'update',?,?,?,?)").bind(task.id,taskRevision,taskData,now,mutationId,taskOperation));}
+    const response={success:true,item:{...next,id,revision,updatedAt:now}};statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));try{await c.env.DB.batch(statements);return c.json(response);}catch{return c.json({success:false,error:'This check changed. Reload it and try again.',conflict:true},409);}
   });
 
   app.get('/v3/payments', async (c: any) => {
@@ -2450,7 +2463,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const donorId = String(body.donorId || '');
     const sourceAccountId = String(body.sourceAccountId || '');
     const offsetAccountId = String(body.offsetAccountId || '');
-    if (!donorId || !sourceAccountId || !offsetAccountId) return c.json({ success: false, error: 'Donor, receiving account, and offset account are required.' }, 400);
+    const requestedMethod = String(body.method || 'other');
+    if (!donorId || (!sourceAccountId && requestedMethod !== 'check') || !offsetAccountId) return c.json({ success: false, error: requestedMethod === 'check' ? 'Donor and revenue account are required.' : 'Donor, receiving account, and offset account are required.' }, 400);
 
     const projectId = String(body.projectId || '');
     const fundraiserId = String(body.fundraiserId || '');
@@ -2465,7 +2479,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='accounts' AND id IN (?,?)) OR (type='projects' AND id=?) OR (type='fundraisers' AND id=?) OR (type='pledges' AND id=?) OR type='exchangeRate')
     `).bind(donorId, sourceAccountId, offsetAccountId, projectId, fundraiserId, pledgeId).all();
     const found = new Set(refs.results.map((row: any) => `${row.type}:${row.id}`));
-    if (!found.has(`donors:${donorId}`) || !found.has(`accounts:${sourceAccountId}`) || !found.has(`accounts:${offsetAccountId}`)) {
+    if (!found.has(`donors:${donorId}`) || (requestedMethod !== 'check' && !found.has(`accounts:${sourceAccountId}`)) || !found.has(`accounts:${offsetAccountId}`)) {
       return c.json({ success: false, error: 'A referenced donor or account does not exist.' }, 409);
     }
     if (projectId && !found.has(`projects:${projectId}`)) return c.json({ success:false,error:'The selected project does not exist.' },409);
@@ -2480,7 +2494,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
     const id = crypto.randomUUID();
     const now = Date.now();
-    const method = String(body.method || 'other');
+    const method = requestedMethod;
     const allowedMethods = new Set(['credit_card', 'check', 'cash', 'e_transfer', 'vouchers', 'eizer', 'bnei_leivy', 'other']);
     if (!allowedMethods.has(method)) return c.json({ success: false, error: 'Invalid payment method.' }, 400);
     const currency = body.currency === 'USD' ? 'USD' : 'CAD';
@@ -2496,12 +2510,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (notes.length > 2000) return c.json({ success: false, error: 'Notes must be 2,000 characters or fewer.' }, 400);
     const sponsor = String(body.sponsor || '').trim();
     if (sponsor.length > 300) return c.json({ success:false,error:'Sponsor / source must be 300 characters or fewer.' },400);
-    const undeposited = sourceAccountId === 'sys-undeposited-funds' || body.depositStatus === 'undeposited';
+    const checkNumber=String(body.checkNumber||'').trim().slice(0,100);const availabilityDate=String(body.availabilityDate||'').trim();if(method==='check'&&!checkNumber)return c.json({success:false,error:'Check number is required.'},400);if(method==='check'&&(!isoDate(availabilityDate)||availabilityDate<date))return c.json({success:false,error:'Check availability date must be the received date or later.'},400);
+    const undeposited = method==='check'||sourceAccountId === 'sys-undeposited-funds' || body.depositStatus === 'undeposited';
     const pledgeAllocations = requestedAllocations.map((allocation: any) => ({ id: crypto.randomUUID(), paymentId: id, donorId, pledgeId: allocation.pledgeId, amount: allocation.amount, amountCAD: currency === 'USD' ? allocation.amount * exchangeRate : allocation.amount, currency, createdAt: new Date(now).toISOString() }));
     const record = {
       id, donorId, amount, amountCAD,
       date,
-      type: body.type === 'pending' ? 'pending' : 'approved',
+      type: method === 'check' || body.type === 'pending' ? 'pending' : 'approved',
       method, currency,
       sourceAccountId: undeposited ? 'sys-undeposited-funds' : sourceAccountId,
       offsetAccountId,
@@ -2510,6 +2525,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       ...(projectId ? { projectId } : {}),
       ...(pledgeAllocations.length ? { pledgeAllocations } : pledgeId ? { pledgeId } : {}),
       ...(sponsor ? { sponsor } : {}),
+      ...(method==='check'?{checkNumber,availabilityDate}:{}),
       ...(notes ? { notes } : {})
     };
     const data = JSON.stringify(record);
@@ -2531,6 +2547,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
           c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentAllocations',1,'insert',?,?,?,?)").bind(allocation.id, allocationData, now, mutationId, allocationOperationId),
           c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentAllocations','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(allocation.id, allocationData, userId, userEmail, now, mutationId, allocationOperationId, 'Allocated payment to pledge')
         );
+      }
+      if(method==='check'){
+        const taskId=`deposit-check-${id}`;const task={id:taskId,donorId,title:`Deposit check #${checkNumber}`,notes:`Check payment ${id} is available for deposit.`,dueDate:availabilityDate,priority:'high',type:'follow_up',completed:false,linkedPaymentId:id,createdAt:new Date(now).toISOString().slice(0,10)};const taskData=JSON.stringify(task);const taskOperationId=`${mutationId}-check-reminder`;
+        statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?)").bind(taskId,taskData,now,taskOperationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',1,'insert',?,?,?,?)").bind(taskId,taskData,now,mutationId,taskOperationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'tasks','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(taskId,taskData,userId,userEmail,now,mutationId,taskOperationId,'Created check availability reminder'));
       }
       statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));
       await c.env.DB.batch(statements);

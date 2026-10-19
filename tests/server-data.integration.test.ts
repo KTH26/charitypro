@@ -352,6 +352,21 @@ describe('server-driven bank deposit matching', () => {
     const movedLedger=await app.request('/v3/projects/payment-project-2/ledger',{}, {DB:db} as any);const moved=await movedLedger.json() as any;expect(moved.transactions).toHaveLength(1);expect(moved.income).toBe(75);
   });
 
+  it('holds a check outside account balances until its availability date and deposit', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'check-donor', { id: 'check-donor', name: 'Check Donor' });
+    seedRecord(db, 'accounts', 'check-bank', { id: 'check-bank', name: 'Main Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'check-revenue', { id: 'check-revenue', name: 'Donations', type: 'revenue', currency: 'CAD' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const create = await app.request('/v3/payments', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'future-check' }, body: JSON.stringify({ requestId: 'future-check', donorId: 'check-donor', amount: 125, currency: 'CAD', method: 'check', date: '2026-07-20', offsetAccountId: 'check-revenue', checkNumber: '1042', availabilityDate: '2026-08-01' }) }, { DB: db } as any);
+    const created: any = await create.json(); expect(create.status).toBe(201); expect(created.item).toMatchObject({ type: 'pending', method: 'check', sourceAccountId: 'sys-undeposited-funds', depositStatus: 'undeposited', checkNumber: '1042', availabilityDate: '2026-08-01' });
+    const reminder: any = db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND json_extract(data,'$.linkedPaymentId')=?").get(created.item.id); expect(JSON.parse(reminder.data)).toMatchObject({ dueDate: '2026-08-01', completed: false, donorId: 'check-donor' });
+    const early = await app.request(`/v3/payments/${created.item.id}/deposit-check`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'early-check-deposit' }, body: JSON.stringify({ revision: 1, accountId: 'check-bank', depositDate: '2026-07-31' }) }, { DB: db } as any); expect(early.status).toBe(409);
+    const depositRequest = () => app.request(`/v3/payments/${created.item.id}/deposit-check`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'valid-check-deposit' }, body: JSON.stringify({ revision: 1, accountId: 'check-bank', depositDate: '2026-08-01' }) }, { DB: db } as any);
+    const deposited = await depositRequest(); const depositedBody: any = await deposited.json(); expect(deposited.status).toBe(200); expect(depositedBody.item).toMatchObject({ type: 'approved', sourceAccountId: 'check-bank', depositStatus: 'deposited', depositDate: '2026-08-01' }); expect((await depositRequest()).status).toBe(200);
+    const completedReminder: any = db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND json_extract(data,'$.linkedPaymentId')=?").get(created.item.id); expect(JSON.parse(completedReminder.data)).toMatchObject({ completed: true });
+  });
+
   it('atomically splits one payment across multiple pledges and recalculates each balance', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'split-donor', { id: 'split-donor', name: 'Split Donor' });

@@ -29,6 +29,8 @@ export const OnlinePaymentForm: React.FC<{
   const [amount, setAmount] = useState(defaultAmount?String(defaultAmount):'');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [method, setMethod] = useState('other');
+  const [checkNumber, setCheckNumber] = useState('');
+  const [availabilityDate, setAvailabilityDate] = useState(defaultDate||new Date().toISOString().slice(0, 10));
   const [date, setDate] = useState(defaultDate||new Date().toISOString().slice(0, 10));
   const [sourceAccountId, setSourceAccountId] = useState(defaultSourceAccountId||'');
   const [offsetAccountId, setOffsetAccountId] = useState('');
@@ -83,10 +85,11 @@ export const OnlinePaymentForm: React.FC<{
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
-    if (!donorId || !sourceAccountId || !offsetAccountId) {
-      setError('Choose a donor, the receiving account, and the revenue account.');
+    if (!donorId || (method !== 'check' && !sourceAccountId) || !offsetAccountId) {
+      setError(method === 'check' ? 'Choose a donor and the revenue account.' : 'Choose a donor, the receiving account, and the revenue account.');
       return;
     }
+    if (method === 'check' && (!checkNumber.trim() || !availabilityDate || availabilityDate < date)) { setError('Enter the check number and an availability date on or after the received date.'); return; }
     const parsedAmount = Number(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setError('Enter a payment amount greater than zero.');
@@ -102,7 +105,7 @@ export const OnlinePaymentForm: React.FC<{
       const response = await fetch('/api/v3/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, type: status })
+        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, checkNumber, availabilityDate, type: status })
       });
       const responseText = await response.text();
       let data: any; try { data = JSON.parse(responseText); } catch { throw new Error(response.ok ? 'The server returned an unreadable response.' : `The payment server failed (${response.status}). Please try again.`); }
@@ -139,7 +142,8 @@ export const OnlinePaymentForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={currency} onChange={e => setCurrency(e.target.value as 'CAD' | 'USD')}><option value="CAD">CAD</option><option value="USD">USD</option></select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Payment method</span><select value={method} onChange={e => setMethod(e.target.value)}>{methods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-          <label className="form-group" style={{ margin: 0 }}><span>Paid into (asset)</span><select value={sourceAccountId} onChange={e => setSourceAccountId(e.target.value)}><option value="">Select receiving account</option>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>
+          {method !== 'check' && <label className="form-group" style={{ margin: 0 }}><span>Paid into (asset)</span><select value={sourceAccountId} onChange={e => setSourceAccountId(e.target.value)}><option value="">Select receiving account</option>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>}
+          {method === 'check' && <><label className="form-group" style={{ margin: 0 }}><span>Check number *</span><input value={checkNumber} onChange={e=>setCheckNumber(e.target.value)} maxLength={100}/></label><label className="form-group" style={{ margin: 0 }}><span>Available to deposit *</span><input type="date" min={date} value={availabilityDate} onChange={e=>setAvailabilityDate(e.target.value)}/></label><div style={{padding:12,borderRadius:10,background:'var(--navy-bg)',color:'var(--navy)',fontSize:13}}>This check stays pending and does not enter an account until you mark it deposited. A reminder will appear on the availability date.</div></>}
           <label className="form-group" style={{ margin: 0 }}><span>Allocated to (revenue)</span><select value={offsetAccountId} onChange={e => setOffsetAccountId(e.target.value)}><option value="">Select revenue account</option>{revenueAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Project (optional)</span><select value={projectId} onChange={e=>setProjectId(e.target.value)}><option value="">— No Project —</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Fundraiser / Campaign (optional)</span><select value={fundraiserId} onChange={e=>setFundraiserId(e.target.value)}><option value="">— No Fundraiser —</option>{fundraisers.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
