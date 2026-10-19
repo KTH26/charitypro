@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Edit2, X } from 'lucide-react';
 import { CloudPledgePicker } from './CloudPledgePicker';
+import { CloudPledgeAllocationEditor, type PledgeAllocationDraft } from './CloudPledgeAllocationEditor';
 
 type Choice = { id: string; name: string; type?: string };
 const money = (value: number) => Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -15,7 +16,7 @@ export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => v
   const [projects, setProjects] = useState<Choice[]>([]);
   const [donors, setDonors] = useState<Choice[]>([]);
   const [donorSearch, setDonorSearch] = useState(initialPayment.donorName || '');
-  const [allocation, setAllocation] = useState(initialPayment.pledgeId || '');
+  const [allocations, setAllocations] = useState<PledgeAllocationDraft[]>(Array.isArray(initialPayment.pledgeAllocations) ? initialPayment.pledgeAllocations.map((item: any) => ({ pledgeId: item.pledgeId, amount: Number(item.amount || 0) })) : initialPayment.pledgeId ? [{ pledgeId: initialPayment.pledgeId, amount: Number(initialPayment.amount || 0) }] : []);
   const [form, setForm] = useState({ donorId: initialPayment.donorId || '', amount: String(initialPayment.amount || ''), currency: initialPayment.currency || 'CAD', amountCAD: String(initialPayment.amountCAD || ''), exchangeRate: String(initialPayment.exchangeRate || 1.35), date: initialPayment.date || '', type: initialPayment.type || 'approved', method: initialPayment.method || 'credit_card', depositStatus: initialPayment.depositStatus || '', checkNumber: initialPayment.checkNumber || '', sourceAccountId: initialPayment.sourceAccountId || '', offsetAccountId: initialPayment.offsetAccountId || '', projectId: initialPayment.projectId || '', notes: initialPayment.notes || '', pledgeId: initialPayment.pledgeId || '' });
   const requestId = useRef('');
   const allocationRequestId = useRef('');
@@ -38,7 +39,7 @@ export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => v
     const sourceName = accounts.find(account => account.id === item.sourceAccountId)?.name || payment.sourceName;
     const offsetName = accounts.find(account => account.id === item.offsetAccountId)?.name || payment.offsetName;
     const updated = { ...payment, ...item, donorName, sourceName, offsetName };
-    setPayment(updated); setAllocation(item.pledgeId || ''); onUpdated?.(updated);
+    setPayment(updated); setAllocations(Array.isArray(item.pledgeAllocations) ? item.pledgeAllocations.map((allocation: any) => ({ pledgeId: allocation.pledgeId, amount: Number(allocation.amount || 0) })) : item.pledgeId ? [{ pledgeId: item.pledgeId, amount: Number(item.amount || 0) }] : []); onUpdated?.(updated);
   };
 
   const save = async (event: React.FormEvent) => {
@@ -59,9 +60,9 @@ export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => v
   const saveAllocation = async () => {
     setAllocating(true); setError(''); const key = allocationRequestId.current || crypto.randomUUID(); allocationRequestId.current = key;
     try {
-      const response = await fetch(`/api/v3/records/transactions/${encodeURIComponent(payment.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ revision: payment.revision, data: { pledgeId: allocation || null } }) });
+      const response = await fetch(`/api/v3/payments/${encodeURIComponent(payment.id)}/allocations`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ revision: payment.revision, allocations }) });
       const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || 'Unable to update the pledge allocation.');
-      allocationRequestId.current = ''; setForm(current => ({ ...current, pledgeId: result.item.pledgeId || '' })); updatePayment(result.item);
+      allocationRequestId.current = ''; setForm(current => ({ ...current, pledgeId: '' })); updatePayment(result.item);
     } catch (reason: any) { allocationRequestId.current = ''; setError(reason.message || 'Unable to update the pledge allocation.'); }
     finally { setAllocating(false); }
   };
@@ -87,7 +88,7 @@ export const CloudPaymentDetailsModal: React.FC<{ payment: any; onClose: () => v
     </div></div><div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={() => { setEditing(false); setError(''); }}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving securely…' : 'Save All Changes'}</button></div></form> : <><div className="modal-body">{error && <ErrorText text={error} />}
       <div style={{ textAlign: 'center', padding: '8px 0 22px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}><div style={{ color: 'var(--text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Payment Amount</div><div style={{ color: 'var(--green)', fontSize: 30, fontWeight: 900 }}>{payment.currency} ${money(payment.amount)}</div>{payment.currency === 'USD' && payment.amountCAD != null && <div style={{ color: 'var(--text-muted)' }}>CAD ${money(payment.amountCAD)} at rate {payment.exchangeRate || 'saved rate'}</div>}</div>
       <section style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16, marginBottom: 16 }}><h3 style={{ margin: '0 0 12px', color: 'var(--navy)' }}>Payment Details</h3><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><Detail label="Donor" value={payment.donorName} /><Detail label="Date" value={payment.date} /><Detail label="Status" value={payment.type} /><Detail label="Method" value={String(payment.method || '').replaceAll('_', ' ')} /><Detail label="Deposit Status" value={payment.depositStatus || 'Direct'} /><Detail label="Check Number" value={payment.checkNumber || '—'} /><Detail label="Asset Account" value={payment.sourceName || payment.sourceAccountId || '—'} /><Detail label="Revenue Account" value={payment.offsetName || payment.offsetAccountId || '—'} /></div></section>
-      <section style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16, marginBottom: 16 }}><h3 style={{ margin: '0 0 10px', color: 'var(--navy)' }}>Pledge Allocation</h3><div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'end' }}><CloudPledgePicker donorId={payment.donorId} paymentDate={payment.date} value={allocation} onChange={setAllocation} /><button className="btn btn-primary" disabled={allocating} onClick={() => void saveAllocation()}>{allocating ? 'Applying…' : 'Apply'}</button></div></section>
+      <section style={{ marginBottom: 16 }}><CloudPledgeAllocationEditor donorId={payment.donorId} totalAmount={Number(payment.amount || 0)} currency={payment.currency || 'CAD'} value={allocations} onChange={setAllocations} disabled={allocating}/><div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}><button className="btn btn-primary" disabled={allocating || allocations.reduce((sum,item)=>sum+item.amount,0)-Number(payment.amount||0)>0.005} onClick={() => void saveAllocation()}>{allocating ? 'Saving allocations…' : 'Save Pledge Allocations'}</button></div></section>
       <section style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}><h3 style={{ margin: '0 0 10px', color: 'var(--navy)' }}>Reference Information</h3><Detail label="Notes" value={payment.notes || '—'} /><div style={{ marginTop: 10 }}><Detail label="Transaction ID" value={payment.id} /></div>{payment.bankTransactionId && <div style={{ marginTop: 10 }}><Detail label="Bank Transaction" value={payment.bankTransactionId} /></div>}{payment.pledgeId && <div style={{ marginTop: 10 }}><Detail label="Manual Pledge Override" value={payment.pledgeId} /></div>}</section>
     </div><div className="modal-footer"><button className="btn btn-secondary" onClick={onClose}>Close</button><button className="btn btn-primary" onClick={() => setEditing(true)}><Edit2 size={15} /> Edit All Details</button></div></>}
   </div></div>;

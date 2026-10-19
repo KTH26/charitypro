@@ -60,20 +60,25 @@ export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: an
     const nextStart = isoDate(pledges[index + 1]?.date);
     const yearlyEnd = addYear(start);
     const end = nextStart && nextStart < yearlyEnd ? nextStart : yearlyEnd;
-    const appliedPayments = uniquePayments.filter(payment => {
-      if (String(payment.donorId || '') !== String(pledge.donorId || '')) return false;
-      if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id);
+    const approvedParts = uniquePayments.flatMap(payment => {
+      if (String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
+      const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations : [];
+      if (allocations.length) return allocations.filter((allocation: any) => String(allocation.pledgeId || '') === String(pledge.id)).map((allocation: any) => ({ ...payment, allocationId: allocation.id, allocatedAmount: Number(allocation.amount || 0), allocatedAmountCAD: Number(allocation.amountCAD ?? allocation.amount ?? 0) }));
+      if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
       const date = isoDate(payment.date);
-      return Boolean(date && date >= start && date < end);
+      return date && date >= start && date < end ? [payment] : [];
     });
-    const paid = appliedPayments.reduce((total, payment) => total + Number(payment.amountCAD ?? payment.amount ?? 0), 0);
-    const pendingPayments = paymentsInput.filter(payment => {
-      if (payment.type !== 'pending' || payment.isBatch || String(payment.donorId || '') !== String(pledge.donorId || '')) return false;
-      if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id);
+    const appliedPayments = approvedParts.filter(Boolean);
+    const paid = appliedPayments.reduce((total, payment: any) => total + Number(payment.allocatedAmountCAD ?? payment.amountCAD ?? payment.amount ?? 0), 0);
+    const pendingPayments = paymentsInput.flatMap(payment => {
+      if (payment.type !== 'pending' || payment.isBatch || String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
+      const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations : [];
+      if (allocations.length) return allocations.filter((allocation: any) => String(allocation.pledgeId || '') === String(pledge.id)).map((allocation: any) => ({ ...payment, allocationId: allocation.id, allocatedAmount: Number(allocation.amount || 0), allocatedAmountCAD: Number(allocation.amountCAD ?? allocation.amount ?? 0) }));
+      if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
       const date = isoDate(payment.date);
-      return Boolean(date && date >= start && date < end);
+      return date && date >= start && date < end ? [payment] : [];
     });
-    const pending = pendingPayments.reduce((total, payment) => total + Number(payment.amountCAD ?? payment.amount ?? 0), 0);
+    const pending = pendingPayments.reduce((total, payment: any) => total + Number(payment.allocatedAmountCAD ?? payment.amountCAD ?? payment.amount ?? 0), 0);
     const linkedSchedules = schedulesInput.filter(schedule => schedule.active && String(schedule.donorId || '') === String(pledge.donorId || '') && String(schedule.pledgeId || '') === String(pledge.id));
     const schedules = linkedSchedules.length > 0
       ? linkedSchedules
@@ -270,6 +275,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (type === 'transactions' && record.projectId) {
       const project = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(String(record.projectId)).first();
       if (!project) return c.json({ success:false,error:'The selected project does not exist.' },409);
+    }
+    if (type === 'transactions' && Array.isArray(existing.pledgeAllocations) && existing.pledgeAllocations.length) {
+      const allocated = existing.pledgeAllocations.reduce((sum: number, allocation: any) => sum + Number(allocation.amount || 0), 0);
+      if (allocated - Number(record.amount || 0) > 0.005) return c.json({ success: false, error: 'This payment has pledge allocations above the new amount. Update its allocations first.' }, 409);
+      if (String(record.donorId || '') !== String(existing.donorId || '') || String(record.currency || 'CAD') !== String(existing.currency || 'CAD')) return c.json({ success: false, error: 'Remove or reassign the pledge allocations before changing this payment donor or currency.' }, 409);
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -998,7 +1008,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         UNION ALL SELECT 'paid_bill_missing_account','Paid expenses without a valid paid-from account','error',COUNT(*) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid' AND NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(b.data,'$.sourceAccountId') AND a.is_deleted=0)
         UNION ALL SELECT 'bill_missing_category','Expenses without a valid expense category','error',COUNT(*) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(b.data,'$.category') AND a.is_deleted=0 AND json_extract(a.data,'$.type')='expense')
         UNION ALL SELECT 'schedule_missing_end','Active schedules without an end date','warning',COUNT(*) FROM sync_records s WHERE s.type='recurringPayments' AND s.is_deleted=0 AND COALESCE(json_extract(s.data,'$.active'),0)=1 AND COALESCE(json_extract(s.data,'$.endDate'),'')=''
-        UNION ALL SELECT 'unallocated_payment','Approved payments without an explicit pledge allocation','review',COUNT(*) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND COALESCE(json_extract(t.data,'$.pledgeId'),'')=''
+        UNION ALL SELECT 'unallocated_payment','Approved payments without an explicit pledge allocation','review',COUNT(*) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND COALESCE(json_extract(t.data,'$.pledgeId'),'')='' AND COALESCE(json_array_length(t.data,'$.pledgeAllocations'),0)=0
         UNION ALL SELECT 'possible_duplicate_payment','Possible duplicate payment groups','review',COUNT(*) FROM (SELECT 1 FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 GROUP BY json_extract(t.data,'$.donorId'),json_extract(t.data,'$.date'),json_extract(t.data,'$.amount'),json_extract(t.data,'$.method'),json_extract(t.data,'$.type') HAVING COUNT(*)>1)
       ) ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,code`)
     ]);
@@ -2427,6 +2437,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const projectId = String(body.projectId || '');
     const fundraiserId = String(body.fundraiserId || '');
     const pledgeId = String(body.pledgeId || '');
+    const requestedAllocations = Array.isArray(body.allocations) ? body.allocations.map((allocation: any) => ({ pledgeId: String(allocation?.pledgeId || '').trim(), amount: Number(allocation?.amount) })).filter((allocation: any) => allocation.pledgeId || allocation.amount) : [];
+    if (requestedAllocations.some((allocation: any) => !allocation.pledgeId || !Number.isFinite(allocation.amount) || allocation.amount <= 0)) return c.json({ success: false, error: 'Every pledge allocation needs a pledge and a positive amount.' }, 400);
+    if (new Set(requestedAllocations.map((allocation: any) => allocation.pledgeId)).size !== requestedAllocations.length) return c.json({ success: false, error: 'Each pledge can appear only once in a payment allocation.' }, 400);
+    const allocatedAmount = requestedAllocations.reduce((sum: number, allocation: any) => sum + allocation.amount, 0);
+    if (allocatedAmount - amount > 0.005) return c.json({ success: false, error: 'Pledge allocations cannot exceed the payment amount.' }, 400);
     const refs = await c.env.DB.prepare(`
       SELECT type,id,data FROM sync_records
       WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='accounts' AND id IN (?,?)) OR (type='projects' AND id=?) OR (type='fundraisers' AND id=?) OR (type='pledges' AND id=?) OR type='exchangeRate')
@@ -2439,6 +2454,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (fundraiserId && !found.has(`fundraisers:${fundraiserId}`)) return c.json({ success:false,error:'The selected fundraiser does not exist.' },409);
     const pledgeRow: any = refs.results.find((row:any)=>row.type==='pledges'&&row.id===pledgeId);
     if (pledgeId && (!pledgeRow || String(JSON.parse(String(pledgeRow.data)).donorId||'')!==donorId)) return c.json({ success:false,error:'The selected pledge does not belong to this donor.' },409);
+    if (requestedAllocations.length) {
+      const allocationPledges = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(requestedAllocations.map((allocation: any) => allocation.pledgeId))).all();
+      const valid = new Set((allocationPledges.results as any[]).filter(row => String(parseSetting(row.data, {}).donorId || '') === donorId).map(row => String(row.id)));
+      if (requestedAllocations.some((allocation: any) => !valid.has(allocation.pledgeId))) return c.json({ success: false, error: 'Every allocated pledge must belong to the selected donor.' }, 409);
+    }
 
     const id = crypto.randomUUID();
     const now = Date.now();
@@ -2459,6 +2479,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const sponsor = String(body.sponsor || '').trim();
     if (sponsor.length > 300) return c.json({ success:false,error:'Sponsor / source must be 300 characters or fewer.' },400);
     const undeposited = sourceAccountId === 'sys-undeposited-funds' || body.depositStatus === 'undeposited';
+    const pledgeAllocations = requestedAllocations.map((allocation: any) => ({ id: crypto.randomUUID(), paymentId: id, donorId, pledgeId: allocation.pledgeId, amount: allocation.amount, amountCAD: currency === 'USD' ? allocation.amount * exchangeRate : allocation.amount, currency, createdAt: new Date(now).toISOString() }));
     const record = {
       id, donorId, amount, amountCAD,
       date,
@@ -2469,29 +2490,63 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       depositStatus: undeposited ? 'undeposited' : 'direct',
       ...(fundraiserId ? { fundraiserId } : {}),
       ...(projectId ? { projectId } : {}),
-      ...(pledgeId ? { pledgeId } : {}),
+      ...(pledgeAllocations.length ? { pledgeAllocations } : pledgeId ? { pledgeId } : {}),
       ...(sponsor ? { sponsor } : {}),
       ...(notes ? { notes } : {})
     };
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;
-    const response = { success: true, item: { ...record, revision: 1, updatedAt: now } };
+    const response = { success: true, item: { ...record, revision: 1, updatedAt: now }, allocations: pledgeAllocations };
     const userId = String(c.get('userId') || 'unknown');
     const userEmail = String(c.get('userEmail') || 'unknown');
 
     try {
-      await c.env.DB.batch([
+      const statements: any[] = [
         c.env.DB.prepare(`INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)`).bind(id, data, now, operationId),
         c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
-        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created through server-driven payment API'),
-        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
-      ]);
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created through server-driven payment API')
+      ];
+      for (const allocation of pledgeAllocations) {
+        const allocationData = JSON.stringify(allocation); const allocationOperationId = `${mutationId}-allocation-${allocation.id}`;
+        statements.push(
+          c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentAllocations',?,?,1,0,?)").bind(allocation.id, allocationData, now, allocationOperationId),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentAllocations',1,'insert',?,?,?,?)").bind(allocation.id, allocationData, now, mutationId, allocationOperationId),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentAllocations','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(allocation.id, allocationData, userId, userEmail, now, mutationId, allocationOperationId, 'Allocated payment to pledge')
+        );
+      }
+      statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));
+      await c.env.DB.batch(statements);
       return c.json(response, 201);
     } catch (reason:any) {
       const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
       if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json)));
       return c.json({success:false,error:`The payment was not saved: ${String(reason?.message||'database error')}`},409);
     }
+  });
+
+  app.put('/v3/payments/:id/allocations', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const id = String(c.req.param('id') || ''); const body = await c.req.json(); const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-payment-allocations-${requestId}`; const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first(); if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id=? AND is_deleted=0").bind(id).first(); if (!current) return c.json({ success: false, error: 'Payment not found.' }, 404);
+    const expectedRevision = Number(body.revision); if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This payment changed. Reload it and try again.', conflict: true }, 409);
+    const payment = parseSetting(current.data, {}); const amount = Number(payment.amount || 0); const donorId = String(payment.donorId || ''); const currency = payment.currency === 'USD' ? 'USD' : 'CAD'; const exchangeRate = Number(payment.exchangeRate || (amount > 0 ? Number(payment.amountCAD || amount) / amount : 1)) || 1;
+    const requested = Array.isArray(body.allocations) ? body.allocations.map((allocation: any) => ({ pledgeId: String(allocation?.pledgeId || '').trim(), amount: Number(allocation?.amount) })).filter((allocation: any) => allocation.pledgeId || allocation.amount) : [];
+    if (requested.some((allocation: any) => !allocation.pledgeId || !Number.isFinite(allocation.amount) || allocation.amount <= 0) || new Set(requested.map((allocation: any) => allocation.pledgeId)).size !== requested.length) return c.json({ success: false, error: 'Each allocation needs one unique pledge and a positive amount.' }, 400);
+    if (requested.reduce((sum: number, allocation: any) => sum + allocation.amount, 0) - amount > 0.005) return c.json({ success: false, error: 'Pledge allocations cannot exceed the payment amount.' }, 400);
+    if (requested.length) { const rows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(requested.map((allocation: any) => allocation.pledgeId))).all(); const valid = new Set((rows.results as any[]).filter(row => String(parseSetting(row.data, {}).donorId || '') === donorId).map(row => String(row.id))); if (requested.some((allocation: any) => !valid.has(allocation.pledgeId))) return c.json({ success: false, error: 'Every allocated pledge must belong to this payment donor.' }, 409); }
+    const now = Date.now(); const allocations = requested.map((allocation: any) => ({ id: crypto.randomUUID(), paymentId: id, donorId, pledgeId: allocation.pledgeId, amount: allocation.amount, amountCAD: currency === 'USD' ? allocation.amount * exchangeRate : allocation.amount, currency, createdAt: new Date(now).toISOString() })); const next = { ...payment, pledgeId: null, pledgeAllocations: allocations }; const revision = expectedRevision + 1; const data = JSON.stringify(next); const operationId = `${mutationId}-payment`; const response = { success: true, item: { ...next, id, revision, updatedAt: now }, allocations };
+    const existing = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='paymentAllocations' AND is_deleted=0 AND json_extract(data,'$.paymentId')=?").bind(id).all(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown'); const statements: any[] = [
+      c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(operationId,id,expectedRevision),
+      c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,id,expectedRevision),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(id,revision,data,now,mutationId,operationId),
+      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(id,expectedRevision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Reallocated payment across pledges')
+    ];
+    for (const row of existing.results as any[]) { const op = `${mutationId}-delete-${row.id}`; statements.push(c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='paymentAllocations' AND id=? AND revision=? AND is_deleted=0").bind(now,op,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentAllocations',?,'delete','{}',?,?,?)").bind(row.id,Number(row.revision)+1,now,mutationId,op),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentAllocations','delete',?,?,?,NULL,?,?,?,?,?,?)").bind(row.id,row.revision,Number(row.revision)+1,row.data,userId,userEmail,now,mutationId,op,'Replaced payment allocation')); }
+    for (const allocation of allocations) { const allocationData=JSON.stringify(allocation);const op=`${mutationId}-insert-${allocation.id}`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentAllocations',?,?,1,0,?)").bind(allocation.id,allocationData,now,op),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentAllocations',1,'insert',?,?,?,?)").bind(allocation.id,allocationData,now,mutationId,op),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentAllocations','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(allocation.id,allocationData,userId,userEmail,now,mutationId,op,'Allocated payment to pledge')); }
+    statements.push(c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));
+    try { await c.env.DB.batch(statements); return c.json(response); } catch { const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first(); if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json))); return c.json({ success:false,error:'This payment changed. Reload it and try again.',conflict:true },409); }
   });
 
   app.delete('/v3/payments/:id', async (c: any) => {
@@ -2511,12 +2566,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const response = { success: true, id, revision: nextRevision };
     const userId = String(c.get('userId') || 'unknown');
     const userEmail = String(c.get('userEmail') || 'unknown');
-    await c.env.DB.batch([
+    const allocationRows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='paymentAllocations' AND is_deleted=0 AND json_extract(data,'$.paymentId')=?").bind(id).all();
+    const statements: any[] = [
       c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(nextRevision, now, operationId, id, current.revision),
       c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'delete','{}',?,?,?)").bind(id, nextRevision, now, mutationId, operationId),
-      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','delete',?,?,?,'{}',?,?,?,?,?,?,?)").bind(id, current.revision, nextRevision, current.data, userId, userEmail, now, mutationId, operationId, 'Deleted through server-driven payment API'),
-      c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
-    ]);
+      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','delete',?,?,?,'{}',?,?,?,?,?,?,?)").bind(id, current.revision, nextRevision, current.data, userId, userEmail, now, mutationId, operationId, 'Deleted through server-driven payment API')
+    ];
+    for (const row of allocationRows.results as any[]) { const allocationOperationId=`${mutationId}-allocation-${row.id}`; statements.push(c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='paymentAllocations' AND id=? AND revision=? AND is_deleted=0").bind(now,allocationOperationId,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentAllocations',?,'delete','{}',?,?,?)").bind(row.id,Number(row.revision)+1,now,mutationId,allocationOperationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentAllocations','delete',?,?,?,NULL,?,?,?,?,?,?)").bind(row.id,row.revision,Number(row.revision)+1,row.data,userId,userEmail,now,mutationId,allocationOperationId,'Deleted with payment')); }
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now));
+    await c.env.DB.batch(statements);
     return c.json(response);
   });
 };

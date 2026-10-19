@@ -352,6 +352,26 @@ describe('server-driven bank deposit matching', () => {
     const movedLedger=await app.request('/v3/projects/payment-project-2/ledger',{}, {DB:db} as any);const moved=await movedLedger.json() as any;expect(moved.transactions).toHaveLength(1);expect(moved.income).toBe(75);
   });
 
+  it('atomically splits one payment across multiple pledges and recalculates each balance', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'split-donor', { id: 'split-donor', name: 'Split Donor' });
+    seedRecord(db, 'accounts', 'split-bank', { id: 'split-bank', name: 'Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'split-revenue', { id: 'split-revenue', name: 'Donations', type: 'revenue', currency: 'CAD' });
+    seedRecord(db, 'pledges', 'split-old', { id: 'split-old', donorId: 'split-donor', amount: 400, currency: 'CAD', date: '2025-01-01' });
+    seedRecord(db, 'pledges', 'split-new', { id: 'split-new', donorId: 'split-donor', amount: 600, currency: 'CAD', date: '2026-01-01' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/payments', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'split-payment' }, body: JSON.stringify({ requestId: 'split-payment', donorId: 'split-donor', amount: 500, currency: 'CAD', method: 'cash', date: '2026-02-01', sourceAccountId: 'split-bank', offsetAccountId: 'split-revenue', allocations: [{ pledgeId: 'split-old', amount: 200 }, { pledgeId: 'split-new', amount: 300 }] }) }, { DB: db } as any);
+    expect(response.status).toBe(201);
+    const created: any = await response.json(); expect(created.allocations).toHaveLength(2);
+    expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentAllocations' AND is_deleted=0").get() as any).count)).toBe(2);
+    const choices: any = await (await app.request('/v3/donors/split-donor/pledge-choices?limit=100', {}, { DB: db } as any)).json();
+    expect(choices.items.find((item: any) => item.id === 'split-old').paid).toBe(200);
+    expect(choices.items.find((item: any) => item.id === 'split-new').paid).toBe(300);
+    const changed = await app.request(`/v3/payments/${created.item.id}/allocations`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'split-reallocate' }, body: JSON.stringify({ revision: 1, allocations: [{ pledgeId: 'split-old', amount: 100 }, { pledgeId: 'split-new', amount: 400 }] }) }, { DB: db } as any);
+    expect(changed.status).toBe(200);
+    expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentAllocations' AND is_deleted=0").get() as any).count)).toBe(2);
+  });
+
   it('loads paginated vendor totals and original-style vendor bill details', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'vendors', 'vendor-1', { id: 'vendor-1', name: 'Office Supply', phone: '555-0199' });

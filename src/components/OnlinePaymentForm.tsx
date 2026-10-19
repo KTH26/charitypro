@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { CloudPledgeAllocationEditor, type PledgeAllocationDraft } from './CloudPledgeAllocationEditor';
 
 type Donor = { id: string; name: string; email?: string };
 type Account = { id: string; name: string; type: string; currency: 'CAD' | 'USD' };
 type Choice = { id: string; name: string };
-type PledgeChoice = { id: string; amount: number; currency?: string; date?: string; balance?: number };
 type PaymentStatus = 'approved' | 'pending';
 
 const methods = [
@@ -26,7 +26,6 @@ export const OnlinePaymentForm: React.FC<{
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [projects, setProjects] = useState<Choice[]>([]);
   const [fundraisers, setFundraisers] = useState<Choice[]>([]);
-  const [pledges, setPledges] = useState<PledgeChoice[]>([]);
   const [amount, setAmount] = useState(defaultAmount?String(defaultAmount):'');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [method, setMethod] = useState('other');
@@ -36,7 +35,7 @@ export const OnlinePaymentForm: React.FC<{
   const [notes, setNotes] = useState('');
   const [projectId, setProjectId] = useState('');
   const [fundraiserId, setFundraiserId] = useState('');
-  const [pledgeId, setPledgeId] = useState('');
+  const [allocations, setAllocations] = useState<PledgeAllocationDraft[]>([]);
   const [sponsor, setSponsor] = useState('');
   const [loadingDonors, setLoadingDonors] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -79,7 +78,7 @@ export const OnlinePaymentForm: React.FC<{
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [donor, donorQuery]);
 
-  useEffect(()=>{setPledgeId('');setPledges([]);if(!donorId)return;const controller=new AbortController();fetch(`/api/v3/donors/${encodeURIComponent(donorId)}/pledge-choices?limit=100`,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load this donor’s pledges.');setPledges(data.items||[]);}).catch(e=>{if(e.name!=='AbortError')setError(e.message||'Unable to load this donor’s pledges.');});return()=>controller.abort();},[donorId]);
+  useEffect(()=>{setAllocations([]);},[donorId]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -93,6 +92,7 @@ export const OnlinePaymentForm: React.FC<{
       setError('Enter a payment amount greater than zero.');
       return;
     }
+    if (allocations.reduce((sum,item)=>sum+Number(item.amount||0),0)-parsedAmount>0.005) { setError('Pledge allocations cannot exceed the payment amount.'); return; }
 
     setSaving(true);
     const requestId = pendingRequestId.current || crypto.randomUUID();
@@ -102,7 +102,7 @@ export const OnlinePaymentForm: React.FC<{
       const response = await fetch('/api/v3/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, pledgeId, sponsor, type: status })
+        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, type: status })
       });
       const responseText = await response.text();
       let data: any; try { data = JSON.parse(responseText); } catch { throw new Error(response.ok ? 'The server returned an unreadable response.' : `The payment server failed (${response.status}). Please try again.`); }
@@ -143,8 +143,8 @@ export const OnlinePaymentForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Allocated to (revenue)</span><select value={offsetAccountId} onChange={e => setOffsetAccountId(e.target.value)}><option value="">Select revenue account</option>{revenueAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Project (optional)</span><select value={projectId} onChange={e=>setProjectId(e.target.value)}><option value="">— No Project —</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Fundraiser / Campaign (optional)</span><select value={fundraiserId} onChange={e=>setFundraiserId(e.target.value)}><option value="">— No Fundraiser —</option>{fundraisers.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label className="form-group" style={{ margin: 0 }}><span>Apply to pledge (optional)</span><select value={pledgeId} onChange={e=>setPledgeId(e.target.value)} disabled={!donorId}><option value="">{donorId?'— No Specific Pledge —':'Choose a donor first'}</option>{pledges.map(item=><option key={item.id} value={item.id}>{item.date||'Pledge'} · {item.currency||'CAD'} ${Number(item.amount||0).toLocaleString()} · Balance ${Number(item.balance??item.amount??0).toLocaleString()}</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Sponsor / Source (optional)</span><input value={sponsor} onChange={e=>setSponsor(e.target.value)} maxLength={300}/></label>
+          <CloudPledgeAllocationEditor donorId={donorId} totalAmount={Number(amount)||0} currency={currency} value={allocations} onChange={setAllocations} disabled={saving}/>
         </div>
         <label className="form-group" style={{ margin: '14px 0 0' }}><span>Notes (optional)</span><textarea value={notes} onChange={e => setNotes(e.target.value)} maxLength={2000} rows={2} /></label>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}><button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button><button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving securely...' : 'Save Payment'}</button></div>
