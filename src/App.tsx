@@ -14,6 +14,7 @@ import { OnlineVendors } from './pages/OnlineVendors';
 import { OnlineTransactions } from './pages/OnlineTransactions';
 import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
 import { OnlineTasks } from './pages/OnlineTasks';
+import { OnlineCampaigns } from './pages/OnlineCampaigns';
 
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
@@ -44,6 +45,7 @@ function App() {
         <Route path="/bank-feed" element={cloudPage(<OnlineBank />)} />
         <Route path="/calendar" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading calendar...</div>}><OnlineCalendar /></React.Suspense>)} />
         <Route path="/pledges" element={cloudPage(<OnlinePledges />)} />
+        <Route path="/campaigns" element={cloudPage(<OnlineCampaigns />)} />
         <Route path="/schedules" element={cloudPage(<OnlineSchedules />)} />
         <Route path="/vendors" element={cloudPage(<OnlineVendors />)} />
         <Route path="/write-checks" element={cloudPage(<OnlineWriteChecks />)} />

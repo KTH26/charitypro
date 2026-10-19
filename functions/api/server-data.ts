@@ -105,6 +105,8 @@ const genericCollections: Record<string, { read: string; create: string; update:
   vendors: { read: 'bills.read', create: 'bills.create', update: 'bills.approve', delete: 'bills.approve' },
   tasks: { read: 'system.manage', create: 'system.manage', update: 'system.manage', delete: 'system.manage' },
   projects: { read: 'system.manage', create: 'system.manage', update: 'system.manage', delete: 'system.manage' },
+  campaigns: { read: 'transactions.read', create: 'system.manage', update: 'system.manage', delete: 'system.manage' },
+  paymentAllocations: { read: 'transactions.read', create: 'transactions.approve', update: 'transactions.approve', delete: 'transactions.reverse' },
   fundraisers: { read: 'donors.read', create: 'donors.create', update: 'donors.update', delete: 'donors.delete' },
   employees: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
   t4aSlips: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
@@ -210,6 +212,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const record = { ...body.data, id };
     const validation = validatePayload(type, record);
     if (!validation.success) return c.json({ success: false, error: 'The record contains invalid data.' }, 400);
+    if (type === 'campaigns') {
+      const year = Number(record.year);
+      if (!String(record.name || '').trim() || !Number.isInteger(year) || year < 1900 || year > 2200 || !isoDate(record.startDate) || !isoDate(record.endDate) || record.startDate > record.endDate || !['CAD','USD'].includes(record.currency) || !['draft','active','closed'].includes(record.status)) return c.json({ success: false, error: 'Campaign name, year, dates, currency, and status are required.' }, 400);
+    }
+    if (type === 'pledges' && record.campaignId) {
+      const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
+      if (!campaign) return c.json({ success: false, error: 'The selected campaign does not exist.' }, 409);
+    }
     const now = Date.now();
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;
@@ -260,6 +270,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (type === 'transactions' && record.projectId) {
       const project = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(String(record.projectId)).first();
       if (!project) return c.json({ success:false,error:'The selected project does not exist.' },409);
+    }
+    if (type === 'pledges' && record.campaignId) {
+      const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
+      if (!campaign) return c.json({ success: false, error: 'The selected campaign does not exist.' }, 409);
+    }
+    if (type === 'campaigns') {
+      const year = Number(record.year);
+      if (!String(record.name || '').trim() || !Number.isInteger(year) || year < 1900 || year > 2200 || !isoDate(record.startDate) || !isoDate(record.endDate) || record.startDate > record.endDate || !['CAD','USD'].includes(record.currency) || !['draft','active','closed'].includes(record.status)) return c.json({ success: false, error: 'Campaign name, year, dates, currency, and status are required.' }, 400);
     }
     if (type === 'bills') {
       const categoryId = String(record.category || '').trim();
@@ -314,6 +332,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
     const current: any = await c.env.DB.prepare('SELECT data,revision FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(type, id).first();
     if (!current) return c.json({ success: true, deleted: true, alreadyDeleted: true });
+    if (type === 'campaigns') {
+      const pledge: any = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.campaignId')=? LIMIT 1").bind(id).first();
+      if (pledge) return c.json({ success: false, error: 'This campaign has pledges and cannot be deleted. Close it instead.' }, 409);
+    }
     const expectedRevision = Number(body.revision);
     if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
     const now = Date.now();
@@ -347,10 +369,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase();
     const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const conditions=["p.type='pledges'",'p.is_deleted=0'];const bindings:any[]=[];if(search){conditions.push("(lower(p.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)");bindings.push(`%${search}%`,`%${search}%`);}if(from){conditions.push("json_extract(p.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(p.data,'$.date')<=?");bindings.push(to);}const where=conditions.join(' AND ');
-    const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0";
+    const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records cpg ON cpg.type='campaigns' AND cpg.id=json_extract(p.data,'$.campaignId') AND cpg.is_deleted=0";
     const order = requestedOrder(c, { date: "json_extract(p.data,'$.date')", donor: "lower(COALESCE(json_extract(d.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0) AS REAL)", currency: "json_extract(p.data,'$.currency')", notes: "lower(COALESCE(json_extract(p.data,'$.notes'),''))" }, "json_extract(p.data,'$.date')");
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.preTitle') AS donor_pre_title,json_extract(d.data,'$.hebFirstName') AS donor_heb_first,json_extract(d.data,'$.hebLastName') AS donor_heb_last,json_extract(d.data,'$.title') AS donor_title FROM sync_records p ${join} WHERE ${where} ORDER BY ${order},p.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.preTitle') AS donor_pre_title,json_extract(d.data,'$.hebFirstName') AS donor_heb_first,json_extract(d.data,'$.hebLastName') AS donor_heb_last,json_extract(d.data,'$.title') AS donor_title,json_extract(cpg.data,'$.name') AS campaign_name FROM sync_records p ${join} WHERE ${where} ORDER BY ${order},p.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records p ${join} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
@@ -365,7 +387,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         for (const calculation of financials) calculationsById.set(String(calculation.id), calculation);
       }
     }
-    const items = listResult.results.map((row: any) => { const item = parseRecord(row); const calculation = calculationsById.get(String(item.id)); return { ...item, donorName: row.donor_name || 'Unknown Donor', donorHebrewName: [row.donor_pre_title,row.donor_heb_first,row.donor_heb_last,row.donor_title].filter(Boolean).join(' '), paid: Number(calculation?.paid || 0), pending: Number(calculation?.pending || 0), scheduled: Number(calculation?.scheduled || 0), balance: Number(calculation?.balance ?? item.amountCAD ?? item.amount ?? 0) }; });
+    const items = listResult.results.map((row: any) => { const item = parseRecord(row); const calculation = calculationsById.get(String(item.id)); return { ...item, donorName: row.donor_name || 'Unknown Donor', donorHebrewName: [row.donor_pre_title,row.donor_heb_first,row.donor_heb_last,row.donor_title].filter(Boolean).join(' '), campaignName: row.campaign_name || 'Legacy / Unassigned', paid: Number(calculation?.paid || 0), pending: Number(calculation?.pending || 0), scheduled: Number(calculation?.scheduled || 0), balance: Number(calculation?.balance ?? item.amountCAD ?? item.amount ?? 0) }; });
     return c.json({ success: true, items, page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 

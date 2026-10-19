@@ -248,6 +248,19 @@ describe('server-driven bank deposit matching', () => {
     expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='pledges'").get() as any).count)).toBe(3);
   });
 
+  it('creates first-class campaigns and safely links pledges to them', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'campaign-donor', { id: 'campaign-donor', name: 'Campaign Donor' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const campaignResponse = await app.request('/v3/records/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-create' }, body: JSON.stringify({ data: { id: 'campaign-2026', name: 'Campaign 2026', year: 2026, startDate: '2026-01-01', endDate: '2026-12-31', currency: 'CAD', status: 'active' } }) }, { DB: db } as any);
+    expect(campaignResponse.status).toBe(201);
+    const pledgeResponse = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-pledge' }, body: JSON.stringify({ data: { id: 'campaign-pledge', donorId: 'campaign-donor', campaignId: 'campaign-2026', amount: 500, currency: 'CAD', date: '2026-02-01' } }) }, { DB: db } as any);
+    expect(pledgeResponse.status).toBe(201);
+    const deleteResponse = await app.request('/v3/records/campaigns/campaign-2026', { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-delete' }, body: JSON.stringify({ revision: 1 }) }, { DB: db } as any);
+    expect(deleteResponse.status).toBe(409);
+    expect((await deleteResponse.json() as any).error).toContain('Close it instead');
+  });
+
   it('allows the live payment, bill, and account edit popups to save through revision-safe routes', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'transactions', 'editable-payment', { id: 'editable-payment', donorId: 'donor-1', amount: 20, currency: 'CAD', date: '2026-07-21' });
