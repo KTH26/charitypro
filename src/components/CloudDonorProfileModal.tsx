@@ -6,9 +6,10 @@ import { CloudPledgeDetailsModal } from './CloudPledgeDetailsModal';
 import { CloudScheduleDetailsModal } from './CloudScheduleDetailsModal';
 import { OnlinePaymentForm } from './OnlinePaymentForm';
 import { CloudRecurringPaymentForm } from './CloudRecurringPaymentForm';
+import { CloudPaymentMethods } from './CloudPaymentMethods';
 
 type Profile = { donor: OnlineDonor & Record<string, any>; payments: any[]; pledges: any[]; recurring: any[]; summary: Record<string, number> };
-type Tab = 'overview' | 'transactions' | 'pledges' | 'recurring' | 'declined' | 'notes';
+type Tab = 'overview' | 'transactions' | 'pledges' | 'recurring' | 'cards' | 'declined' | 'notes';
 const money = (value: number) => Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const CloudDonorProfileModal: React.FC<{ donorId: string; onClose: () => void; onEdit: (donor: OnlineDonor) => void }> = ({ donorId, onClose, onEdit }) => {
@@ -25,7 +26,7 @@ export const CloudDonorProfileModal: React.FC<{ donorId: string; onClose: () => 
   const donor = profile?.donor; const summary = profile?.summary || {}; const declined = profile?.payments.filter(payment => payment.type === 'declined') || [];
   const initials = donor ? `${String(donor.firstName || donor.name || '?')[0]}${String(donor.lastName || '')[0] || ''}` : '';
   const hebrewName = donor ? [donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title, donor.postTitle].filter(Boolean).join(' ') : '';
-  const tabs: [Tab, string][] = [['overview','Overview'],['transactions',`Payments (${summary.paymentCount || 0})`],['pledges',`Pledges (${summary.pledgeCount || 0})`],['recurring',`Recurring (${summary.recurringCount || 0})`],['declined',`Declined (${summary.declinedCount || 0})`],['notes','Notes']];
+  const tabs: [Tab, string][] = [['overview','Overview'],['transactions',`Payments (${summary.paymentCount || 0})`],['pledges',`Pledges (${summary.pledgeCount || 0})`],['recurring',`Recurring (${summary.recurringCount || 0})`],['cards','Saved Cards'],['declined',`Declined (${summary.declinedCount || 0})`],['notes','Notes']];
 
   return <><div className="modal-overlay" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 900, width: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>Donor Profile</h2><button className="modal-close" onClick={onClose}><X size={20} /></button></div>
@@ -37,6 +38,7 @@ export const CloudDonorProfileModal: React.FC<{ donorId: string; onClose: () => 
       {tab === 'transactions' && <RecordTable rows={profile.payments.filter(payment => payment.type !== 'declined')} columns={['Date','Amount','Method','Deposit','Status']} render={payment => [payment.date,`${payment.currency} $${money(payment.amount)}`,String(payment.method || '').replace('_',' '),payment.depositStatus || 'Direct',statusBadge(payment.type)]} empty="No payments found for this donor." onRow={payment => setSelectedPayment(payment)} />}
       {tab === 'pledges' && <><div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10, marginBottom: 16 }}>{[{label:'Total Pledges',value:summary.pledgedTotal},{label:'Approved Paid',value:summary.pledgePaidTotal},{label:'Pending',value:summary.pledgePendingTotal},{label:'Future Scheduled',value:summary.scheduledTotal},{label:'Unscheduled Balance',value:summary.pledgeBalance}].map(item => <div key={item.label} style={{ background: 'var(--bg-input)', borderRadius: 10, padding: 12, textAlign: 'center' }}><div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{item.label}</div><div style={{ fontSize: '1.1rem', fontWeight: 800 }}>${money(item.value)}</div></div>)}</div><RecordTable rows={profile.pledges} columns={['Pledge Date','Pledge','Approved','Pending','Scheduled','Balance']} render={pledge => [pledge.date,`${pledge.currency || 'CAD'} $${money(pledge.amount)}`,`$${money(pledge.paid)}`,`$${money(pledge.pending)}`,`$${money(pledge.scheduled)}`,`$${money(pledge.balance)}`]} empty="No pledges found for this donor." onRow={pledge => setSelectedPledgeId(pledge.id)} /></>}
       {tab === 'recurring' && <RecordTable rows={profile.recurring} columns={['Next Date','Amount','Frequency','Method','Status']} render={schedule => [schedule.nextDate,`${schedule.currency} $${money(schedule.amount)}`,schedule.frequency,String(schedule.method || '').replace('_',' '),schedule.active ? 'Active' : 'Paused']} empty="No recurring payments found for this donor." onRow={schedule => setSelectedSchedule({ ...schedule, donorName: donor.name })} />}
+      {tab === 'cards' && <CloudPaymentMethods donorId={donor.id} />}
       {tab === 'declined' && <RecordTable rows={declined} columns={['Date','Amount','Method','Notes','Status']} render={payment => [payment.date,`${payment.currency} $${money(payment.amount)}`,String(payment.method || '').replace('_',' '),payment.notes || '',statusBadge(payment.type)]} empty="No declined payments." onRow={payment => setSelectedPayment(payment)} />}
       {tab === 'notes' && <div><textarea value={notes} onChange={event => setNotes(event.target.value)} rows={8} style={{ width: '100%' }} /><button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => void saveNotes()} disabled={saving}>{saving ? 'Saving...' : 'Save Notes'}</button></div>}
       <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 16 }}>Each activity tab shows at most the latest 50 records so the page stays responsive.</div>
