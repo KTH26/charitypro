@@ -27,7 +27,7 @@ export const OnlinePendingPayments: React.FC = () => {
   const decline = async (item: PendingPayment) => {
     if (!confirm(`Mark the ${item.date} payment for ${item.donorName} as declined?`)) return;
     try {
-      const response = await fetch(`/api/v3/records/transactions/${encodeURIComponent(item.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ revision: item.revision, data: { type: 'declined', notes: `${item.notes || ''}${item.notes ? ' ' : ''}Marked declined during payment follow-up.` } }) });
+      const response = await fetch(`/api/v3/payments/${encodeURIComponent(item.id)}/decline`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ revision: item.revision, reason: 'Marked declined during payment follow-up.' }) });
       const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Unable to mark the payment declined.');
       setNotice('Payment moved to Declined for follow-up.'); await load(true);
     } catch (reason: any) { setError(reason.message || 'Unable to update the payment.'); }

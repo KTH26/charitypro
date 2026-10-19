@@ -585,7 +585,8 @@ describe('server-driven bank deposit matching', () => {
     seedRecord(db, 'dismissedSolaRefs', 'dismissedSolaRefs', []);
     seedRecord(db, 'solaDonorMappings', 'sola-map-jane%20donor', { id: 'sola-map-jane%20donor', solaName: 'Jane Donor', donorId: 'donor-sola' });
     seedRecord(db, 'donors', 'donor-sola', { id: 'donor-sola', name: 'Jane Donor', aliases: [] });
-    seedRecord(db, 'transactions', 'pending-sola', { id: 'pending-sola', donorId: 'donor-sola', amount: 50, amountCAD: 50, currency: 'CAD', method: 'Credit Card', date: '2026-07-01', type: 'Pending' });
+    seedRecord(db, 'paymentExpectations', 'expected-sola', { id: 'expected-sola', donorId: 'donor-sola', amount: 50, currency: 'CAD', expectedDate: '2026-07-01', status: 'due', pendingTransactionId: 'pending-sola' });
+    seedRecord(db, 'transactions', 'pending-sola', { id: 'pending-sola', donorId: 'donor-sola', amount: 50, amountCAD: 50, currency: 'CAD', method: 'Credit Card', date: '2026-07-01', type: 'Pending', expectationId: 'expected-sola' });
     db.database.prepare("UPDATE sync_records SET is_deleted=1 WHERE (type='dismissedSolaRefs' AND id='dismissedSolaRefs') OR (type='solaDonorMappings' AND id='sola-map-jane%20donor')").run();
     for (let index = 0; index < 60; index++) seedRecord(db, 'transactions', `newer-pending-${index}`, { id: `newer-pending-${index}`, donorId: 'donor-sola', amount: 999, currency: 'CAD', method: 'credit_card', date: '2026-07-28', type: 'pending' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
@@ -595,6 +596,8 @@ describe('server-driven bank deposit matching', () => {
     expect((await resolveRequest()).status).toBe(200); expect((await resolveRequest()).status).toBe(200);
     const transaction: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id='pending-sola'").get(); const transactionData = JSON.parse(transaction.data);
     expect(transactionData).toMatchObject({ type: 'approved', solaBatchId: 'batch-1', sourceAccountId: 'sys-undeposited-funds' }); expect(transactionData.notes).toContain('sola-ref-1'); expect(Number(transaction.revision)).toBe(2);
+    const expectation: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='paymentExpectations' AND id='expected-sola'").get();
+    expect(JSON.parse(expectation.data)).toMatchObject({ status: 'fulfilled', paymentId: 'pending-sola', solaRef: 'sola-ref-1' }); expect(Number(expectation.revision)).toBe(2);
     const mapping: any = db.database.prepare("SELECT data FROM sync_records WHERE type='solaDonorMappings'").get();
     expect(JSON.parse(mapping.data)).toMatchObject({ solaName: 'Jane Donor', donorId: 'donor-sola' });
     expect(db.database.prepare("SELECT is_deleted FROM sync_records WHERE type='solaDonorMappings' AND id='sola-map-jane%20donor'").get().is_deleted).toBe(0);
@@ -646,9 +649,25 @@ describe('server-driven bank deposit matching', () => {
     const second = await app.request('/v3/schedules/process-due', { method: 'POST' }, { DB: db } as any); const secondBody = await second.json() as any;
     expect(second.status).toBe(200); expect(secondBody.created).toBe(0);
     const pending: any = db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='scheduled-payment-schedule-safe-2026-07-20'").get();
-    expect(JSON.parse(pending.data)).toMatchObject({ donorId: 'scheduled-donor', amount: 75, type: 'pending', method: 'credit_card', scheduleId: 'schedule-safe' });
+    expect(JSON.parse(pending.data)).toMatchObject({ donorId: 'scheduled-donor', amount: 75, type: 'pending', method: 'credit_card', scheduleId: 'schedule-safe', expectationId: 'expected-payment-schedule-safe-2026-07-20' });
+    const expectation: any = db.database.prepare("SELECT data FROM sync_records WHERE type='paymentExpectations' AND id='expected-payment-schedule-safe-2026-07-20'").get();
+    expect(JSON.parse(expectation.data)).toMatchObject({ scheduleId: 'schedule-safe', donorId: 'scheduled-donor', amount: 75, expectedDate: '2026-07-20', status: 'due', pendingTransactionId: 'scheduled-payment-schedule-safe-2026-07-20' });
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentExpectations'").get().count).toBe(1);
     const schedule: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='schedule-safe'").get();
     expect(JSON.parse(schedule.data)).toMatchObject({ nextDate: '2026-08-20', active: true });
+  });
+
+  it('declines a pending payment and its linked expectation atomically', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'paymentExpectations', 'expected-decline', { id: 'expected-decline', donorId: 'decline-donor', amount: 90, currency: 'CAD', expectedDate: '2026-07-20', status: 'due', pendingTransactionId: 'pending-decline' });
+    seedRecord(db, 'transactions', 'pending-decline', { id: 'pending-decline', donorId: 'decline-donor', amount: 90, currency: 'CAD', date: '2026-07-20', type: 'pending', method: 'credit_card', expectationId: 'expected-decline' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const request = () => app.request('/v3/payments/pending-decline/decline', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'decline-linked-expectation' }, body: JSON.stringify({ revision: 1, reason: 'No approved Sola charge was found.' }) }, { DB: db } as any);
+    expect((await request()).status).toBe(200); expect((await request()).status).toBe(200);
+    const payment: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id='pending-decline'").get();
+    expect(JSON.parse(payment.data)).toMatchObject({ type: 'declined', declineReason: 'No approved Sola charge was found.' }); expect(Number(payment.revision)).toBe(2);
+    const expectation: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='paymentExpectations' AND id='expected-decline'").get();
+    expect(JSON.parse(expectation.data)).toMatchObject({ status: 'declined', pendingTransactionId: 'pending-decline', declineReason: 'No approved Sola charge was found.' }); expect(Number(expectation.revision)).toBe(2);
   });
 
   it('saves the Sola schedule inbox and reloads it without another Sola request', async () => {
