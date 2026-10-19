@@ -135,17 +135,19 @@ describe('tokenized donor payment methods', () => {
     seedRecord(db, 'donors', 'charge-donor', { id: 'charge-donor', name: 'Charge Donor' });
     seedRecord(db, 'accounts', 'bank', { id: 'bank', name: 'Bank', type: 'asset', currency: 'CAD' });
     seedRecord(db, 'accounts', 'revenue', { id: 'revenue', name: 'Donations', type: 'revenue', currency: 'CAD' });
+    seedRecord(db, 'pledges', 'charge-pledge', { id: 'charge-pledge', donorId: 'charge-donor', amount: 100, date: '2026-01-01', currency: 'CAD' });
     seedRecord(db, 'paymentMethods', 'saved-card', { id: 'saved-card', donorId: 'charge-donor', brand: 'Visa', last4: '4242', status: 'active', isDefault: true, priority: 1 });
     db.database.exec('CREATE TABLE server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)');
     db.database.prepare("INSERT INTO server_secrets(key,value,updated_at) VALUES('SOLA_API_KEY','server-key',1),('PAYMENT_METHOD_TOKEN:saved-card','private-card-token',1)").run();
     const gateway = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ xResult: 'A', xRefNum: 'approved-ref-1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'card-user'); c.set('userEmail', 'card@example.com'); await next(); }); registerServerDataRoutes(app as any);
-    const request = () => app.request('/v3/donors/charge-donor/charge-saved-card', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'charge-once' }, body: JSON.stringify({ amount: 75, currency: 'CAD', paymentMethodId: 'saved-card', sourceAccountId: 'bank', offsetAccountId: 'revenue', date: '2026-10-19' }) }, { DB: db } as any);
+    const request = () => app.request('/v3/donors/charge-donor/charge-saved-card', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'charge-once' }, body: JSON.stringify({ amount: 75, currency: 'CAD', paymentMethodId: 'saved-card', sourceAccountId: 'bank', offsetAccountId: 'revenue', date: '2026-10-19', allocations: [{ pledgeId: 'charge-pledge', amount: 75 }] }) }, { DB: db } as any);
     const response = await request(); const result = await response.json() as any;
     expect(response.status).toBe(201); expect(result).toMatchObject({ success: true, approved: true, item: { donorId: 'charge-donor', amount: 75, type: 'approved', paymentMethodId: 'saved-card', solaRef: 'approved-ref-1' } });
     const sent = JSON.parse(String((gateway.mock.calls[0][1] as RequestInit).body)); expect(sent).toMatchObject({ xKey: 'server-key', xToken: 'private-card-token', xInvoice: 'charge-once' }); expect(sent).not.toHaveProperty('xCardNum');
     const retry = await request(); expect(retry.status).toBe(201); expect((await retry.json() as any).item.id).toBe(result.item.id); expect(gateway).toHaveBeenCalledTimes(1);
     expect(Number((db.database.prepare("SELECT COUNT(*) count FROM sync_records WHERE type='transactions'").get() as any).count)).toBe(1);
+    expect(Number((db.database.prepare("SELECT COUNT(*) count FROM sync_records WHERE type='paymentAllocations' AND json_extract(data,'$.pledgeId')='charge-pledge'").get() as any).count)).toBe(1);
   });
 
   it('records a declined saved-card attempt without counting it as an approved payment', async () => {

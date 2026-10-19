@@ -5,9 +5,10 @@ type Donor = { id: string; name: string; email?: string };
 type Account = { id: string; name: string; type: string; currency: 'CAD' | 'USD' };
 type Choice = { id: string; name: string };
 type PaymentStatus = 'approved' | 'pending';
+type SavedCard = { id: string; brand: string; last4: string; expiryMonth: number; expiryYear: number; isDefault: boolean; status: string; priority: number };
 
 const methods = [
-  ['credit_card', 'Credit Card (already charged)'], ['check', 'Check'], ['cash', 'Cash'], ['e_transfer', 'E-Transfer'],
+  ['saved_card', 'Charge a saved card through Sola'], ['credit_card', 'Credit Card (already charged)'], ['check', 'Check'], ['cash', 'Cash'], ['e_transfer', 'E-Transfer'],
   ['vouchers', 'Vouchers'], ['eizer', 'Eizer'], ['bnei_leivy', 'Bnei Leivy'], ['other', 'Other']
 ] as const;
 
@@ -33,6 +34,8 @@ export const OnlinePaymentForm: React.FC<{
   const [exchangeRateDate, setExchangeRateDate] = useState('');
   const [loadingRate, setLoadingRate] = useState(false);
   const [method, setMethod] = useState('other');
+  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
+  const [paymentMethodId, setPaymentMethodId] = useState('');
   const [checkNumber, setCheckNumber] = useState('');
   const [availabilityDate, setAvailabilityDate] = useState(defaultDate||new Date().toISOString().slice(0, 10));
   const [date, setDate] = useState(defaultDate||new Date().toISOString().slice(0, 10));
@@ -85,12 +88,13 @@ export const OnlinePaymentForm: React.FC<{
   }, [donor, donorQuery]);
 
   useEffect(()=>{setAllocations([]);},[donorId]);
+  useEffect(()=>{if(!donorId){setSavedCards([]);setPaymentMethodId('');return;}const controller=new AbortController();fetch(`/api/v3/donors/${encodeURIComponent(donorId)}/payment-methods`,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load saved cards.');const active=(data.items||[]).filter((item:SavedCard)=>item.status==='active');setSavedCards(active);setPaymentMethodId(current=>current&&active.some((item:SavedCard)=>item.id===current)?current:(active.find((item:SavedCard)=>item.isDefault)||active[0])?.id||'');}).catch(reason=>{if(reason.name!=='AbortError')setError(reason.message||'Unable to load saved cards.');});return()=>controller.abort();},[donorId]);
   useEffect(()=>{if(currency!=='USD'||exchangeRateSource!=='bank_of_canada')return;const controller=new AbortController();setLoadingRate(true);fetch(`/api/v3/exchange-rates/usd-cad?date=${encodeURIComponent(date)}`,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load the official USD/CAD rate.');setExchangeRate(String(data.rate));setExchangeRateDate(String(data.rateDate));}).catch(reason=>{if(reason.name!=='AbortError')setError(reason.message||'Unable to load the official USD/CAD rate. You can choose an agreed rate instead.');}).finally(()=>{if(!controller.signal.aborted)setLoadingRate(false);});return()=>controller.abort();},[currency,date,exchangeRateSource]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
-    if (!donorId || (method !== 'check' && !sourceAccountId) || !offsetAccountId) {
+    if (!donorId || (method !== 'check' && !sourceAccountId) || !offsetAccountId || (method === 'saved_card' && !paymentMethodId)) {
       setError(method === 'check' ? 'Choose a donor and the revenue account.' : 'Choose a donor, the receiving account, and the revenue account.');
       return;
     }
@@ -108,10 +112,11 @@ export const OnlinePaymentForm: React.FC<{
     pendingRequestId.current = requestId;
     try {
       const status: PaymentStatus = forceApproved ? 'approved' : method === 'check' ? 'pending' : 'approved';
-      const response = await fetch('/api/v3/payments', {
+      const chargingSavedCard = method === 'saved_card';
+      const response = await fetch(chargingSavedCard ? `/api/v3/donors/${encodeURIComponent(donorId)}/charge-saved-card` : '/api/v3/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, exchangeRate:currency==='USD'?Number(exchangeRate):undefined, exchangeRateSource:currency==='USD'?exchangeRateSource:undefined, exchangeRateDate:currency==='USD'?(exchangeRateDate||date):undefined, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, checkNumber, availabilityDate, type: status })
+        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, exchangeRate:currency==='USD'?Number(exchangeRate):undefined, exchangeRateSource:currency==='USD'?exchangeRateSource:undefined, exchangeRateDate:currency==='USD'?(exchangeRateDate||date):undefined, method:chargingSavedCard?'credit_card':method, paymentMethodId:chargingSavedCard?paymentMethodId:undefined, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, checkNumber, availabilityDate, type: status })
       });
       const responseText = await response.text();
       let data: any; try { data = JSON.parse(responseText); } catch { throw new Error(response.ok ? 'The server returned an unreadable response.' : `The payment server failed (${response.status}). Please try again.`); }
@@ -148,6 +153,7 @@ export const OnlinePaymentForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={currency} onChange={e => setCurrency(e.target.value as 'CAD' | 'USD')}><option value="CAD">CAD</option><option value="USD">USD</option></select></label>
           {currency==='USD'&&<><label className="form-group" style={{margin:0}}><span>Exchange-rate method</span><select value={exchangeRateSource} onChange={e=>setExchangeRateSource(e.target.value as 'bank_of_canada'|'agreed')}><option value="bank_of_canada">Official Bank of Canada daily rate</option><option value="agreed">Rate agreed with donor</option></select></label><label className="form-group" style={{margin:0}}><span>USD to CAD rate *</span><input type="number" min="0.0001" step="0.0001" readOnly={exchangeRateSource==='bank_of_canada'} value={exchangeRate} onChange={e=>setExchangeRate(e.target.value)} placeholder={loadingRate?'Loading official rate…':'1.3500'}/><small>{exchangeRateSource==='bank_of_canada'?(exchangeRateDate?`Official observation: ${exchangeRateDate}`:'Loading official rate…'):'Enter the rate agreed with this donor.'}</small></label><div style={{padding:12,borderRadius:10,background:'var(--bg-input)',fontWeight:700}}>Recorded value: CAD ${(Number(amount||0)*Number(exchangeRate||0)).toFixed(2)}</div></>}
           <label className="form-group" style={{ margin: 0 }}><span>Payment method</span><select value={method} onChange={e => setMethod(e.target.value)}>{methods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          {method==='saved_card'&&<label className="form-group" style={{margin:0}}><span>Saved card *</span><select value={paymentMethodId} onChange={event=>setPaymentMethodId(event.target.value)}><option value="">{savedCards.length?'Select a saved card':'No active saved cards'}</option>{savedCards.map(card=><option key={card.id} value={card.id}>{card.brand} •••• {card.last4} · expires {String(card.expiryMonth).padStart(2,'0')}/{card.expiryYear}{card.isDefault?' · Default':''}</option>)}</select><small>Processed securely by Sola. Full card details are never shown or sent to this page.</small></label>}
           <label className="form-group" style={{ margin: 0 }}><span>Date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
           {method !== 'check' && <label className="form-group" style={{ margin: 0 }}><span>Paid into (asset)</span><select value={sourceAccountId} onChange={e => setSourceAccountId(e.target.value)}><option value="">Select receiving account</option>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>}
           {method === 'check' && <><label className="form-group" style={{ margin: 0 }}><span>Check number *</span><input value={checkNumber} onChange={e=>setCheckNumber(e.target.value)} maxLength={100}/></label><label className="form-group" style={{ margin: 0 }}><span>Available to deposit *</span><input type="date" min={date} value={availabilityDate} onChange={e=>setAvailabilityDate(e.target.value)}/></label><div style={{padding:12,borderRadius:10,background:'var(--navy-bg)',color:'var(--navy)',fontSize:13}}>This check stays pending and does not enter an account until you mark it deposited. A reminder will appear on the availability date.</div></>}

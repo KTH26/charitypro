@@ -113,7 +113,8 @@ describe('Backend API & Security Rules', () => {
     expect(accountDetailsSource).toContain('limit=50');
     const formSource = readFileSync(join(process.cwd(), 'src', 'components', 'OnlinePaymentForm.tsx'), 'utf8');
     const paymentsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePayments.tsx'), 'utf8');
-    expect(formSource).toContain("fetch('/api/v3/payments'");
+    expect(formSource).toContain("'/api/v3/payments'");
+    expect(formSource).toContain('/charge-saved-card');
     expect(formSource).toContain('pendingRequestId');
     expect(paymentsSource).not.toContain('else setStatus(createdStatus)');
     expect(paymentsSource).toContain('Saving a payment must never move the operator');
