@@ -610,6 +610,11 @@ describe('server-driven bank deposit matching', () => {
     const settings = await (await app.request('/v3/settings', {}, { DB: db } as any)).json() as any; expect(settings.solaConfigured).toBe(true); expect(JSON.stringify(settings)).not.toContain('ProductionKey123456');
   });
 
+  it('syncs a Sola range one day at a time and deduplicates saved references', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');const calls:string[]=[];vi.spyOn(globalThis,'fetch').mockImplementation(async(_input,init)=>{const request=JSON.parse(String(init?.body||'{}'));calls.push(request.xBeginDate);const day=String(request.xBeginDate).slice(0,10);const rows=day==='2026-07-01'?[{RefNum:'ref-a',Name:'Donor A',Date:'2026-07-01',Amount:'10',Status:'Approved'}]:day==='2026-07-02'?[{RefNum:'ref-a',Name:'Donor A',Date:'2026-07-01',Amount:'10',Status:'Approved'},{RefNum:'ref-b',Name:'Donor B',Date:'2026-07-02',Amount:'20',Status:'Approved'}]:[{RefNum:'ref-c',Name:'Donor C',Date:'2026-07-03',Amount:'30',Status:'Approved'}];return new Response(JSON.stringify({ReportData:rows,xRecordsReturned:rows.length,xReportingMaxTransactions:1000}),{status:200,headers:{'Content-Type':'application/json'}});});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);const response=await app.request('/v3/sola/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startDate:'2026-07-01',endDate:'2026-07-03'})},{DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(calls).toEqual(['2026-07-01 00:00:00','2026-07-02 00:00:00','2026-07-03 00:00:00']);expect(body.sync).toMatchObject({count:3,daysRequested:3,complete:true,trigger:'manual'});expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaTransactions' AND is_deleted=0").get().count).toBe(3);
+  });
+
   it('matches a saved Sola charge to an online transaction exactly once', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'solaTransactions', 'sola-ref-1', { ref: 'sola-ref-1', name: 'Jane Donor', date: '2026-07-27', amount: 50, status: 'Approved', last4: '1234', batch: 'batch-1' });

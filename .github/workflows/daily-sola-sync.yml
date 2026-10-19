@@ -1,0 +1,22 @@
+name: Daily Sola Sync
+
+on:
+  schedule:
+    - cron: '20 10 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Save the latest Sola transactions
+        env:
+          CHARITYPRO_URL: ${{ secrets.CHARITYPRO_URL }}
+          CHARITYPRO_CRON_SECRET: ${{ secrets.CHARITYPRO_CRON_SECRET }}
+        run: |
+          test -n "$CHARITYPRO_URL"
+          test -n "$CHARITYPRO_CRON_SECRET"
+          curl --fail-with-body --retry 3 --retry-all-errors \
+            -X POST "${CHARITYPRO_URL%/}/api/v3/automation/daily-sola" \
+            -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
+            -H "Content-Type: application/json"

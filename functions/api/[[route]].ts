@@ -6,7 +6,7 @@ import { validatePayload } from './validation';
 import { isOperationAlreadyApplied } from './idempotency';
 import { registerServerDataRoutes } from './server-data';
 
-const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string } }>().basePath('/api')
+const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string, CRON_SECRET?: string, SOLA_API_KEY?: string } }>().basePath('/api')
 
 app.use('*', requireAuth);
 
