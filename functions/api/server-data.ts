@@ -261,6 +261,20 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const project = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(String(record.projectId)).first();
       if (!project) return c.json({ success:false,error:'The selected project does not exist.' },409);
     }
+    if (type === 'bills') {
+      const categoryId = String(record.category || '').trim();
+      const sourceAccountId = String(record.sourceAccountId || '').trim();
+      const creditAccountId = String(record.creditAccountId || '').trim();
+      const accountIds = [...new Set([categoryId, sourceAccountId, creditAccountId].filter(Boolean))];
+      const rows = accountIds.length
+        ? await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(accountIds)).all()
+        : { results: [] };
+      const accountTypes = new Map((rows.results as any[]).map(row => [String(row.id), String(parseSetting(row.data, {}).type || '')]));
+      if (accountTypes.get(categoryId) !== 'expense') return c.json({ success: false, error: 'Choose a valid expense category.' }, 409);
+      if (record.status === 'paid' && !['asset', 'liability'].includes(accountTypes.get(sourceAccountId) || '')) return c.json({ success: false, error: 'Choose a valid paid-from account.' }, 409);
+      if (creditAccountId && !['asset', 'liability'].includes(accountTypes.get(creditAccountId) || '')) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
+      if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
+    }
     const now = Date.now();
     const nextRevision = expectedRevision + 1;
     const data = JSON.stringify(record);
@@ -1559,25 +1573,26 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (status === 'open') conditions.push("json_extract(b.data,'$.status') IN ('pending','urgent','scheduled')");
     else if (status !== 'all') { conditions.push("json_extract(b.data,'$.status')=?"); bindings.push(status); }
     if (category) { conditions.push("json_extract(b.data,'$.category')=?"); bindings.push(category); }
-    if (account) { conditions.push("json_extract(b.data,'$.sourceAccountId')=?"); bindings.push(account); }
+    if (account) { conditions.push("(json_extract(b.data,'$.sourceAccountId')=? OR json_extract(b.data,'$.creditAccountId')=?)"); bindings.push(account, account); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { conditions.push("json_extract(b.data,'$.dueDate')>=?"); bindings.push(from); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { conditions.push("json_extract(b.data,'$.dueDate')<=?"); bindings.push(to); }
     if (search) {
-      conditions.push("(lower(COALESCE(json_extract(b.data,'$.vendor'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.memo'),'')) LIKE ? OR lower(COALESCE(json_extract(cat.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(src.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.status'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.dueDate'),'')) LIKE ? OR CAST(COALESCE(json_extract(b.data,'$.amount'),0) AS TEXT) LIKE ?)");
-      bindings.push(...Array(7).fill(`%${search}%`));
+      conditions.push("(lower(COALESCE(json_extract(b.data,'$.vendor'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.memo'),'')) LIKE ? OR lower(COALESCE(json_extract(cat.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(src.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(cr.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.status'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.dueDate'),'')) LIKE ? OR CAST(COALESCE(json_extract(b.data,'$.amount'),0) AS TEXT) LIKE ?)");
+      bindings.push(...Array(8).fill(`%${search}%`));
     }
     const where = conditions.join(' AND ');
     const joins = `LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
-      LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0`;
+      LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0
+      LEFT JOIN sync_records cr ON cr.type='accounts' AND cr.id=json_extract(b.data,'$.creditAccountId') AND cr.is_deleted=0`;
     const order = requestedOrder(c, { dueDate: "json_extract(b.data,'$.dueDate')", vendor: "lower(COALESCE(json_extract(b.data,'$.vendor'),''))", category: "lower(COALESCE(json_extract(cat.data,'$.name'),''))", status: "json_extract(b.data,'$.status')", source: "lower(COALESCE(json_extract(src.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(b.data,'$.amount'),0) AS REAL)" }, "json_extract(b.data,'$.dueDate')");
     const [listResult, totalsResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE ${where} ORDER BY ${order},b.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name,json_extract(cr.data,'$.name') AS credit_name FROM sync_records b ${joins} WHERE ${where} ORDER BY ${order},b.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) AS total_cad FROM sync_records b ${joins} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(totalsResult.results[0]?.count || 0);
     return c.json({
       success: true,
-      items: listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '' })),
+      items: listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '', creditName: row.credit_name || '' })),
       page, limit, total, totalPages: Math.ceil(total / limit), totalCAD: Number(totalsResult.results[0]?.total_cad || 0)
     });
   });
@@ -1691,6 +1706,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const sourceRow: any = refs.results.find((row: any) => row.type === 'accounts' && row.id === sourceAccountId);
     if (!categoryRow || JSON.parse(String(categoryRow.data)).type !== 'expense') return c.json({ success: false, error: 'Choose a valid expense category.' }, 409);
     if (status === 'paid' && !sourceRow) return c.json({ success: false, error: 'Choose a valid paid-from account.' }, 409);
+    const creditRow: any = refs.results.find((row: any) => row.type === 'accounts' && row.id === creditAccountId);
+    if (creditAccountId && (!creditRow || !['asset','liability'].includes(String(JSON.parse(String(creditRow.data)).type || '')))) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
+    if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
     const exchangeRow: any = refs.results.find((row: any) => row.type === 'exchangeRate');
     const rawRate = exchangeRow ? Number(JSON.parse(String(exchangeRow.data))) : 1.35;
     const exchangeRate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
@@ -1748,9 +1766,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const expectedRevision = Number(body.revision);
     if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This expense was changed by another user. Reloaded the latest version.', conflict: true }, 409);
     const sourceAccountId = String(body.sourceAccountId || '').trim();
-    const source: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first();
+    const creditAccountId = String(body.creditAccountId || existing.creditAccountId || '').trim();
+    const accountRows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (?,?)").bind(sourceAccountId, creditAccountId || '-').all();
+    const source: any = accountRows.results.find((row: any) => row.id === sourceAccountId);
+    const credit: any = accountRows.results.find((row: any) => row.id === creditAccountId);
     if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid asset or liability account.' }, 409);
-    const next = { ...existing, status: 'paid', paidDate: new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category };
+    if (creditAccountId && (!credit || !['asset','liability'].includes(JSON.parse(String(credit.data)).type))) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
+    if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
+    const next = { ...existing, status: 'paid', paidDate: new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category, creditAccountId: creditAccountId || null };
     const now = Date.now();
     const nextRevision = expectedRevision + 1;
     const data = JSON.stringify(next);
@@ -2116,13 +2139,19 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (action === 'expense') {
       const vendor = String(body.vendor || '').trim();
       const category = String(body.category || '').trim();
+      const creditAccountId = String(body.creditAccountId || '').trim();
       const categoryRow: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(category).first();
       if (!vendor || !categoryRow || JSON.parse(String(categoryRow.data)).type !== 'expense') return c.json({ success: false, error: 'Vendor and a valid expense category are required.' }, 409);
+      if (creditAccountId) {
+        const creditRow: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(creditAccountId).first();
+        if (!creditRow || !['asset','liability'].includes(String(JSON.parse(String(creditRow.data)).type || ''))) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
+        if (creditAccountId === accountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from bank account.' }, 409);
+      }
       const id = crypto.randomUUID();
       const operationId = `${mutationId}-bill-insert`;
       const categoryData = JSON.parse(String(categoryRow.data));
       const internalCategory = String(body.internalCategory || body.taxCategory || categoryData.name || '').trim().slice(0, 200);
-      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(body.creditAccountId?{creditAccountId:String(body.creditAccountId)}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId };
+      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(creditAccountId?{creditAccountId}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId };
       const data = JSON.stringify(record);
       resultItem = { ...record, revision: 1, updatedAt: now };
       statements.push(

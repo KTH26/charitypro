@@ -106,6 +106,7 @@ describe('server-driven bank deposit matching', () => {
   it('atomically creates a paid expense and advances bank match history', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'accounts', 'bank-1', { id: 'bank-1', name: 'Bank', type: 'asset', currency: 'CAD', plaidConnected: true });
+    seedRecord(db, 'accounts', 'credit-1', { id: 'credit-1', name: 'Cash Returned', type: 'asset', currency: 'CAD' });
     seedRecord(db, 'accounts', 'expense-1', { id: 'expense-1', name: 'Office', type: 'expense', currency: 'CAD' });
     seedRecord(db, 'matchedBankTransactions', 'matchedBankTransactions', [], 1);
     const app = new Hono();
@@ -251,6 +252,7 @@ describe('server-driven bank deposit matching', () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'transactions', 'editable-payment', { id: 'editable-payment', donorId: 'donor-1', amount: 20, currency: 'CAD', date: '2026-07-21' });
     seedRecord(db, 'bills', 'editable-bill', { id: 'editable-bill', vendor: 'Vendor', amount: 15, currency: 'CAD', dueDate: '2026-07-21', status: 'pending', category: 'expense-1' });
+    seedRecord(db, 'accounts', 'expense-1', { id: 'expense-1', name: 'Office', type: 'expense', currency: 'CAD' });
     seedRecord(db, 'accounts', 'editable-account', { id: 'editable-account', name: 'Checking', type: 'asset', currency: 'CAD', startingBalance: 0 });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     for (const [type, id, data] of [['transactions', 'editable-payment', { amount: 25 }], ['bills', 'editable-bill', { memo: 'Updated' }], ['accounts', 'editable-account', { name: 'Main Checking' }]] as const) {
