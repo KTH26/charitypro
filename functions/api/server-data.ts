@@ -227,6 +227,19 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (!campaign) return c.json({ success: false, error: 'The selected campaign does not exist.' }, 409);
     }
     if (type === 'pledges' && record.followUpDate && !isoDate(String(record.followUpDate))) return c.json({ success: false, error: 'Enter a valid pledge follow-up date.' }, 400);
+    if (type === 'recurringPayments') {
+      if (!isoDate(String(record.nextDate)) || (record.endDate && (!isoDate(String(record.endDate)) || String(record.endDate) < String(record.nextDate)))) return c.json({ success: false, error: 'Enter a valid next date and an end date on or after it.' }, 400);
+      const donor = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(String(record.donorId)).first(); if (!donor) return c.json({ success: false, error: 'The selected donor does not exist.' }, 409);
+      if (record.pledgeId) { const pledge = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(String(record.pledgeId),String(record.donorId)).first();if(!pledge)return c.json({success:false,error:'The selected pledge does not belong to this donor.'},409); }
+      if (record.method === 'credit_card') {
+        const ids = Array.isArray(record.paymentMethodIds) ? [...new Set(record.paymentMethodIds.map((value:any)=>String(value)).filter(Boolean))] : [];
+        if (!ids.length) return c.json({ success:false,error:'Choose at least one active saved card for this schedule.' },400);
+        const cards=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.donorId')=? AND json_extract(data,'$.status')='active' AND id IN (SELECT value FROM json_each(?))").bind(String(record.donorId),JSON.stringify(ids)).all();if(cards.results.length!==ids.length)return c.json({success:false,error:'One or more saved cards are unavailable for this donor.'},409);
+        record.paymentMethodIds=ids;record.paymentMethodId=ids[0];
+        const retryDays=Number(record.retryDays);const maxAttempts=Number(record.maxAttempts);if(!Number.isInteger(retryDays)||retryDays<1||retryDays>30||!Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>10)return c.json({success:false,error:'Retry interval must be 1–30 days and attempts must be 1–10.'},400);
+      }
+      if (record.sourceAccountId || record.offsetAccountId) { const accounts=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (?,?)").bind(String(record.sourceAccountId||''),String(record.offsetAccountId||'')).all();const found=new Set(accounts.results.map((row:any)=>String(row.id)));if(!found.has(String(record.sourceAccountId||''))||!found.has(String(record.offsetAccountId||'')))return c.json({success:false,error:'Choose valid receiving and revenue accounts.'},409); }
+    }
     const now = Date.now();
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;

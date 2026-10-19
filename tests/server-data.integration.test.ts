@@ -163,6 +163,15 @@ describe('tokenized donor payment methods', () => {
   });
 });
 
+describe('recurring saved-card configuration', () => {
+  it('saves an ordered card fallback and controlled retry policy', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'donors','schedule-donor',{id:'schedule-donor',name:'Schedule Donor'});seedRecord(db,'accounts','schedule-bank',{id:'schedule-bank',type:'asset'});seedRecord(db,'accounts','schedule-revenue',{id:'schedule-revenue',type:'revenue'});seedRecord(db,'pledges','schedule-pledge',{id:'schedule-pledge',donorId:'schedule-donor',amount:1200,currency:'CAD',date:'2026-01-01'});seedRecord(db,'paymentMethods','card-1',{id:'card-1',donorId:'schedule-donor',status:'active',last4:'1111'});seedRecord(db,'paymentMethods','card-2',{id:'card-2',donorId:'schedule-donor',status:'active',last4:'2222'});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','tester');c.set('userEmail','tester@example.com');await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/records/recurringPayments',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'schedule-cards'},body:JSON.stringify({data:{donorId:'schedule-donor',amount:100,currency:'CAD',frequency:'monthly',method:'credit_card',nextDate:'2026-11-01',endDate:'2027-10-01',active:true,sourceAccountId:'schedule-bank',offsetAccountId:'schedule-revenue',pledgeId:'schedule-pledge',paymentMethodIds:['card-2','card-1'],retryDays:2,maxAttempts:3}})},{DB:db} as any);
+    expect(response.status).toBe(201);const body=await response.json() as any;expect(body.item).toMatchObject({paymentMethodId:'card-2',paymentMethodIds:['card-2','card-1'],retryDays:2,maxAttempts:3,pledgeId:'schedule-pledge'});
+  });
+});
+
 describe('server-driven bank deposit matching', () => {
   it('atomically creates one batch, updates children and match history, and safely retries', async () => {
     const db = new MockD1(); databases.push(db);
