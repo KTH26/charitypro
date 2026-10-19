@@ -954,6 +954,42 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, items: rows.results.map((row: any) => ({ type: row.type,id: row.id,data: parseSetting(row.data,null),revision: Number(row.revision),updatedAt: Number(row.updated_at) })), page, limit, total, totalPages: Math.ceil(total/limit) });
   });
 
+  app.get('/v3/system/data-safety', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const [counts, totals, issues] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT type,SUM(CASE WHEN is_deleted=0 THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN is_deleted<>0 THEN 1 ELSE 0 END) AS deleted FROM sync_records GROUP BY type ORDER BY type"),
+      c.env.DB.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END),0) AS approved,
+        COALESCE(SUM(CASE WHEN type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='pending' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END),0) AS pending,
+        COALESCE(SUM(CASE WHEN type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='declined' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END),0) AS declined,
+        COALESCE(SUM(CASE WHEN type='pledges' AND is_deleted=0 THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END),0) AS pledged,
+        COALESCE(SUM(CASE WHEN type='bills' AND is_deleted=0 THEN CASE WHEN json_extract(data,'$.currency')='USD' THEN COALESCE(json_extract(data,'$.amount'),0)*COALESCE(json_extract(data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(data,'$.amount'),0) END ELSE 0 END),0) AS expenses
+        FROM sync_records`),
+      c.env.DB.prepare(`SELECT code,label,severity,count FROM (
+        SELECT 'payment_missing_donor' code,'Payments whose donor is missing' label,'error' severity,COUNT(*) count FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND NOT EXISTS(SELECT 1 FROM sync_records d WHERE d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0)
+        UNION ALL SELECT 'pledge_missing_donor','Pledges whose donor is missing','error',COUNT(*) FROM sync_records p WHERE p.type='pledges' AND p.is_deleted=0 AND NOT EXISTS(SELECT 1 FROM sync_records d WHERE d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0)
+        UNION ALL SELECT 'schedule_missing_donor','Schedules whose donor is missing','error',COUNT(*) FROM sync_records s WHERE s.type='recurringPayments' AND s.is_deleted=0 AND NOT EXISTS(SELECT 1 FROM sync_records d WHERE d.type='donors' AND d.id=json_extract(s.data,'$.donorId') AND d.is_deleted=0)
+        UNION ALL SELECT 'approved_missing_account','Approved payments without a valid receiving account','error',COUNT(*) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(t.data,'$.sourceAccountId') AND a.is_deleted=0)
+        UNION ALL SELECT 'invalid_payment_date','Payments with a missing or invalid date','error',COUNT(*) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND (json_extract(t.data,'$.date') IS NULL OR json_extract(t.data,'$.date') NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+        UNION ALL SELECT 'usd_missing_rate','USD records without a positive saved exchange rate','warning',COUNT(*) FROM sync_records r WHERE r.is_deleted=0 AND r.type IN ('transactions','pledges','bills') AND json_extract(r.data,'$.currency')='USD' AND COALESCE(json_extract(r.data,'$.exchangeRate'),0)<=0
+        UNION ALL SELECT 'paid_bill_missing_account','Paid expenses without a valid paid-from account','error',COUNT(*) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid' AND NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(b.data,'$.sourceAccountId') AND a.is_deleted=0)
+        UNION ALL SELECT 'bill_missing_category','Expenses without a valid expense category','error',COUNT(*) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(b.data,'$.category') AND a.is_deleted=0 AND json_extract(a.data,'$.type')='expense')
+        UNION ALL SELECT 'schedule_missing_end','Active schedules without an end date','warning',COUNT(*) FROM sync_records s WHERE s.type='recurringPayments' AND s.is_deleted=0 AND COALESCE(json_extract(s.data,'$.active'),0)=1 AND COALESCE(json_extract(s.data,'$.endDate'),'')=''
+        UNION ALL SELECT 'unallocated_payment','Approved payments without an explicit pledge allocation','review',COUNT(*) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND COALESCE(json_extract(t.data,'$.pledgeId'),'')=''
+        UNION ALL SELECT 'possible_duplicate_payment','Possible duplicate payment groups','review',COUNT(*) FROM (SELECT 1 FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 GROUP BY json_extract(t.data,'$.donorId'),json_extract(t.data,'$.date'),json_extract(t.data,'$.amount'),json_extract(t.data,'$.method'),json_extract(t.data,'$.type') HAVING COUNT(*)>1)
+      ) ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,code`)
+    ]);
+    const summary: any = totals.results[0] || {};
+    return c.json({
+      success: true,
+      generatedAt: new Date().toISOString(),
+      counts: counts.results.map((row: any) => ({ type: String(row.type), active: Number(row.active || 0), deleted: Number(row.deleted || 0) })),
+      totals: { approved: Number(summary.approved || 0), pending: Number(summary.pending || 0), declined: Number(summary.declined || 0), pledged: Number(summary.pledged || 0), expenses: Number(summary.expenses || 0) },
+      issues: issues.results.map((row: any) => ({ code: String(row.code), label: String(row.label), severity: String(row.severity), count: Number(row.count || 0) }))
+    });
+  });
+
   app.get('/v3/sola/status', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const key = await getSolaKey(c); const metadata: any = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_sync_status'").first();

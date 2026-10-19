@@ -517,6 +517,24 @@ describe('server-driven bank deposit matching', () => {
     expect(backupResponse.status).toBe(200); expect(backup.items.some((item: any) => item.id === 'backup-payment')).toBe(true); expect(backup.items.some((item: any) => item.type === 'solaApiKey')).toBe(false);
   });
 
+  it('produces a read-only migration safety baseline without changing records', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'safe-donor', { id: 'safe-donor', name: 'Safe Donor' });
+    seedRecord(db, 'accounts', 'safe-bank', { id: 'safe-bank', name: 'Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'safe-revenue', { id: 'safe-revenue', name: 'Donations', type: 'revenue', currency: 'CAD' });
+    seedRecord(db, 'transactions', 'safe-payment', { id: 'safe-payment', donorId: 'safe-donor', amount: 75, amountCAD: 75, currency: 'CAD', date: '2026-07-21', type: 'approved', method: 'cash', sourceAccountId: 'safe-bank', offsetAccountId: 'safe-revenue' });
+    seedRecord(db, 'pledges', 'orphan-pledge', { id: 'orphan-pledge', donorId: 'missing-donor', amount: 100, currency: 'CAD', date: '2026-07-21' });
+    const before = Number((db.database.prepare('SELECT COUNT(*) AS count FROM sync_records').get() as any).count);
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/system/data-safety', {}, { DB: db } as any);
+    expect(response.status).toBe(200);
+    const body: any = await response.json();
+    expect(body.totals.approved).toBe(75);
+    expect(body.issues.find((item: any) => item.code === 'pledge_missing_donor').count).toBe(1);
+    expect(body.counts.find((item: any) => item.type === 'transactions').active).toBe(1);
+    expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM sync_records').get() as any).count)).toBe(before);
+  });
+
   it('accepts a Sola key in online Settings without returning or syncing the secret', async () => {
     const db = new MockD1(); databases.push(db);
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
