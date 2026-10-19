@@ -64,6 +64,73 @@ describe('expense category hierarchy totals', () => {
   });
 });
 
+describe('tokenized donor payment methods', () => {
+  it('stores gateway tokens separately and returns masked card details only', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'card-donor', { id: 'card-donor', name: 'Card Donor' });
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'card-user'); c.set('userEmail', 'card@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+
+    const create = await app.request('/v3/donors/card-donor/payment-methods', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'save-card-1' },
+      body: JSON.stringify({ token: 'sola-token-123456789', last4: '4242', brand: 'Visa', expiryMonth: 12, expiryYear: 2030, cardholderName: 'Card Donor' }),
+    }, { DB: db } as any);
+    expect(create.status).toBe(201);
+    const created = await create.json() as any;
+    expect(created.item).toMatchObject({ donorId: 'card-donor', last4: '4242', brand: 'Visa', isDefault: true, priority: 1, status: 'active' });
+    expect(JSON.stringify(created)).not.toContain('sola-token-123456789');
+
+    const stored = JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='paymentMethods' AND id=?").get(created.item.id) as any).data));
+    expect(stored).not.toHaveProperty('token');
+    expect((db.database.prepare('SELECT value FROM server_secrets WHERE key=?').get(`PAYMENT_METHOD_TOKEN:${created.item.id}`) as any).value).toBe('sola-token-123456789');
+
+    const list = await app.request('/v3/donors/card-donor/payment-methods', {}, { DB: db } as any);
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ success: true, items: [{ id: created.item.id, last4: '4242', isDefault: true }] });
+
+    const retry = await app.request('/v3/donors/card-donor/payment-methods', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'save-card-1' },
+      body: JSON.stringify({ token: 'different-token-ignored', last4: '9999', brand: 'Visa', expiryMonth: 12, expiryYear: 2030 }),
+    }, { DB: db } as any);
+    expect(retry.status).toBe(200);
+    expect((await retry.json() as any).item.id).toBe(created.item.id);
+    expect(Number((db.database.prepare("SELECT COUNT(*) count FROM sync_records WHERE type='paymentMethods'").get() as any).count)).toBe(1);
+  });
+
+  it('changes the default card and safely deletes an unused card', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'card-donor', { id: 'card-donor', name: 'Card Donor' });
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'card-user'); c.set('userEmail', 'card@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const save = async (key: string, last4: string) => (await (await app.request('/v3/donors/card-donor/payment-methods', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+      body: JSON.stringify({ token: `sola-token-${last4}`, last4, brand: 'Visa', expiryMonth: 12, expiryYear: 2030 }),
+    }, { DB: db } as any)).json() as any).item;
+    const first = await save('save-first', '1111');
+    const second = await save('save-second', '2222');
+
+    const update = await app.request(`/v3/donors/card-donor/payment-methods/${second.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'default-second' },
+      body: JSON.stringify({ revision: second.revision, isDefault: true, priority: 1 }),
+    }, { DB: db } as any);
+    expect(update.status).toBe(200);
+    const defaults = db.database.prepare("SELECT data FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 ORDER BY id").all().map((row: any) => JSON.parse(String(row.data)));
+    expect(defaults.filter((item: any) => item.isDefault).map((item: any) => item.last4)).toEqual(['2222']);
+
+    const firstRevision = Number((db.database.prepare("SELECT revision FROM sync_records WHERE type='paymentMethods' AND id=?").get(first.id) as any).revision);
+    const remove = await app.request(`/v3/donors/card-donor/payment-methods/${first.id}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'delete-first' },
+      body: JSON.stringify({ revision: firstRevision }),
+    }, { DB: db } as any);
+    expect(remove.status).toBe(200);
+    expect((db.database.prepare("SELECT is_deleted FROM sync_records WHERE type='paymentMethods' AND id=?").get(first.id) as any).is_deleted).toBe(1);
+    expect(db.database.prepare('SELECT value FROM server_secrets WHERE key=?').get(`PAYMENT_METHOD_TOKEN:${first.id}`)).toBeUndefined();
+  });
+});
+
 describe('server-driven bank deposit matching', () => {
   it('atomically creates one batch, updates children and match history, and safely retries', async () => {
     const db = new MockD1(); databases.push(db);
