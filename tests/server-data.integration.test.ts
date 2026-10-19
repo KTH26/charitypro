@@ -367,6 +367,14 @@ describe('server-driven bank deposit matching', () => {
     const completedReminder: any = db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND json_extract(data,'$.linkedPaymentId')=?").get(created.item.id); expect(JSON.parse(completedReminder.data)).toMatchObject({ completed: true });
   });
 
+  it('retrieves an official USD rate and permanently records the selected rate provenance', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'donors','usd-donor',{id:'usd-donor',name:'USD Donor'});seedRecord(db,'accounts','usd-bank',{id:'usd-bank',name:'USD Bank',type:'asset',currency:'USD'});seedRecord(db,'accounts','usd-revenue',{id:'usd-revenue',name:'Donations',type:'revenue',currency:'CAD'});
+    vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({observations:[{d:'2026-07-17',FXUSDCAD:{v:'1.3725'}},{d:'2026-07-20',FXUSDCAD:{v:'1.3691'}}]}),{status:200,headers:{'Content-Type':'application/json'}}));
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
+    const quote=await app.request('/v3/exchange-rates/usd-cad?date=2026-07-20',{}, {DB:db} as any);const quoteBody:any=await quote.json();expect(quote.status).toBe(200);expect(quoteBody).toMatchObject({rate:1.3691,rateDate:'2026-07-20',source:'bank_of_canada',series:'FXUSDCAD'});
+    const payment=await app.request('/v3/payments',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'usd-agreed-payment'},body:JSON.stringify({requestId:'usd-agreed-payment',donorId:'usd-donor',amount:100,currency:'USD',exchangeRate:1.4,exchangeRateSource:'agreed',exchangeRateDate:'2026-07-20',method:'cash',date:'2026-07-20',sourceAccountId:'usd-bank',offsetAccountId:'usd-revenue'})},{DB:db} as any);const paymentBody:any=await payment.json();expect(payment.status).toBe(201);expect(paymentBody.item).toMatchObject({amount:100,amountCAD:140,exchangeRate:1.4,exchangeRateSource:'agreed',exchangeRateDate:'2026-07-20'});
+  });
+
   it('atomically splits one payment across multiple pledges and recalculates each balance', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'split-donor', { id: 'split-donor', name: 'Split Donor' });

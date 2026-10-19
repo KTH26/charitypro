@@ -28,6 +28,10 @@ export const OnlinePaymentForm: React.FC<{
   const [fundraisers, setFundraisers] = useState<Choice[]>([]);
   const [amount, setAmount] = useState(defaultAmount?String(defaultAmount):'');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
+  const [exchangeRate, setExchangeRate] = useState('');
+  const [exchangeRateSource, setExchangeRateSource] = useState<'bank_of_canada'|'agreed'>('bank_of_canada');
+  const [exchangeRateDate, setExchangeRateDate] = useState('');
+  const [loadingRate, setLoadingRate] = useState(false);
   const [method, setMethod] = useState('other');
   const [checkNumber, setCheckNumber] = useState('');
   const [availabilityDate, setAvailabilityDate] = useState(defaultDate||new Date().toISOString().slice(0, 10));
@@ -81,6 +85,7 @@ export const OnlinePaymentForm: React.FC<{
   }, [donor, donorQuery]);
 
   useEffect(()=>{setAllocations([]);},[donorId]);
+  useEffect(()=>{if(currency!=='USD'||exchangeRateSource!=='bank_of_canada')return;const controller=new AbortController();setLoadingRate(true);fetch(`/api/v3/exchange-rates/usd-cad?date=${encodeURIComponent(date)}`,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load the official USD/CAD rate.');setExchangeRate(String(data.rate));setExchangeRateDate(String(data.rateDate));}).catch(reason=>{if(reason.name!=='AbortError')setError(reason.message||'Unable to load the official USD/CAD rate. You can choose an agreed rate instead.');}).finally(()=>{if(!controller.signal.aborted)setLoadingRate(false);});return()=>controller.abort();},[currency,date,exchangeRateSource]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -90,6 +95,7 @@ export const OnlinePaymentForm: React.FC<{
       return;
     }
     if (method === 'check' && (!checkNumber.trim() || !availabilityDate || availabilityDate < date)) { setError('Enter the check number and an availability date on or after the received date.'); return; }
+    if(currency==='USD'&&(!Number.isFinite(Number(exchangeRate))||Number(exchangeRate)<=0)){setError('Enter or load a valid USD/CAD exchange rate.');return;}
     const parsedAmount = Number(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setError('Enter a payment amount greater than zero.');
@@ -105,7 +111,7 @@ export const OnlinePaymentForm: React.FC<{
       const response = await fetch('/api/v3/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, checkNumber, availabilityDate, type: status })
+        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, exchangeRate:currency==='USD'?Number(exchangeRate):undefined, exchangeRateSource:currency==='USD'?exchangeRateSource:undefined, exchangeRateDate:currency==='USD'?(exchangeRateDate||date):undefined, method, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, checkNumber, availabilityDate, type: status })
       });
       const responseText = await response.text();
       let data: any; try { data = JSON.parse(responseText); } catch { throw new Error(response.ok ? 'The server returned an unreadable response.' : `The payment server failed (${response.status}). Please try again.`); }
@@ -140,6 +146,7 @@ export const OnlinePaymentForm: React.FC<{
           </>}
           <label className="form-group" style={{ margin: 0 }}><span>Amount</span><input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={currency} onChange={e => setCurrency(e.target.value as 'CAD' | 'USD')}><option value="CAD">CAD</option><option value="USD">USD</option></select></label>
+          {currency==='USD'&&<><label className="form-group" style={{margin:0}}><span>Exchange-rate method</span><select value={exchangeRateSource} onChange={e=>setExchangeRateSource(e.target.value as 'bank_of_canada'|'agreed')}><option value="bank_of_canada">Official Bank of Canada daily rate</option><option value="agreed">Rate agreed with donor</option></select></label><label className="form-group" style={{margin:0}}><span>USD to CAD rate *</span><input type="number" min="0.0001" step="0.0001" readOnly={exchangeRateSource==='bank_of_canada'} value={exchangeRate} onChange={e=>setExchangeRate(e.target.value)} placeholder={loadingRate?'Loading official rate…':'1.3500'}/><small>{exchangeRateSource==='bank_of_canada'?(exchangeRateDate?`Official observation: ${exchangeRateDate}`:'Loading official rate…'):'Enter the rate agreed with this donor.'}</small></label><div style={{padding:12,borderRadius:10,background:'var(--bg-input)',fontWeight:700}}>Recorded value: CAD ${(Number(amount||0)*Number(exchangeRate||0)).toFixed(2)}</div></>}
           <label className="form-group" style={{ margin: 0 }}><span>Payment method</span><select value={method} onChange={e => setMethod(e.target.value)}>{methods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
           {method !== 'check' && <label className="form-group" style={{ margin: 0 }}><span>Paid into (asset)</span><select value={sourceAccountId} onChange={e => setSourceAccountId(e.target.value)}><option value="">Select receiving account</option>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>}

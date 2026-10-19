@@ -970,6 +970,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, settings, revisions, solaConfigured: Boolean(await getSolaKey(c)), balances: 'calculated-live' });
   });
 
+  app.get('/v3/exchange-rates/usd-cad', async (c: any) => {
+    const denied=requirePermission(c,'transactions.read');if(denied)return denied;const requested=String(c.req.query('date')||new Date().toISOString().slice(0,10));if(!isoDate(requested))return c.json({success:false,error:'Choose a valid rate date.'},400);
+    const end=new Date(`${requested}T00:00:00Z`);const start=new Date(end);start.setUTCDate(start.getUTCDate()-10);const startDate=start.toISOString().slice(0,10);
+    try{const response=await fetch(`https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=${startDate}&end_date=${requested}`);if(!response.ok)throw new Error(`Bank of Canada returned ${response.status}`);const payload:any=await response.json();const observations=Array.isArray(payload?.observations)?payload.observations:[];const latest=[...observations].reverse().find((item:any)=>Number.isFinite(Number(item?.FXUSDCAD?.v)));if(!latest)return c.json({success:false,error:'No official USD/CAD rate is available for this date yet.'},404);return c.json({success:true,rate:Number(latest.FXUSDCAD.v),rateDate:String(latest.d),requestedDate:requested,source:'bank_of_canada',series:'FXUSDCAD'});}catch(reason:any){return c.json({success:false,error:`Unable to retrieve the official USD/CAD rate: ${String(reason?.message||'service unavailable')}`},502);}
+  });
+
   app.put('/v3/settings/:key', async (c: any) => {
     const denied = requirePermission(c, 'system.manage');
     if (denied) return denied;
@@ -2498,14 +2504,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const allowedMethods = new Set(['credit_card', 'check', 'cash', 'e_transfer', 'vouchers', 'eizer', 'bnei_leivy', 'other']);
     if (!allowedMethods.has(method)) return c.json({ success: false, error: 'Invalid payment method.' }, 400);
     const currency = body.currency === 'USD' ? 'USD' : 'CAD';
-    const exchangeRow: any = refs.results.find((row: any) => row.type === 'exchangeRate');
-    const savedRate = exchangeRow ? Number(JSON.parse(String(exchangeRow.data))) : 1.35;
-    const exchangeRate = Number.isFinite(savedRate) && savedRate > 0 ? savedRate : 1.35;
-    const amountCAD = currency === 'USD' ? amount * exchangeRate : amount;
     const date = String(body.date || new Date().toISOString().slice(0, 10));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
-      return c.json({ success: false, error: 'A valid payment date is required.' }, 400);
-    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return c.json({ success: false, error: 'A valid payment date is required.' }, 400);
+    const exchangeRow: any = refs.results.find((row: any) => row.type === 'exchangeRate');
+    const savedRate = exchangeRow ? Number(JSON.parse(String(exchangeRow.data))) : 1.35;const submittedRate=Number(body.exchangeRate);
+    const exchangeRate = currency==='USD'&&Number.isFinite(submittedRate)&&submittedRate>0&&submittedRate<100?submittedRate:Number.isFinite(savedRate)&&savedRate>0?savedRate:1.35;
+    const exchangeRateSource=currency==='USD'?(body.exchangeRateSource==='agreed'?'agreed':body.exchangeRateSource==='bank_of_canada'?'bank_of_canada':'system_default'):undefined;const exchangeRateDate=currency==='USD'&&isoDate(String(body.exchangeRateDate||''))?String(body.exchangeRateDate):date;
+    const amountCAD = currency === 'USD' ? amount * exchangeRate : amount;
     const notes = String(body.notes || '').trim();
     if (notes.length > 2000) return c.json({ success: false, error: 'Notes must be 2,000 characters or fewer.' }, 400);
     const sponsor = String(body.sponsor || '').trim();
@@ -2517,7 +2522,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       id, donorId, amount, amountCAD,
       date,
       type: method === 'check' || body.type === 'pending' ? 'pending' : 'approved',
-      method, currency,
+      method, currency,...(currency==='USD'?{exchangeRate,exchangeRateSource,exchangeRateDate}:{}),
       sourceAccountId: undeposited ? 'sys-undeposited-funds' : sourceAccountId,
       offsetAccountId,
       depositStatus: undeposited ? 'undeposited' : 'direct',
