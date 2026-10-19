@@ -20,3 +20,7 @@ jobs:
             -X POST "${CHARITYPRO_URL%/}/api/v3/automation/daily-sola" \
             -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
             -H "Content-Type: application/json"
+          curl --fail-with-body --retry 3 --retry-all-errors \
+            -X POST "${CHARITYPRO_URL%/}/api/v3/automation/process-recurring" \
+            -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
+            -H "Content-Type: application/json"

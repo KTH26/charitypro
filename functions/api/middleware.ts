@@ -5,7 +5,7 @@ import type { Context, Next } from 'hono';
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 export const requireAuth = async (c: Context, next: Next) => {
-  if(c.req.path.endsWith('/v3/automation/daily-sola')){const configured=String((c.env as any).CRON_SECRET||'');const supplied=String(c.req.header('Authorization')||'').replace(/^Bearer\s+/i,'');if(configured&&supplied===configured){c.set('userId','system-daily-sola');c.set('userEmail','automation@charitypro.local');c.set('userRoles',['administrator']);await next();return;}return c.json({success:false,error:'Unauthorized automation request.'},401);}
+  if(/\/v3\/automation\/(daily-sola|process-recurring)$/.test(c.req.path)){const configured=String((c.env as any).CRON_SECRET||'');const supplied=String(c.req.header('Authorization')||'').replace(/^Bearer\s+/i,'');if(configured&&supplied===configured){c.set('userId','system-automation');c.set('userEmail','automation@charitypro.local');c.set('userRoles',['administrator']);await next();return;}return c.json({success:false,error:'Unauthorized automation request.'},401);}
   const jwt = c.req.header('Cf-Access-Jwt-Assertion');
   
   if (!jwt) {
