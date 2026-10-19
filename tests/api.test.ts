@@ -94,6 +94,9 @@ describe('Backend API & Security Rules', () => {
     expect(bankSource).toContain("usePlaidLink");
     expect(workerSource).toContain("access_token: accessToken");
     expect(workerSource).toContain("mode: accessToken ? 'reconnect'");
+    expect(workerSource).toContain("app.all('/sola/charge'");
+    expect(workerSource).toContain("app.all('/sola/recurring'");
+    expect(workerSource).toContain('This legacy card route is disabled');
     const pledgesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePledges.tsx'), 'utf8');
     const schedulesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineSchedules.tsx'), 'utf8');
     expect(pledgesSource).toContain('limit=50');

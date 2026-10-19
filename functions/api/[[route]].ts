@@ -260,7 +260,12 @@ app.post('/sola/report', async (c) => {
   }
 });
 
-// Sola Live Charge Proxy
+// Legacy browser-based gateway routes are permanently blocked. Production card
+// processing uses server-held keys and tokenized payment methods in server-data.
+app.all('/sola/charge', (c) => c.json({ success: false, error: 'This legacy card route is disabled. Use the secure saved-card payment workflow.' }, 410));
+app.all('/sola/recurring', (c) => c.json({ success: false, error: 'This legacy recurring route is disabled. Use the secure recurring-payment workflow.' }, 410));
+
+// Sola Live Charge Proxy (unreachable compatibility reference)
 app.post('/sola/charge', async (c) => {
   try {
     const { apiKey, amount, cardNum, exp, cvv, name } = await c.req.json();
