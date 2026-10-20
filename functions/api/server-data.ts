@@ -1521,7 +1521,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       AND json_extract(t.data,'$.method')='credit_card'
       AND COALESCE(json_extract(t.data,'$.donorId'),'')<>''
       AND COALESCE(json_extract(t.data,'$.pledgeId'),'')=''
+      AND COALESCE(json_extract(t.data,'$.pledgeAllocations'),'[]')='[]'
       AND (COALESCE(json_extract(t.data,'$.solaBatchId'),'')<>''
+        OR COALESCE(json_extract(t.data,'$.solaRef'),'')<>''
         OR lower(COALESCE(json_extract(t.data,'$.notes'),'')) LIKE '%sola%')`;
     const [rows, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name

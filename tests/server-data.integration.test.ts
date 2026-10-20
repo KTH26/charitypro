@@ -820,6 +820,11 @@ describe('server-driven bank deposit matching', () => {
     expect(refreshed.sola).toEqual([]);
   });
 
+  it('lists only approved Sola payments that still need pledge allocation', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'donors','allocation-donor',{id:'allocation-donor',name:'Allocation Donor'});seedRecord(db,'transactions','unallocated-sola',{id:'unallocated-sola',donorId:'allocation-donor',amount:40,currency:'CAD',date:'2026-07-20',type:'approved',method:'credit_card',solaRef:'ref-unallocated'});seedRecord(db,'transactions','single-allocated-sola',{id:'single-allocated-sola',donorId:'allocation-donor',amount:50,currency:'CAD',date:'2026-07-20',type:'approved',method:'credit_card',solaRef:'ref-single',pledgeId:'pledge-one'});seedRecord(db,'transactions','split-allocated-sola',{id:'split-allocated-sola',donorId:'allocation-donor',amount:60,currency:'CAD',date:'2026-07-20',type:'approved',method:'credit_card',solaRef:'ref-split',pledgeAllocations:[{pledgeId:'pledge-one',amount:30},{pledgeId:'pledge-two',amount:30}]});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);const response=await app.request('/v3/sola/unassigned?limit=50',{},{DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(body.total).toBe(1);expect(body.items[0]).toMatchObject({id:'unallocated-sola',donorName:'Allocation Donor',solaRef:'ref-unallocated'});
+  });
+
   it('materializes a due schedule once as pending verification without approving it', async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-25T12:00:00Z'));
     const db = new MockD1(); databases.push(db);
