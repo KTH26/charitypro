@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Pause, Play, Star, Trash2 } from 'lucide-react';
+import { CreditCard, Pause, Play, Plus, Star, Trash2 } from 'lucide-react';
+import { SolaCardCapture } from './SolaCardCapture';
 
 type PaymentMethod = {
   id: string;
@@ -19,6 +20,7 @@ export const CloudPaymentMethods: React.FC<{ donorId: string }> = ({ donorId }) 
   const [loading, setLoading] = useState(true);
   const [workingId, setWorkingId] = useState('');
   const [error, setError] = useState('');
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -71,8 +73,9 @@ export const CloudPaymentMethods: React.FC<{ donorId: string }> = ({ donorId }) 
 
   if (loading) return <div style={{ padding: 30, textAlign: 'center' }}>Loading saved cards...</div>;
   return <div>
-    <div style={{ marginBottom: 14, color: 'var(--text-muted)', fontSize: 13 }}>Only masked card details are shown. Private gateway tokens never appear on this screen.</div>
+    <div style={{ marginBottom: 14, display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}><span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Only masked card details are shown. Private gateway tokens never appear on this screen.</span><button type="button" className="btn btn-primary btn-sm" onClick={()=>setAdding(true)}><Plus size={15}/> Add Card</button></div>
     {error ? <div role="alert" style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div> : null}
+    {adding ? <SolaCardCapture donorId={donorId} onCancel={()=>setAdding(false)} onSaved={()=>{setAdding(false);void load();}} /> : null}
     <div style={{ display: 'grid', gap: 12 }}>{items.map(item => {
       const busy = workingId === item.id;
       return <div key={item.id} style={{ padding: 16, border: `1px solid ${item.isDefault ? 'var(--navy-light)' : 'var(--border)'}`, borderRadius: 12, background: 'var(--bg-input)', display: 'flex', alignItems: 'center', gap: 14 }}>

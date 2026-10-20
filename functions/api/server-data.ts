@@ -966,6 +966,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const value = row ? parseSetting(row.data,'') : '';
     return typeof value === 'string' ? value.trim() : String(value?.apiKey || value?.key || '').trim();
   };
+  const getSolaIFieldsKey = async (c: any) => {
+    if (c.env.SOLA_IFIELDS_KEY) return String(c.env.SOLA_IFIELDS_KEY).trim();
+    try {
+      const key: any = await c.env.DB.prepare("SELECT value FROM server_secrets WHERE key='SOLA_IFIELDS_KEY' LIMIT 1").first();
+      return String(key?.value || '').trim();
+    } catch { return ''; }
+  };
   const syncSolaRange=async(c:any,startDate:string,endDate:string,trigger:'manual'|'daily')=>{
     const key=await getSolaKey(c);if(!key)throw Object.assign(new Error('Sola is not configured on the server.'),{status:409});const cursor=new Date(`${startDate}T00:00:00Z`);const finish=new Date(`${endDate}T00:00:00Z`);const recordsByRef=new Map<string,any>();const days:any[]=[];let complete=true;
     for(;cursor<=finish;cursor.setUTCDate(cursor.getUTCDate()+1)){const day=cursor.toISOString().slice(0,10);const response=await fetch('https://x1.cardknox.com/reportjson',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xKey:key,xVersion:'5.0.0',xSoftwareName:'CharityApp',xSoftwareVersion:'1.0',xCommand:'report:all',xBeginDate:`${day} 00:00:00`,xEndDate:`${day} 23:59:59`,xmaxrecords:1000,xgetnewest:false})});if(!response.ok)throw new Error(`Sola report request failed for ${day} (${response.status}).`);const payload:any=await response.json();if(payload.xResult==='E')throw new Error(`${day}: ${String(payload.xError||'Sola returned an error.')}`);const raw=Array.isArray(payload.ReportData)?payload.ReportData:Array.isArray(payload.xReportData)?payload.xReportData:[];const parsed=raw.map((item:any)=>({ref:String(item.RefNum||item.xRefNum||'').trim(),name:String(item.Name||item.xName||'Unknown').slice(0,300),date:normalizeExternalDate(item.Date||item.xEnteredDate),amount:Number(item.Amount||item.xAmount||0),status:String(item.Status||item.xResponseResult||'Unknown').slice(0,50),last4:String(item.Last4||(item.xMaskedCardNumber||'').slice(-4)||'****').slice(-4),cardType:String(item.CardType||'Credit').slice(0,50),batch:String(item.Batch||item.xBatch||'').slice(0,100)})).filter((item:any)=>item.ref&&item.date&&Number.isFinite(item.amount));for(const record of parsed)recordsByRef.set(record.ref,record);const returned=Number(payload.xRecordsReturned??parsed.length);const maximum=Number(payload.xReportingMaxTransactions??1000);const dayComplete=returned<maximum&&returned<1000;if(!dayComplete)complete=false;days.push({date:day,count:parsed.length,recordsReturned:returned,reportingMaximum:maximum,complete:dayComplete});}
@@ -1018,7 +1025,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const result = await c.env.DB.prepare("SELECT type,id,data,revision,updated_at FROM sync_records WHERE type IN ('isRtl','currency','exchangeRate','donorSortBy','googleSheetSyncUrl') AND is_deleted=0 ORDER BY updated_at DESC").all();
     const settings = { ...settingDefaults }; const revisions: Record<string, number> = {};
     for (const row of result.results as any[]) if (revisions[row.type] === undefined) { settings[row.type] = parseSetting(row.data, settingDefaults[row.type]); revisions[row.type] = Number(row.revision); }
-    return c.json({ success: true, settings, revisions, solaConfigured: Boolean(await getSolaKey(c)), balances: 'calculated-live' });
+    return c.json({ success: true, settings, revisions, solaConfigured: Boolean(await getSolaKey(c)), solaIFieldsConfigured: Boolean(await getSolaIFieldsKey(c)), balances: 'calculated-live' });
+  });
+
+  app.get('/v3/payment-gateway/client-config', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const ifieldsKey = await getSolaIFieldsKey(c);
+    return c.json({ success: true, configured: Boolean(ifieldsKey && await getSolaKey(c)), ifieldsKey, ifieldsVersion: '3.5.2607.1401', softwareName: 'CharityPro', softwareVersion: '1.0' });
   });
 
   app.get('/v3/exchange-rates/usd-cad', async (c: any) => {
@@ -1229,6 +1242,28 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       ]);
       return c.json(response);
     } catch (reason: any) { return c.json({ success: false, error: `Unable to save the Sola key securely: ${reason.message || 'database error'}` }, 500); }
+  });
+
+  app.put('/v3/sola/ifields-configuration', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage'); if (denied) return denied;
+    const body = await c.req.json(); const ifieldsKey = String(body.ifieldsKey || '').trim();
+    if (!/^[A-Za-z0-9_-]{8,250}$/.test(ifieldsKey)) return c.json({ success: false, error: 'Enter a valid Sola iFields public key.' }, 400);
+    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-sola-ifields-configuration-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const now = Date.now(); const response = { success: true, configured: true };
+    const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    try {
+      await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
+      await c.env.DB.batch([
+        c.env.DB.prepare("INSERT INTO server_secrets(key,value,updated_at) VALUES('SOLA_IFIELDS_KEY',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(ifieldsKey, now),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES('SOLA_IFIELDS_KEY','serverSecret','update',NULL,NULL,NULL,?,?,?,?,?,?,?)").bind(JSON.stringify({ configured: true, publicClientKey: '[CONFIGURED]' }), userId, userEmail, now, mutationId, `${mutationId}-save`, 'Sola iFields public key configured through secure online settings'),
+        c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+      ]);
+      return c.json(response);
+    } catch (reason: any) { return c.json({ success: false, error: `Unable to save the Sola iFields key: ${reason.message || 'database error'}` }, 500); }
   });
 
   app.post('/v3/sola/sync', async (c: any) => {
@@ -1701,6 +1736,38 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   });
 
   app.get('/v3/donors/:id/payment-methods',async(c:any)=>{const denied=requirePermission(c,'transactions.read');if(denied)return denied;const donorId=String(c.req.param('id')||'');const donor:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();if(!donor)return c.json({success:false,error:'Donor not found.'},404);const rows=await c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY COALESCE(json_extract(data,'$.priority'),999),id").bind(donorId).all();return c.json({success:true,items:rows.results.map(parseRecord)});});
+
+  app.post('/v3/donors/:id/payment-methods/tokenize', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const donorId = String(c.req.param('id') || ''); const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-payment-method-tokenize-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)), 201);
+    const cardNumberToken = String(body.cardNumberToken || '').trim(); const cvvToken = String(body.cvvToken || '').trim();
+    const expiryMonth = Number(body.expiryMonth); const expiryYear = Number(body.expiryYear); const currentYear = new Date().getUTCFullYear();
+    if (cardNumberToken.length < 20 || cardNumberToken.length > 1000 || cvvToken.length < 10 || cvvToken.length > 1000 || !Number.isInteger(expiryMonth) || expiryMonth < 1 || expiryMonth > 12 || !Number.isInteger(expiryYear) || expiryYear < currentYear || expiryYear > currentYear + 25) return c.json({ success: false, error: 'Secure card fields and a valid expiration date are required.' }, 400);
+    const donor: any = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();
+    if (!donor) return c.json({ success: false, error: 'Donor not found.' }, 404);
+    const key = await getSolaKey(c); if (!key || !await getSolaIFieldsKey(c)) return c.json({ success: false, error: 'Complete both Sola API key and iFields key setup in Settings first.' }, 409);
+    let gateway: any;
+    try {
+      const response = await fetch('https://x1.cardknox.com/gatewayjson', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ xKey: key, xVersion: '5.0.0', xSoftwareName: 'CharityPro', xSoftwareVersion: '1.0', xCommand: 'cc:save', xCardNum: cardNumberToken, xCVV: cvvToken, xExp: `${String(expiryMonth).padStart(2, '0')}${String(expiryYear).slice(-2)}`, xName: String(body.cardholderName || parseSetting(donor.data, {}).name || '').slice(0, 200), xInvoice: requestId }) });
+      gateway = await response.json(); if (!response.ok) throw new Error(`Sola returned ${response.status}.`);
+    } catch (reason: any) { return c.json({ success: false, error: `Sola could not securely save this card: ${reason.message || 'network error'}` }, 502); }
+    if (String(gateway.xResult || '').toUpperCase() !== 'A' || !String(gateway.xToken || '').trim()) return c.json({ success: false, error: String(gateway.xError || gateway.xErrorMessage || 'Sola did not approve this card for secure storage.') }, 402);
+    const token = String(gateway.xToken).trim(); const masked = String(gateway.xMaskedCardNumber || gateway.xMaskedCardNum || ''); const last4 = masked.replace(/\D/g, '').slice(-4);
+    if (!/^\d{4}$/.test(last4)) return c.json({ success: false, error: 'Sola saved the card but did not return safe masked details. Contact support before retrying.' }, 502);
+    const existing = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY COALESCE(json_extract(data,'$.priority'),999),id").bind(donorId).all();
+    const id = crypto.randomUUID(); const now = Date.now(); const priority = (existing.results as any[]).reduce((maximum,row)=>Math.max(maximum,Number(parseSetting(row.data,{}).priority||0)),0)+1; const isDefault = Boolean(body.isDefault) || existing.results.length === 0;
+    const record = { id, donorId, kind: 'card', brand: String(gateway.xCardType || body.brand || 'Card').slice(0, 50), last4, expiryMonth, expiryYear, cardholderName: String(body.cardholderName || '').trim().slice(0, 200), priority, isDefault, status: 'active', tokenProvider: 'sola-ifields', createdAt: new Date(now).toISOString() };
+    const data = JSON.stringify(record); const operationId = `${mutationId}-method`; const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown'); const result = { success: true, item: { ...record, revision: 1, updatedAt: now } };
+    const statements: any[] = [c.env.DB.prepare('CREATE TABLE IF NOT EXISTS server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)'), c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentMethods',?,?,1,0,?)").bind(id,data,now,operationId), c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentMethods',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId), c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentMethods','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,userId,userEmail,now,mutationId,operationId,'Tokenized new card through Sola iFields'), c.env.DB.prepare('INSERT INTO server_secrets(key,value,updated_at) VALUES(?,?,?)').bind(`PAYMENT_METHOD_TOKEN:${id}`,token,now)];
+    if (isDefault) for (const row of existing.results as any[]) { const old = parseSetting(row.data,{}); if (!old.isDefault) continue; const nextData=JSON.stringify({...old,isDefault:false}); statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=revision+1,updated_at=? WHERE type='paymentMethods' AND id=? AND revision=?").bind(nextData,now,row.id,row.revision)); }
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now));
+    try { await c.env.DB.batch(statements); return c.json(result,201); } catch (reason: any) { return c.json({ success: false, error: `Unable to save the tokenized card: ${reason.message || 'database conflict'}` },409); }
+  });
 
   app.post('/v3/donors/:donorId/charge-saved-card', async (c: any) => {
     const denied = requirePermission(c, 'transactions.create'); if (denied) return denied;

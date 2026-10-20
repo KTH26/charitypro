@@ -65,6 +65,22 @@ describe('expense category hierarchy totals', () => {
 });
 
 describe('tokenized donor payment methods', () => {
+  it('turns iFields single-use tokens into a reusable Sola token without storing card data', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'ifields-donor', { id: 'ifields-donor', name: 'Secure Donor' });
+    db.database.exec('CREATE TABLE server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)');
+    db.database.prepare("INSERT INTO server_secrets(key,value,updated_at) VALUES('SOLA_API_KEY','server-key',1),('SOLA_IFIELDS_KEY','public-ifields-key',1)").run();
+    const gateway = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ xResult: 'A', xToken: 'reusable-token-4242', xMaskedCardNumber: '4xxxxxxxxxxx4242', xCardType: 'Visa' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'card-user'); c.set('userEmail', 'card@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/donors/ifields-donor/payment-methods/tokenize', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'tokenize-card-1' }, body: JSON.stringify({ cardNumberToken: 'single-use-card-token-which-is-long', cvvToken: 'single-use-cvv-token', expiryMonth: 12, expiryYear: 2030, cardholderName: 'Secure Donor' }) }, { DB: db } as any);
+    expect(response.status).toBe(201); const body: any = await response.json(); expect(body.item).toMatchObject({ donorId: 'ifields-donor', brand: 'Visa', last4: '4242', tokenProvider: 'sola-ifields' });
+    const sent = JSON.parse(String((gateway.mock.calls[0][1] as RequestInit).body)); expect(sent).toMatchObject({ xCommand: 'cc:save', xCardNum: 'single-use-card-token-which-is-long', xCVV: 'single-use-cvv-token', xExp: '1230' });
+    const publicRecord = String((db.database.prepare("SELECT data FROM sync_records WHERE type='paymentMethods'").get() as any).data); expect(publicRecord).not.toContain('single-use'); expect(publicRecord).not.toContain('reusable-token');
+    const secret = db.database.prepare("SELECT value FROM server_secrets WHERE key LIKE 'PAYMENT_METHOD_TOKEN:%'").get() as any; expect(secret.value).toBe('reusable-token-4242');
+    const retry = await app.request('/v3/donors/ifields-donor/payment-methods/tokenize', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'tokenize-card-1' }, body: JSON.stringify({ cardNumberToken: 'another-single-use-card-token', cvvToken: 'another-cvv-token-value', expiryMonth: 1, expiryYear: 2031 }) }, { DB: db } as any);
+    expect(retry.status).toBe(201); expect((await retry.json() as any).item.id).toBe(body.item.id); expect(gateway).toHaveBeenCalledTimes(1);
+  });
+
   it('stores gateway tokens separately and returns masked card details only', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'card-donor', { id: 'card-donor', name: 'Card Donor' });
