@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   BarChart3, Building, Calendar, CalendarClock, CheckSquare, FileText,
   HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Printer,
-  Settings, Store, Users, Wallet
+  Settings, ShieldCheck, Store, Users, Wallet
 } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
 
@@ -44,6 +44,7 @@ const categories: NavCategory[] = [
   ] },
   { label: 'SYSTEM', items: [
     { path: '/tasks', label: 'Tasks', icon: CheckSquare, ready: true },
+    { path: '/audit-history', label: 'Audit History', icon: ShieldCheck, ready: true },
     { path: '/settings', label: 'Settings', icon: Settings, ready: true }
   ] }
 ];

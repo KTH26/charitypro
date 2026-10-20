@@ -572,6 +572,10 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200); expect(body.total).toBe(1); expect(body.limit).toBe(50); expect(body.items[0]).toMatchObject({ id: 'task-high', donorName: 'Task Donor', priority: 'high' }); expect(body.summary).toEqual({ total: 2, pending: 1, high: 1, overdue: 1, dueToday: 0 });
   });
 
+  it('loads a bounded read-only cloud audit history with filters', async () => {
+    const db=new MockD1();databases.push(db);const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','audit-user');c.set('userEmail','audit@example.com');await next();});registerServerDataRoutes(app as any);const created=await app.request('/v3/records/accounts',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'audit-account-create'},body:JSON.stringify({data:{id:'audit-account',name:'Audit Account',type:'asset',currency:'CAD'}})},{DB:db} as any);expect(created.status).toBe(201);const response=await app.request('/v3/audit-history?recordType=accounts&action=insert&search=audit%20account&limit=50',{}, {DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(body.total).toBe(1);expect(body.items[0]).toMatchObject({recordId:'audit-account',recordType:'accounts',action:'insert',changedByEmail:'audit@example.com'});expect(body.types.some((item:any)=>item.type==='accounts')).toBe(true);
+  });
+
   it('creates, edits, lists, and deletes sponsorship days with donor revisions', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'calendar-donor', { id: 'calendar-donor', name: 'Calendar Donor', sponsorshipDays: [] }, 2);
