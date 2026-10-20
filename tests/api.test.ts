@@ -128,6 +128,13 @@ describe('Backend API & Security Rules', () => {
     expect(true).toBe(true);
   });
 
+  it('does not silently grant administrator access to every authenticated email', () => {
+    const middleware = readFileSync(join(process.cwd(), 'functions', 'api', 'middleware.ts'), 'utf8');
+    expect(middleware).toContain('CF_ACCESS_ADMIN_EMAILS');
+    expect(middleware).toContain('has not been granted CharityPro access');
+    expect(middleware).not.toContain("roleList.push('administrator')");
+  });
+
   describe('RBAC (Role Based Access Control)', () => {
     it('Requires donor_staff to ONLY update donors, not delete', () => {
       expect(hasPermission(['donor_staff'], 'donors.update')).toBe(true);

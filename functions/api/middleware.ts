@@ -50,7 +50,9 @@ export const requireAuth = async (c: Context, next: Next) => {
       let user = await db.prepare('SELECT id, status FROM users WHERE email = ?').bind(email).first();
       
       if (!user) {
-        // Auto-provision user if they pass Cloudflare Access
+        const bootstrapAdmins = String((c.env as any).CF_ACCESS_ADMIN_EMAILS || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+        if (!bootstrapAdmins.includes(email)) return c.json({ success: false, error: 'Forbidden: Your email is authenticated but has not been granted CharityPro access.' }, 403);
+        // Explicitly allowlisted administrators may bootstrap their database user.
         const newId = 'usr_' + Date.now();
         await db.prepare('INSERT INTO users (id, email, display_name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
           .bind(newId, email, 'Auto Admin', 'active', Date.now(), Date.now()).run();
@@ -65,10 +67,8 @@ export const requireAuth = async (c: Context, next: Next) => {
       
       const roles = await db.prepare('SELECT role FROM user_roles WHERE user_id = ?').bind(user.id).all();
       c.set('userId', user.id);
-      // Ensure they have administrator role if they passed Cloudflare Access
       const roleList = roles.results?.map((r: any) => r.role) || [];
-      if (!roleList.includes('administrator')) roleList.push('administrator');
-      
+      if (!roleList.length) return c.json({ success: false, error: 'Forbidden: No CharityPro role is assigned to this user.' }, 403);
       c.set('userRoles', roleList);
     }
 
