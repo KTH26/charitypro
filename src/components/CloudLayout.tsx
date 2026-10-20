@@ -61,7 +61,7 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       <button className="navigation-scrim" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />
       <aside className="sidebar" aria-label="Main navigation">
         <div className="sidebar-logo">
-          <img className="sidebar-brand-logo" src="/hatzolah-tosh-logo.png" alt="Hatzolah Tosh" />
+          <img className="sidebar-brand-logo" src="/charitypro-accounting-logo.png" alt="Hatzolah Tosh CharityPro" />
           <div><div className="sidebar-logo-text">Hatzolah Tosh</div><div className="sidebar-logo-sub">CharityPro</div></div>
           <button className="sidebar-close" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)}><X size={20} /></button>
         </div>
@@ -87,7 +87,7 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       </aside>
       <main className="main-content">
         <header className="topbar">
-          <div className="topbar-brand"><button className="menu-button" type="button" aria-label="Open navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><Menu size={22} /></button><img src="/hatzolah-tosh-logo.png" alt="" /><div><span className="topbar-eyebrow">Hatzolah Tosh</span><h1>{pageLabel}</h1></div></div>
+          <div className="topbar-brand"><button className="menu-button" type="button" aria-label="Open navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><Menu size={22} /></button><img src="/charitypro-accounting-logo.png" alt="" /><div><span className="topbar-eyebrow">Hatzolah Tosh</span><h1>{pageLabel}</h1></div></div>
           <div className="topbar-actions"><ReminderBell/><div className="cloud-status"><span />Cloud live</div></div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>
