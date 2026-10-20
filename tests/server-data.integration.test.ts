@@ -737,6 +737,30 @@ describe('server-driven bank deposit matching', () => {
     const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);const response=await app.request('/v3/sola/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startDate:'2026-07-01',endDate:'2026-07-03'})},{DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(calls).toEqual(['2026-07-01 00:00:00','2026-07-02 00:00:00','2026-07-03 00:00:00']);expect(body.sync).toMatchObject({count:3,daysRequested:3,complete:true,trigger:'manual'});expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='solaTransactions' AND is_deleted=0").get().count).toBe(3);
   });
 
+  it('reconciles the daily Sola report using saved donor mappings without duplicates', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-10T12:00:00Z'));
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');
+    seedRecord(db,'donors','daily-donor',{id:'daily-donor',name:'Daily Donor'});
+    seedRecord(db,'solaDonorMappings','sola-map-daily',{solaName:'Daily Donor',donorId:'daily-donor'});
+    seedRecord(db,'paymentExpectations','daily-expectation',{id:'daily-expectation',donorId:'daily-donor',amount:50,currency:'CAD',expectedDate:'2026-07-05',status:'due',pendingTransactionId:'daily-pending'});
+    seedRecord(db,'transactions','daily-pending',{id:'daily-pending',donorId:'daily-donor',amount:50,amountCAD:50,currency:'CAD',method:'credit_card',date:'2026-07-05',type:'pending',expectationId:'daily-expectation'});
+    vi.spyOn(globalThis,'fetch').mockImplementation(async(_input,init)=>{const request=JSON.parse(String(init?.body||'{}'));const day=String(request.xBeginDate).slice(0,10);const rows=day==='2026-07-06'?[{RefNum:'daily-match-ref',Name:'Daily Donor',Date:'2026-07-06',Amount:'50',Status:'Approved'}]:day==='2026-07-07'?[{RefNum:'daily-import-ref',Name:'Daily Donor',Date:'2026-07-07',Amount:'25',Status:'Approved'}]:[];return new Response(JSON.stringify({ReportData:rows,xRecordsReturned:rows.length,xReportingMaxTransactions:1000}),{status:200,headers:{'Content-Type':'application/json'}});});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);
+    const first=await app.request('/v3/automation/daily-sola',{method:'POST'},{DB:db} as any);const firstBody:any=await first.json();expect(first.status).toBe(200);expect(firstBody.reconciliation).toMatchObject({approvedFound:2,matched:1,imported:1,unmapped:0,ambiguous:0});
+    const matched:any=db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='daily-pending'").get();expect(JSON.parse(matched.data)).toMatchObject({type:'approved',solaRef:'daily-match-ref',scheduledDate:'2026-07-05',date:'2026-07-06'});
+    const expectation:any=db.database.prepare("SELECT data FROM sync_records WHERE type='paymentExpectations' AND id='daily-expectation'").get();expect(JSON.parse(expectation.data)).toMatchObject({status:'fulfilled',solaRef:'daily-match-ref',paymentId:'daily-pending'});
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.solaRef')='daily-import-ref'").get().count).toBe(1);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='processedSolaRefs'").get().count).toBe(2);
+    const second=await app.request('/v3/automation/daily-sola',{method:'POST'},{DB:db} as any);const secondBody:any=await second.json();expect(secondBody.reconciliation).toMatchObject({approvedFound:0,matched:0,imported:0});expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions'").get().count).toBe(2);
+  });
+
+  it('moves overdue unmatched Sola expectations to declined follow-up only after a complete report', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-10T12:00:00Z'));
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');seedRecord(db,'donors','missed-donor',{id:'missed-donor',name:'Missed Donor'});seedRecord(db,'paymentExpectations','missed-expectation',{id:'missed-expectation',donorId:'missed-donor',amount:80,currency:'CAD',expectedDate:'2026-07-05',status:'due',pendingTransactionId:'missed-pending',scheduleId:'missed-schedule'});seedRecord(db,'transactions','missed-pending',{id:'missed-pending',donorId:'missed-donor',amount:80,currency:'CAD',method:'credit_card',date:'2026-07-05',type:'pending',expectationId:'missed-expectation'});
+    vi.spyOn(globalThis,'fetch').mockImplementation(async()=>new Response(JSON.stringify({ReportData:[],xRecordsReturned:0,xReportingMaxTransactions:1000}),{status:200,headers:{'Content-Type':'application/json'}}));const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/automation/daily-sola',{method:'POST'},{DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(body.reconciliation.declined).toBe(1);expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='missed-pending'").get() as any).data)).toMatchObject({type:'declined'});expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='tasks' AND id='declined-sola-missed-expectation'").get().count).toBe(1);
+  });
+
   it('matches a saved Sola charge to an online transaction exactly once', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'solaTransactions', 'sola-ref-1', { ref: 'sola-ref-1', name: 'Jane Donor', date: '2026-07-27', amount: 50, status: 'Approved', last4: '1234', batch: 'batch-1' });
