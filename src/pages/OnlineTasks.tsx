@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckSquare, CreditCard, Mail, Phone, Plus, Trash2, Users, X } from 'lucide-react';
 
-type Task = { id: string; revision: number; donorId?: string; donorName?: string; title: string; notes?: string; dueDate: string; priority: 'low' | 'medium' | 'high'; type: 'call' | 'email' | 'meeting' | 'payment' | 'other'; completed: boolean };
+type Task = { id: string; revision: number; donorId?: string; donorName?: string; title: string; notes?: string; dueDate: string; priority: 'low' | 'medium' | 'high'; type: 'call' | 'email' | 'meeting' | 'payment' | 'follow_up' | 'declined_payment' | 'other'; completed: boolean };
 type Donor = { id: string; name: string };
 type TaskForm = Pick<Task, 'title' | 'dueDate' | 'priority' | 'type' | 'completed'> & { donorId: string; notes: string };
-const types = [{ value: 'call', label: 'Phone Call', icon: <Phone size={14} /> },{ value: 'email', label: 'Email', icon: <Mail size={14} /> },{ value: 'meeting', label: 'Meeting', icon: <Users size={14} /> },{ value: 'payment', label: 'Payment', icon: <CreditCard size={14} /> },{ value: 'other', label: 'Other', icon: <CheckSquare size={14} /> }];
+const types = [{ value: 'call', label: 'Phone Call', icon: <Phone size={14} /> },{ value: 'email', label: 'Email', icon: <Mail size={14} /> },{ value: 'meeting', label: 'Meeting', icon: <Users size={14} /> },{ value: 'payment', label: 'Payment', icon: <CreditCard size={14} /> },{value:'follow_up',label:'Follow-up',icon:<AlertCircle size={14}/>},{value:'declined_payment',label:'Declined Payment',icon:<CreditCard size={14}/>},{ value: 'other', label: 'Other', icon: <CheckSquare size={14} /> }];
 const colors: Record<string,string> = { high: 'var(--red)', medium: 'var(--yellow)', low: 'var(--green)' };
 const blank = (): TaskForm => ({ donorId: '', title: '', notes: '', dueDate: '', priority: 'medium', type: 'call', completed: false });
 

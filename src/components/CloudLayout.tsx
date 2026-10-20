@@ -5,6 +5,7 @@ import {
   HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Printer,
   Settings, Store, Users, Wallet
 } from 'lucide-react';
+import { ReminderBell } from './ReminderBell';
 
 type NavItem = { path: string; label: string; icon: React.ElementType; ready?: boolean };
 type NavCategory = { label: string; items: NavItem[] };
@@ -82,7 +83,7 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       <main className="main-content">
         <header className="topbar">
           <div className="topbar-brand"><img src="/hatzolah-tosh-logo.png" alt="" /><h1 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>{pageLabel}</h1></div>
-          <div style={{ padding: '8px 16px', fontSize: '0.85rem', fontWeight: 800, color: 'var(--green)', background: 'var(--green-bg)', borderRadius: 999, border: '1px solid rgba(5,150,105,0.2)' }}>● CLOUD ONLY</div>
+          <div style={{display:'flex',alignItems:'center',gap:12}}><ReminderBell/><div style={{ padding: '8px 16px', fontSize: '0.85rem', fontWeight: 800, color: 'var(--green)', background: 'var(--green-bg)', borderRadius: 999, border: '1px solid rgba(5,150,105,0.2)' }}>● CLOUD ONLY</div></div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>
       </main>
