@@ -19,7 +19,10 @@ export const CloudDataSafetyPanel: React.FC = () => {
     setLoading(true); setError('');
     try {
       const response = await fetch('/api/v3/system/data-safety');
-      const data = await response.json();
+      const text = await response.text();
+      let data: any;
+      try { data = JSON.parse(text); }
+      catch { throw new Error(`Safety review failed (${response.status}). The server did not return a valid report.`); }
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to run the data safety review.');
       setReport(data);
     } catch (reason: any) { setError(reason.message || 'Unable to run the data safety review.'); }
