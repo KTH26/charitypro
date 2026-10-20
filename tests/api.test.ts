@@ -97,6 +97,8 @@ describe('Backend API & Security Rules', () => {
     expect(workerSource).toContain("app.all('/sola/charge'");
     expect(workerSource).toContain("app.all('/sola/recurring'");
     expect(workerSource).toContain('This legacy card route is disabled');
+    expect(workerSource).toContain("app.use('/debug/*'");
+    expect(workerSource).toContain("ENABLE_DEBUG_ENDPOINTS!=='true'");
     const pledgesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePledges.tsx'), 'utf8');
     const schedulesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineSchedules.tsx'), 'utf8');
     expect(pledgesSource).toContain('limit=50');

@@ -6,9 +6,10 @@ import { validatePayload } from './validation';
 import { isOperationAlreadyApplied } from './idempotency';
 import { registerServerDataRoutes } from './server-data';
 
-const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string, CRON_SECRET?: string, SOLA_API_KEY?: string } }>().basePath('/api')
+const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string, ENABLE_DEBUG_ENDPOINTS?: string, CRON_SECRET?: string, SOLA_API_KEY?: string } }>().basePath('/api')
 
 app.use('*', requireAuth);
+app.use('/debug/*',async(c,next)=>{if(c.env.ENABLE_DEBUG_ENDPOINTS!=='true')return c.json({success:false,error:'Not found.'},404);if(!hasPermission((c.get('userRoles')||[]) as string[],'system.manage'))return c.json({success:false,error:'Forbidden.'},403);await next();});
 
 const goneHandler = (c: any) => c.json({ error: 'Endpoint deprecated and removed.' }, 410);
 
