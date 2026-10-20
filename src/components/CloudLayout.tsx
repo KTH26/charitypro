@@ -55,8 +55,8 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
     <div className="app-container">
       <aside className="sidebar" style={{ padding: '24px 0', overflowY: 'auto' }}>
         <div className="sidebar-logo" style={{ padding: '0 24px 20px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
-          <div className="sidebar-logo-icon">❤</div>
-          <div><div className="sidebar-logo-text">CharityPro</div><div className="sidebar-logo-sub">Cloud Accounting</div></div>
+          <img className="sidebar-brand-logo" src="/hatzolah-tosh-logo.png" alt="Hatzolah Tosh" />
+          <div><div className="sidebar-logo-text">Hatzolah Tosh</div><div className="sidebar-logo-sub">CharityPro</div></div>
         </div>
         <nav className="sidebar-nav" style={{ padding: '0 16px' }}>
           {categories.map(category => <div key={category.label} style={{ marginBottom: 16 }}>
@@ -81,7 +81,7 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       </aside>
       <main className="main-content">
         <header className="topbar">
-          <h1 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>{pageLabel}</h1>
+          <div className="topbar-brand"><img src="/hatzolah-tosh-logo.png" alt="" /><h1 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>{pageLabel}</h1></div>
           <div style={{ padding: '8px 16px', fontSize: '0.85rem', fontWeight: 800, color: 'var(--green)', background: 'var(--green-bg)', borderRadius: 999, border: '1px solid rgba(5,150,105,0.2)' }}>● CLOUD ONLY</div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>

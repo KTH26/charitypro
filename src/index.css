@@ -140,8 +140,16 @@ h1, h2, h3, h4 {
   color: #fff; font-size: 1.6rem; font-weight: 800;
   box-shadow: 0 4px 16px var(--gold-glow);
 }
+.sidebar-brand-logo {
+  width: 58px; height: 58px; flex: 0 0 58px; object-fit: contain;
+  border-radius: 50%; background: #fff; border: 2px solid rgba(255,255,255,.85);
+  box-shadow: 0 5px 18px rgba(0,0,0,.2);
+}
 .sidebar-logo-text { font-family: 'Outfit', sans-serif; font-size: 1.5rem; font-weight: 800; letter-spacing: 0.5px; color: #FFF; }
 .sidebar-logo-sub { font-size: 0.8rem; color: var(--text-sidebar-muted); text-transform: uppercase; letter-spacing: 2px; font-weight: 700; margin-top: 2px; }
+
+.topbar-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.topbar-brand img { width: 40px; height: 40px; object-fit: contain; border-radius: 50%; background: #fff; box-shadow: 0 2px 9px rgba(15,23,42,.14); }
 
 .sidebar-nav { padding: 32px 20px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 
