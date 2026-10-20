@@ -1050,7 +1050,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/system/data-safety', async (c: any) => {
     const denied = requirePermission(c, 'system.manage');
     if (denied) return denied;
-    const [counts, totals, issues] = await c.env.DB.batch([
+    let counts: any, totals: any, issues: any;
+    try { [counts, totals, issues] = await c.env.DB.batch([
       c.env.DB.prepare("SELECT type,SUM(CASE WHEN is_deleted=0 THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN is_deleted<>0 THEN 1 ELSE 0 END) AS deleted FROM sync_records GROUP BY type ORDER BY type"),
       c.env.DB.prepare(`SELECT
         COALESCE(SUM(CASE WHEN type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 THEN COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0) ELSE 0 END),0) AS approved,
@@ -1076,7 +1077,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         UNION ALL SELECT 'unallocated_payment','Approved payments without an explicit pledge allocation','review',COUNT(*) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND COALESCE(json_extract(t.data,'$.pledgeId'),'')='' AND COALESCE(json_extract(t.data,'$.pledgeAllocations'),'[]')='[]'
         UNION ALL SELECT 'possible_duplicate_payment','Possible duplicate payment groups','review',COUNT(*) FROM (SELECT 1 FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 GROUP BY json_extract(t.data,'$.donorId'),json_extract(t.data,'$.date'),json_extract(t.data,'$.amount'),json_extract(t.data,'$.method'),json_extract(t.data,'$.type') HAVING COUNT(*)>1)
       ) ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,code`)
-    ]);
+    ]); } catch (reason: any) {
+      return c.json({ success: false, error: `Data safety query failed: ${String(reason?.message || 'database error')}` }, 500);
+    }
     const summary: any = totals.results[0] || {};
     return c.json({
       success: true,
