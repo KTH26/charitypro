@@ -13,9 +13,13 @@ jobs:
         env:
           CHARITYPRO_URL: ${{ secrets.CHARITYPRO_URL }}
           CHARITYPRO_CRON_SECRET: ${{ secrets.CHARITYPRO_CRON_SECRET }}
+          CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
+          CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
         run: |
           test -n "$CHARITYPRO_URL"
           test -n "$CHARITYPRO_CRON_SECRET"
+          test -n "$CLOUDFLARE_ACCESS_CLIENT_ID"
+          test -n "$CLOUDFLARE_ACCESS_CLIENT_SECRET"
           run_automation() {
             local endpoint="$1"
             local response
@@ -23,6 +27,8 @@ jobs:
               --location --post301 --post302 --post303 \
               -X POST "${CHARITYPRO_URL%/}${endpoint}" \
               -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
+              -H "CF-Access-Client-Id: $CLOUDFLARE_ACCESS_CLIENT_ID" \
+              -H "CF-Access-Client-Secret: $CLOUDFLARE_ACCESS_CLIENT_SECRET" \
               -H "Content-Type: application/json")"
             echo "$response" | jq -e '.success == true' >/dev/null || {
               echo "Automation endpoint ${endpoint} did not return a successful JSON response."
