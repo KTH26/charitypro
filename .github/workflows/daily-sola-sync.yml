@@ -16,15 +16,20 @@ jobs:
         run: |
           test -n "$CHARITYPRO_URL"
           test -n "$CHARITYPRO_CRON_SECRET"
-          curl --fail-with-body --retry 3 --retry-all-errors \
-            -X POST "${CHARITYPRO_URL%/}/api/v3/schedules/process-due" \
-            -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
-            -H "Content-Type: application/json"
-          curl --fail-with-body --retry 3 --retry-all-errors \
-            -X POST "${CHARITYPRO_URL%/}/api/v3/automation/daily-sola" \
-            -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
-            -H "Content-Type: application/json"
-          curl --fail-with-body --retry 3 --retry-all-errors \
-            -X POST "${CHARITYPRO_URL%/}/api/v3/automation/process-recurring" \
-            -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
-            -H "Content-Type: application/json"
+          run_automation() {
+            local endpoint="$1"
+            local response
+            response="$(curl --silent --show-error --fail-with-body --retry 3 --retry-all-errors \
+              --location --post301 --post302 --post303 \
+              -X POST "${CHARITYPRO_URL%/}${endpoint}" \
+              -H "Authorization: Bearer $CHARITYPRO_CRON_SECRET" \
+              -H "Content-Type: application/json")"
+            echo "$response" | jq -e '.success == true' >/dev/null || {
+              echo "Automation endpoint ${endpoint} did not return a successful JSON response."
+              echo "$response"
+              return 1
+            }
+          }
+          run_automation "/api/v3/schedules/process-due"
+          run_automation "/api/v3/automation/daily-sola"
+          run_automation "/api/v3/automation/process-recurring"
