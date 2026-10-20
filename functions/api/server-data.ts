@@ -1094,6 +1094,89 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     });
   });
 
+  app.get('/v3/system/data-safety/:code', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const code = String(c.req.param('code') || '');
+    const page = boundedPage(c.req.query('page'));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(c.req.query('limit') || '25', 10) || 25));
+    const offset = (page - 1) * limit;
+    const conditions: Record<string, { type?: string; where: string }> = {
+      payment_missing_donor: { type: 'transactions', where: "COALESCE(json_extract(r.data,'$.isBatch'),0)=0 AND NOT EXISTS(SELECT 1 FROM sync_records d WHERE d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0)" },
+      pledge_missing_donor: { type: 'pledges', where: "NOT EXISTS(SELECT 1 FROM sync_records d WHERE d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0)" },
+      schedule_missing_donor: { type: 'recurringPayments', where: "NOT EXISTS(SELECT 1 FROM sync_records d WHERE d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0)" },
+      approved_missing_account: { type: 'transactions', where: "json_extract(r.data,'$.type')='approved' AND COALESCE(json_extract(r.data,'$.isBatch'),0)=0 AND NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(r.data,'$.sourceAccountId') AND a.is_deleted=0)" },
+      invalid_payment_date: { type: 'transactions', where: "json_extract(r.data,'$.date') IS NULL OR json_extract(r.data,'$.date') NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'" },
+      usd_missing_rate: { where: "r.type IN ('transactions','pledges','bills') AND json_extract(r.data,'$.currency')='USD' AND COALESCE(json_extract(r.data,'$.exchangeRate'),0)<=0" },
+      paid_bill_missing_account: { type: 'bills', where: "json_extract(r.data,'$.status')='paid' AND NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(r.data,'$.sourceAccountId') AND a.is_deleted=0)" },
+      bill_missing_category: { type: 'bills', where: "NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(r.data,'$.category') AND a.is_deleted=0 AND json_extract(a.data,'$.type')='expense')" },
+      schedule_missing_end: { type: 'recurringPayments', where: "COALESCE(json_extract(r.data,'$.active'),0)=1 AND COALESCE(json_extract(r.data,'$.endDate'),'')=''" },
+      schedule_missing_card: { type: 'recurringPayments', where: "COALESCE(json_extract(r.data,'$.active'),0)=1 AND json_extract(r.data,'$.method')='credit_card' AND NOT EXISTS(SELECT 1 FROM sync_records m WHERE m.type='paymentMethods' AND m.is_deleted=0 AND json_extract(m.data,'$.donorId')=json_extract(r.data,'$.donorId') AND json_extract(m.data,'$.status')='active' AND (m.id=json_extract(r.data,'$.paymentMethodId') OR instr(COALESCE(json_extract(r.data,'$.paymentMethodIds'),'[]'),'\"' || m.id || '\"')>0))" },
+      schedule_missing_account: { type: 'recurringPayments', where: "COALESCE(json_extract(r.data,'$.active'),0)=1 AND (NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(r.data,'$.sourceAccountId') AND a.is_deleted=0) OR NOT EXISTS(SELECT 1 FROM sync_records a WHERE a.type='accounts' AND a.id=json_extract(r.data,'$.offsetAccountId') AND a.is_deleted=0))" },
+      orphan_payment_allocation: { type: 'paymentAllocations', where: "NOT EXISTS(SELECT 1 FROM sync_records t WHERE t.type='transactions' AND t.id=json_extract(r.data,'$.paymentId') AND t.is_deleted=0) OR NOT EXISTS(SELECT 1 FROM sync_records p WHERE p.type='pledges' AND p.id=json_extract(r.data,'$.pledgeId') AND p.is_deleted=0)" },
+      unallocated_payment: { type: 'transactions', where: "json_extract(r.data,'$.type')='approved' AND COALESCE(json_extract(r.data,'$.isBatch'),0)=0 AND COALESCE(json_extract(r.data,'$.pledgeId'),'')='' AND COALESCE(json_extract(r.data,'$.pledgeAllocations'),'[]')='[]'" }
+    };
+    const condition = conditions[code];
+    if (!condition && code !== 'possible_duplicate_schedule' && code !== 'possible_duplicate_payment') return c.json({ success: false, error: 'Unknown safety condition.' }, 404);
+    if (code === 'possible_duplicate_schedule' || code === 'possible_duplicate_payment') {
+      const schedule = code === 'possible_duplicate_schedule';
+      const type = schedule ? 'recurringPayments' : 'transactions';
+      const filters = schedule ? "COALESCE(json_extract(data,'$.active'),0)=1" : "COALESCE(json_extract(data,'$.isBatch'),0)=0";
+      const groupFields = schedule ? "json_extract(data,'$.donorId'),json_extract(data,'$.amount'),json_extract(data,'$.currency'),json_extract(data,'$.frequency'),json_extract(data,'$.nextDate')" : "json_extract(data,'$.donorId'),json_extract(data,'$.date'),json_extract(data,'$.amount'),json_extract(data,'$.method'),json_extract(data,'$.type')";
+      const selectFields = schedule ? "json_extract(data,'$.donorId') donorId,json_extract(data,'$.amount') amount,json_extract(data,'$.currency') currency,json_extract(data,'$.frequency') frequency,json_extract(data,'$.nextDate') date" : "json_extract(data,'$.donorId') donorId,json_extract(data,'$.amount') amount,json_extract(data,'$.method') method,json_extract(data,'$.type') status,json_extract(data,'$.date') date";
+      const base = `FROM sync_records WHERE type='${type}' AND is_deleted=0 AND ${filters} GROUP BY ${groupFields} HAVING COUNT(*)>1`;
+      const [rows, countRow]: any = await c.env.DB.batch([
+        c.env.DB.prepare(`SELECT ${selectFields},COUNT(*) duplicateCount,GROUP_CONCAT(id) recordIds ${base} ORDER BY date DESC LIMIT ? OFFSET ?`).bind(limit, offset),
+        c.env.DB.prepare(`SELECT COUNT(*) count FROM (SELECT 1 ${base})`)
+      ]);
+      const total = Number(countRow.results[0]?.count || 0);
+      return c.json({ success: true, code, items: rows.results.map((row: any) => ({ ...row, duplicateCount: Number(row.duplicateCount || 0), recordIds: String(row.recordIds || '').split(',').filter(Boolean) })), page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) });
+    }
+    const where = `r.is_deleted=0${condition.type ? ` AND r.type='${condition.type}'` : ''} AND (${condition.where})`;
+    const [rows, countRow]: any = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT r.id,r.type,r.data,r.revision,r.updated_at FROM sync_records r WHERE ${where} ORDER BY r.updated_at DESC,r.id LIMIT ? OFFSET ?`).bind(limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) count FROM sync_records r WHERE ${where}`)
+    ]);
+    const total = Number(countRow.results[0]?.count || 0);
+    return c.json({ success: true, code, items: rows.results.map((row: any) => ({ id: String(row.id), type: String(row.type), revision: Number(row.revision), updatedAt: Number(row.updated_at), data: parseSetting(row.data,{}) })), page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) });
+  });
+
+  app.post('/v3/system/data-safety/repair', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage'); if (denied) return denied;
+    const body = await c.req.json(); const code = String(body.code || ''); const id = String(body.id || ''); const expectedRevision = Number(body.revision); const changes = body.changes && typeof body.changes === 'object' ? body.changes : {};
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim(); if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const rules: Record<string, { type: string; keys: string[] }> = {
+      approved_missing_account: { type: 'transactions', keys: ['sourceAccountId'] }, payment_missing_donor: { type: 'transactions', keys: ['donorId'] },
+      pledge_missing_donor: { type: 'pledges', keys: ['donorId'] }, schedule_missing_donor: { type: 'recurringPayments', keys: ['donorId'] },
+      paid_bill_missing_account: { type: 'bills', keys: ['sourceAccountId'] }, bill_missing_category: { type: 'bills', keys: ['category', 'internalCategory'] },
+      schedule_missing_account: { type: 'recurringPayments', keys: ['sourceAccountId', 'offsetAccountId'] }, schedule_missing_end: { type: 'recurringPayments', keys: ['endDate'] },
+      usd_missing_rate: { type: String(body.recordType || ''), keys: ['exchangeRate'] }, invalid_payment_date: { type: 'transactions', keys: ['date'] }
+    };
+    const rule = rules[code]; if (!rule || !id || !Number.isInteger(expectedRevision) || expectedRevision < 1) return c.json({ success: false, error: 'This safety repair is not supported.' }, 400);
+    if (code === 'usd_missing_rate' && !['transactions','pledges','bills'].includes(rule.type)) return c.json({ success: false, error: 'Invalid USD record type.' }, 400);
+    const mutationId = `v3-safety-repair-${requestId}`; const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first(); if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const current: any = await c.env.DB.prepare('SELECT data,revision FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(rule.type,id).first(); if (!current) return c.json({ success: false, error: 'Record not found.' }, 404); if (Number(current.revision)!==expectedRevision) return c.json({ success:false,error:'This record changed. Reload it before repairing.',conflict:true },409);
+    const patch: any = {}; for (const key of rule.keys) if (Object.prototype.hasOwnProperty.call(changes,key)) patch[key]=changes[key]; if (!Object.keys(patch).length) return c.json({success:false,error:'Choose the corrected value first.'},400);
+    const requireRecord = async(type:string,targetId:string,label:string,expectedType?:string)=>{const row:any=await c.env.DB.prepare('SELECT data FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(type,targetId).first();const data=parseSetting(row?.data,{});if(!row||(expectedType&&data.type!==expectedType))throw new Error(`Choose a valid ${label}.`);};
+    try {
+      if (patch.donorId) await requireRecord('donors',String(patch.donorId),'donor');
+      if (patch.sourceAccountId) await requireRecord('accounts',String(patch.sourceAccountId),'asset account','asset');
+      if (patch.offsetAccountId) await requireRecord('accounts',String(patch.offsetAccountId),'revenue account','revenue');
+      if (patch.category) await requireRecord('accounts',String(patch.category),'expense category','expense');
+    } catch(reason:any) { return c.json({success:false,error:reason.message||'Invalid repair selection.'},400); }
+    if (patch.exchangeRate!==undefined) { const rate=Number(patch.exchangeRate); if(!Number.isFinite(rate)||rate<=0||rate>100) return c.json({success:false,error:'Enter a positive exchange rate.'},400); patch.exchangeRate=rate; }
+    if (patch.endDate!==undefined && !isoDate(String(patch.endDate))) return c.json({success:false,error:'Enter a valid end date.'},400);
+    if (patch.date!==undefined && !isoDate(String(patch.date))) return c.json({success:false,error:'Enter a valid payment date.'},400);
+    const old=parseSetting(current.data,{}); if(patch.endDate&&old.nextDate&&String(patch.endDate)<String(old.nextDate)) return c.json({success:false,error:'End date cannot be before the next scheduled date.'},400);
+    const next={...old,...patch}; const now=Date.now(); const revision=expectedRevision+1; const data=JSON.stringify(next); const operationId=`${mutationId}-record`; const userId=String(c.get('userId')||'unknown'); const userEmail=String(c.get('userEmail')||'unknown'); const reason=String(body.reason||`Repaired ${code} through Production Data Safety Center`).slice(0,500); const response={success:true,item:{...next,id,revision,updatedAt:now}};
+    try { await c.env.DB.batch([
+      c.env.DB.prepare('UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(data,revision,now,operationId,rule.type,id,expectedRevision),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,?,'update',?,?,?,?)").bind(id,rule.type,revision,data,now,mutationId,operationId),
+      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'update',?,?,?,?,?,?,?,?,?,?)").bind(id,rule.type,expectedRevision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,reason),
+      c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now)
+    ]); return c.json(response); } catch { return c.json({success:false,error:'This record changed. Reload it before repairing.',conflict:true},409); }
+  });
+
   app.get('/v3/sola/status', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const key = await getSolaKey(c); const [metadata,automation]:any = await c.env.DB.batch([c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_sync_status'"),c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_automation_status'")]);

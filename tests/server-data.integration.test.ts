@@ -709,6 +709,15 @@ describe('server-driven bank deposit matching', () => {
     expect(body.totals.approved).toBe(75);
     expect(body.issues.find((item: any) => item.code === 'pledge_missing_donor').count).toBe(1);
     expect(body.counts.find((item: any) => item.type === 'transactions').active).toBe(1);
+    const detailsResponse = await app.request('/v3/system/data-safety/pledge_missing_donor?page=1&limit=25', {}, { DB: db } as any);
+    const details: any = await detailsResponse.json();
+    expect(detailsResponse.status).toBe(200); expect(details.total).toBe(1); expect(details.items[0]).toMatchObject({ id: 'orphan-pledge', type: 'pledges', data: { donorId: 'missing-donor', amount: 100 } });
+    expect((await app.request('/v3/system/data-safety/not-a-check', {}, { DB: db } as any)).status).toBe(404);
+    const repairRequest = () => app.request('/v3/system/data-safety/repair', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'repair-orphan-pledge' }, body: JSON.stringify({ code: 'pledge_missing_donor', id: 'orphan-pledge', revision: 1, changes: { donorId: 'safe-donor' }, reason: 'Confirmed donor during safety review.' }) }, { DB: db } as any);
+    expect((await repairRequest()).status).toBe(200); expect((await repairRequest()).status).toBe(200);
+    const repaired: any = db.database.prepare("SELECT data,revision FROM sync_records WHERE type='pledges' AND id='orphan-pledge'").get(); expect(JSON.parse(repaired.data).donorId).toBe('safe-donor'); expect(repaired.revision).toBe(2);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='pledges' AND record_id='orphan-pledge'").get().count).toBe(1);
+    const afterRepair: any = await (await app.request('/v3/system/data-safety/pledge_missing_donor', {}, { DB: db } as any)).json(); expect(afterRepair.total).toBe(0);
     expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM sync_records').get() as any).count)).toBe(before);
   });
 
