@@ -47,7 +47,7 @@ type RefundCandidate = BillCandidate & {
   memo?: string;
 };
 type IncomingTransferCandidate = { id:string;revision:number;candidateKind:'transfer'|'bankFeed';fromAccountId?:string;toAccountId?:string;sourceAccountId?:string;sourceBankTransactionId?:string;sourceName:string;amount:number;date:string;notes?:string;description?:string };
-type BankVendorRule = { vendor: string; category: string; internalCategory?: string; taxCategory?: string; taxable: boolean };
+type BankVendorRule = { vendor: string; category: string; internalCategory?: string; taxCategory?: string; taxable: boolean; projectId?: string; creditAccountId?: string; isPayrollExpense?: boolean; employeeId?: string; t4aEligible?: boolean };
 
 export const OnlineBank: React.FC = () => {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -368,7 +368,7 @@ export const OnlineBank: React.FC = () => {
     setError("");
     setNotice("");
     setOutgoing(transaction);
-    setShowFullExpense(true);
+    setShowFullExpense(false);
     try {
       const [billResponse, ruleResponse] = await Promise.all([
         fetch(`/api/v3/bank/bill-candidates?accountId=${encodeURIComponent(selectedBank)}&amount=${encodeURIComponent(String(Math.abs(transaction.amount)))}`),
@@ -379,6 +379,8 @@ export const OnlineBank: React.FC = () => {
       if (ruleResponse.ok && ruleData.success && ruleData.rule) setBankVendorRule(ruleData.rule);
     } catch {
       /* New expense and transfer matching remain available. */
+    } finally {
+      setShowFullExpense(true);
     }
   };
 
@@ -904,6 +906,11 @@ export const OnlineBank: React.FC = () => {
               category: bankVendorRule?.category,
               internalCategory: bankVendorRule?.internalCategory || bankVendorRule?.taxCategory,
               taxable: bankVendorRule?.taxable,
+              projectId: bankVendorRule?.projectId,
+              creditAccountId: bankVendorRule?.creditAccountId,
+              isPayrollExpense: bankVendorRule?.isPayrollExpense,
+              employeeId: bankVendorRule?.employeeId,
+              t4aEligible: bankVendorRule?.t4aEligible,
             }}
             bankMatch={{
               accountId: selectedBank,

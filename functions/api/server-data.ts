@@ -2617,7 +2617,20 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const normalizedDescription = normalizeBankVendorDescription(description);
       const ruleId = await bankVendorRuleId(normalizedDescription);
       const currentRule: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='bankVendorRules' AND id=? AND is_deleted=0").bind(ruleId).first();
-      const rule = { id: ruleId, bankDescription: description, normalizedDescription, vendor, category, internalCategory, taxable: Boolean(body.taxable) };
+      const rule = {
+        id: ruleId,
+        bankDescription: description,
+        normalizedDescription,
+        vendor,
+        category,
+        internalCategory,
+        taxable: Boolean(body.taxable),
+        ...(body.projectId ? { projectId: String(body.projectId) } : {}),
+        ...(creditAccountId ? { creditAccountId } : {}),
+        isPayrollExpense: Boolean(body.isPayrollExpense),
+        ...(body.employeeId ? { employeeId: String(body.employeeId) } : {}),
+        t4aEligible: Boolean(body.t4aEligible),
+      };
       const ruleData = JSON.stringify(rule);
       const ruleOperationId = `${mutationId}-vendor-rule`;
       if (currentRule) {

@@ -257,7 +257,7 @@ describe('server-driven bank deposit matching', () => {
     expect(Number(match.revision)).toBe(2);
     const ruleResponse = await app.request('/v3/bank/vendor-rule?description=%20pos%20%20123%20office%20store%20', {}, { DB: db } as any);
     const ruleBody: any = await ruleResponse.json();
-    expect(ruleBody.rule).toMatchObject({ bankDescription: 'POS 123 OFFICE STORE', normalizedDescription: 'pos 123 office store', vendor: 'Correct Office Vendor', category: 'expense-1', internalCategory: 'Office records', taxable: true });
+    expect(ruleBody.rule).toMatchObject({ bankDescription: 'POS 123 OFFICE STORE', normalizedDescription: 'pos 123 office store', vendor: 'Correct Office Vendor', category: 'expense-1', internalCategory: 'Office records', taxable: true, projectId: 'project-1', creditAccountId: 'credit-1' });
     const internalChoices: any = await (await app.request('/v3/internal-category-choices', {}, { DB: db } as any)).json();
     expect(internalChoices.items.map((item: any) => item.name)).toContain('Office records');
     expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(3);
