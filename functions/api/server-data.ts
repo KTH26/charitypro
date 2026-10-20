@@ -147,6 +147,12 @@ const requirePermission = (c: any, permission: string) => {
   return c.json({ success: false, error: `Forbidden: Missing permission ${permission}` }, 403);
 };
 
+const campaignForPledgeDate = async (db: any, date: unknown) => {
+  const pledgeDate = isoDate(date);
+  if (!pledgeDate) return null;
+  return db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id LIMIT 1").bind(pledgeDate, pledgeDate).first();
+};
+
 export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/summary', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
@@ -221,6 +227,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (type === 'campaigns') {
       const year = Number(record.year);
       if (!String(record.name || '').trim() || !Number.isInteger(year) || year < 1900 || year > 2200 || !isoDate(record.startDate) || !isoDate(record.endDate) || record.startDate > record.endDate || !['CAD','USD'].includes(record.currency) || !['draft','active','closed'].includes(record.status)) return c.json({ success: false, error: 'Campaign name, year, dates, currency, and status are required.' }, 400);
+    }
+    if (type === 'pledges') {
+      const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
+      record.campaignId = matchedCampaign ? String(matchedCampaign.id) : null;
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -298,6 +308,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const allocated = existing.pledgeAllocations.reduce((sum: number, allocation: any) => sum + Number(allocation.amount || 0), 0);
       if (allocated - Number(record.amount || 0) > 0.005) return c.json({ success: false, error: 'This payment has pledge allocations above the new amount. Update its allocations first.' }, 409);
       if (String(record.donorId || '') !== String(existing.donorId || '') || String(record.currency || 'CAD') !== String(existing.currency || 'CAD')) return c.json({ success: false, error: 'Remove or reassign the pledge allocations before changing this payment donor or currency.' }, 409);
+    }
+    if (type === 'pledges') {
+      const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
+      record.campaignId = matchedCampaign ? String(matchedCampaign.id) : null;
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -391,6 +405,41 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
       return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
     }
+  });
+
+  app.post('/v3/campaigns/assign-pledges', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-campaign-assign-pledges-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const [campaignRows, pledgeRows] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id"),
+      c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='pledges' AND is_deleted=0 ORDER BY id")
+    ]);
+    const campaigns = campaignRows.results.map((row: any) => ({ id: String(row.id), ...parseSetting(row.data, {}) }));
+    const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    let assigned = 0; let unchanged = 0; let unmatched = 0;
+    const changes: any[] = [];
+    for (const row of pledgeRows.results as any[]) {
+      const pledge = parseSetting(row.data, {}); const date = isoDate(pledge.date);
+      const campaign = date ? campaigns.find((item: any) => isoDate(item.startDate) <= date && isoDate(item.endDate) >= date) : null;
+      if (!campaign) { unmatched += 1; continue; }
+      if (String(pledge.campaignId || '') === campaign.id) { unchanged += 1; continue; }
+      const next = { ...pledge, id: String(row.id), campaignId: campaign.id }; const data = JSON.stringify(next); const revision = Number(row.revision) + 1; const operationId = `${mutationId}-${row.id}`;
+      changes.push([
+        c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='pledges' AND id=? AND revision=? AND is_deleted=0").bind(data, revision, now, operationId, row.id, row.revision),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'pledges',?,'update',?,?,?,?)").bind(row.id, revision, data, now, mutationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'pledges','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id, row.revision, revision, row.data, data, userId, userEmail, now, mutationId, operationId, 'Assigned pledge to campaign by pledge date')
+      ]);
+      assigned += 1;
+    }
+    for (let index = 0; index < changes.length; index += 6) await c.env.DB.batch(changes.slice(index, index + 6).flat());
+    const result = { success: true, assigned, unchanged, unmatched, total: pledgeRows.results.length };
+    await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), now).run();
+    return c.json(result);
   });
 
   app.get('/v3/pledges', async (c: any) => {

@@ -383,11 +383,25 @@ describe('server-driven bank deposit matching', () => {
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const campaignResponse = await app.request('/v3/records/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-create' }, body: JSON.stringify({ data: { id: 'campaign-2026', name: 'Campaign 2026', year: 2026, startDate: '2026-01-01', endDate: '2026-12-31', currency: 'CAD', status: 'active' } }) }, { DB: db } as any);
     expect(campaignResponse.status).toBe(201);
-    const pledgeResponse = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-pledge' }, body: JSON.stringify({ data: { id: 'campaign-pledge', donorId: 'campaign-donor', campaignId: 'campaign-2026', amount: 500, currency: 'CAD', date: '2026-02-01' } }) }, { DB: db } as any);
+    const pledgeResponse = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-pledge' }, body: JSON.stringify({ data: { id: 'campaign-pledge', donorId: 'campaign-donor', amount: 500, currency: 'CAD', date: '2026-02-01' } }) }, { DB: db } as any);
     expect(pledgeResponse.status).toBe(201);
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='campaign-pledge'").get() as any).data).campaignId).toBe('campaign-2026');
     const deleteResponse = await app.request('/v3/records/campaigns/campaign-2026', { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-delete' }, body: JSON.stringify({ revision: 1 }) }, { DB: db } as any);
     expect(deleteResponse.status).toBe(409);
     expect((await deleteResponse.json() as any).error).toContain('Close it instead');
+  });
+
+  it('organizes existing pledges into campaigns by pledge date without changing payments', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'campaigns', 'campaign-2025', { id: 'campaign-2025', name: 'Campaign 2025', year: 2025, startDate: '2025-01-01', endDate: '2025-12-31', currency: 'CAD', status: 'closed' });
+    seedRecord(db, 'pledges', 'legacy-pledge', { id: 'legacy-pledge', donorId: 'donor-1', amount: 250, currency: 'CAD', date: '2025-06-15' });
+    seedRecord(db, 'transactions', 'pledge-payment', { id: 'pledge-payment', donorId: 'donor-1', pledgeId: 'legacy-pledge', amount: 100, currency: 'CAD', date: '2025-07-01', type: 'approved' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/campaigns/assign-pledges', { method: 'POST', headers: { 'Idempotency-Key': 'organize-campaigns' } }, { DB: db } as any);
+    const body: any = await response.json();
+    expect(response.status).toBe(200); expect(body).toMatchObject({ assigned: 1, unchanged: 0, unmatched: 0 });
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='legacy-pledge'").get() as any).data).campaignId).toBe('campaign-2025');
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='pledge-payment'").get() as any).data).pledgeId).toBe('legacy-pledge');
   });
 
   it('keeps one pledge follow-up reminder synchronized through create, edit, clear, and retry', async () => {

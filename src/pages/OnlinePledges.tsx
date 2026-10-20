@@ -4,7 +4,7 @@ import { SortableTh, type SortDirection } from '../components/SortableTh';
 
 type Pledge = { id: string; revision: number; donorId: string; donorName: string; donorHebrewName?: string; campaignId?: string; campaignName?: string; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string; followUpDate?: string; followUpNote?: string; paid: number; pending: number; scheduled: number; balance: number };
 type Donor = { id: string; name: string };
-type Campaign = { id: string; name: string; year: number; currency: 'CAD' | 'USD'; status: string };
+type Campaign = { id: string; name: string; year: number; startDate: string; endDate: string; currency: 'CAD' | 'USD'; status: string };
 type PledgeForm = { id: string; revision: number; donorId: string; campaignId: string; amount: string; currency: 'CAD' | 'USD'; date: string; notes: string; followUpDate: string; followUpNote: string };
 const blank = (): PledgeForm => ({ id: '', revision: 0, donorId: '', campaignId: '', amount: '', currency: 'CAD', date: new Date().toISOString().slice(0, 10), notes: '', followUpDate: '', followUpNote: '' });
 
@@ -49,7 +49,7 @@ export const OnlinePledges: React.FC = () => {
     const amount = Number(form.amount);
     if (!form.donorId || !Number.isFinite(amount) || amount <= 0 || !form.date) { setError('Donor, positive amount, and date are required.'); return; }
     const idempotencyKey = requestId.current || crypto.randomUUID(); requestId.current = idempotencyKey;
-    const data = { ...(form.id ? { id: form.id } : {}), donorId: form.donorId, campaignId: form.campaignId || null, amount, currency: form.currency, date: form.date, notes: form.notes.trim() };
+    const data = { ...(form.id ? { id: form.id } : {}), donorId: form.donorId, amount, currency: form.currency, date: form.date, notes: form.notes.trim() };
     try {
       const response = await fetch(form.id ? `/api/v3/records/pledges/${encodeURIComponent(form.id)}` : '/api/v3/records/pledges', { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ revision: form.revision, data }) });
       const result = await response.json();
@@ -67,12 +67,13 @@ export const OnlinePledges: React.FC = () => {
     } catch (e: any) { setError(e.message || 'Unable to delete pledge.'); }
   };
 
+  const dateMatchedCampaign = campaigns.filter(campaign => campaign.startDate <= form.date && campaign.endDate >= form.date).sort((left,right)=>right.startDate.localeCompare(left.startDate)||left.endDate.localeCompare(right.endDate))[0];
   return <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}><div style={{ maxWidth: 1400, margin: '0 auto' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20, marginBottom: 22 }}><div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Pledges ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Shared online pledges · 50 records per page</div></div><button className="btn btn-primary" onClick={beginNew}>New Pledge</button></div>
     {editing && <div className="modal-overlay" onClick={() => setEditing(false)}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={save} style={{ maxWidth: 760, width: '92%' }}><div className="modal-header"><h2 style={{ margin: 0, color: 'var(--navy)' }}>{form.id ? 'Edit Pledge' : 'New Pledge'}</h2><button type="button" className="modal-close" onClick={() => setEditing(false)}>×</button></div><div className="modal-body"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
       <label className="form-group" style={{ margin: 0 }}><span>Find donor</span><input value={donorSearch} onChange={event => setDonorSearch(event.target.value)} placeholder="Type a donor name" /></label>
       <label className="form-group" style={{ margin: 0 }}><span>Donor *</span><select value={form.donorId} onChange={event => setForm(current => ({ ...current, donorId: event.target.value }))}><option value="">Select from up to 50 matches</option>{donors.map(donor => <option key={donor.id} value={donor.id}>{donor.name}</option>)}</select></label>
-      <label className="form-group" style={{ margin: 0 }}><span>Campaign</span><select value={form.campaignId} onChange={event => { const campaign = campaigns.find(item => item.id === event.target.value); setForm(current => ({ ...current, campaignId: event.target.value, ...(campaign ? { currency: campaign.currency } : {}) })); }}><option value="">Legacy / Unassigned</option>{campaigns.map(campaign => <option key={campaign.id} value={campaign.id}>{campaign.name} ({campaign.year}){campaign.status !== 'active' ? ` — ${campaign.status}` : ''}</option>)}</select></label>
+      <div className="form-group" style={{ margin: 0 }}><span>Campaign — automatic by date</span><div style={{padding:'11px 12px',border:'1px solid var(--border)',borderRadius:10,background:'var(--bg-input)',fontWeight:800}}>{dateMatchedCampaign ? `${dateMatchedCampaign.name} (${dateMatchedCampaign.year})` : 'No campaign covers this date'}</div></div>
       <label className="form-group" style={{ margin: 0 }}><span>Amount *</span><input type="number" min="0.01" step="0.01" value={form.amount} onChange={event => setForm(current => ({ ...current, amount: event.target.value }))} /></label>
       <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={form.currency} onChange={event => setForm(current => ({ ...current, currency: event.target.value as 'CAD' | 'USD' }))}><option>CAD</option><option>USD</option></select></label>
       <label className="form-group" style={{ margin: 0 }}><span>Date *</span><input type="date" value={form.date} onChange={event => setForm(current => ({ ...current, date: event.target.value }))} /></label>
