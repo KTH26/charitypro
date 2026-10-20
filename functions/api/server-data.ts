@@ -153,16 +153,35 @@ const campaignForPledgeDate = async (db: any, date: unknown) => {
   return db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id LIMIT 1").bind(pledgeDate, pledgeDate).first();
 };
 
+const selectPledgeForPaymentDate = (pledges: any[], campaigns: any[], donorId: unknown, date: unknown) => {
+  const paymentDate = isoDate(date); const donor = String(donorId || '').trim();
+  if (!paymentDate || !donor) return null;
+  const donorPledges = pledges.filter(item => String(item.donorId || '') === donor && isoDate(item.date)).sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.id).localeCompare(String(b.id)));
+  const campaign = campaigns.filter(item => isoDate(item.startDate) && isoDate(item.endDate) && paymentDate >= item.startDate && paymentDate <= item.endDate).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))||String(a.endDate).localeCompare(String(b.endDate)))[0];
+  if (campaign) {
+    const campaignPledges = donorPledges.filter(item => String(item.campaignId || '') === String(campaign.id));
+    if (campaignPledges.length) return campaignPledges[campaignPledges.length - 1];
+  }
+  const paymentYear = paymentDate.slice(0,4);
+  const sameYear = donorPledges.filter(item => String(item.date).slice(0,4) === paymentYear);
+  if (sameYear.length) return sameYear[sameYear.length - 1];
+  for (let index = donorPledges.length - 1; index >= 0; index -= 1) {
+    const start = isoDate(donorPledges[index].date); const next = isoDate(donorPledges[index + 1]?.date); const yearlyEnd = addYear(start); const end = next && next < yearlyEnd ? next : yearlyEnd;
+    if (paymentDate >= start && paymentDate < end) return donorPledges[index];
+  }
+  return null;
+};
+
 const pledgeForPaymentDate = async (db: any, donorId: unknown, date: unknown) => {
   const paymentDate = isoDate(date); const donor = String(donorId || '').trim();
   if (!paymentDate || !donor) return null;
-  const rows = await db.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=? AND json_extract(data,'$.date')<=? ORDER BY json_extract(data,'$.date'),id").bind(donor, paymentDate).all();
-  const pledges = (rows.results as any[]).map(row => ({ id: String(row.id), ...JSON.parse(String(row.data)) })).filter(item => isoDate(item.date));
-  for (let index = pledges.length - 1; index >= 0; index -= 1) {
-    const start = isoDate(pledges[index].date); const next = isoDate(pledges[index + 1]?.date); const yearlyEnd = addYear(start); const end = next && next < yearlyEnd ? next : yearlyEnd;
-    if (paymentDate >= start && paymentDate < end) return pledges[index];
-  }
-  return null;
+  const [pledgeRows,campaignRows]:any = await db.batch([
+    db.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.date'),id").bind(donor),
+    db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,id").bind(paymentDate,paymentDate)
+  ]);
+  const pledges=(pledgeRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));
+  const campaigns=(campaignRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));
+  return selectPledgeForPaymentDate(pledges,campaigns,donor,paymentDate);
 };
 
 export const registerServerDataRoutes = (app: Hono<any>) => {
@@ -1262,8 +1281,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
   app.post('/v3/system/data-safety/auto-link-payments', async (c: any) => {
     const denied=requirePermission(c,'system.manage');if(denied)return denied;const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const mutationId=`v3-auto-link-pledges-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
-    const rows=await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 AND COALESCE(json_extract(data,'$.pledgeId'),'')='' AND COALESCE(json_extract(data,'$.pledgeAllocations'),'[]')='[]' ORDER BY id").all();const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');let linked=0;let unmatched=0;
-    for(const row of rows.results as any[]){const item=parseSetting(row.data,{});const pledge:any=await pledgeForPaymentDate(c.env.DB,item.donorId,item.date);if(!pledge){unmatched++;continue;}const next={...item,pledgeId:pledge.id,pledgeAutoLinked:true,pledgeAutoLinkedAt:new Date(now).toISOString()};const data=JSON.stringify(next);const revision=Number(row.revision)+1;const operationId=`${mutationId}-${row.id}`;await c.env.DB.batch([c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(row.id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id,row.revision,revision,row.data,data,userId,userEmail,now,mutationId,operationId,'Automatically linked payment to pledge by donor and pledge period')]);linked++;}
+    const [rows,pledgeRows,campaignRows]:any=await c.env.DB.batch([c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 AND COALESCE(json_extract(data,'$.pledgeId'),'')='' AND COALESCE(json_extract(data,'$.pledgeAllocations'),'[]')='[]' ORDER BY id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 ORDER BY json_extract(data,'$.date'),id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 ORDER BY json_extract(data,'$.startDate'),id")]);const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');let linked=0;let unmatched=0;const pledges=(pledgeRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const campaigns=(campaignRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const updates:any[]=[];
+    for(const row of rows.results as any[]){const item=parseSetting(row.data,{});const pledge:any=selectPledgeForPaymentDate(pledges,campaigns,item.donorId,item.date);if(!pledge){unmatched++;continue;}const next={...item,pledgeId:pledge.id,pledgeAutoLinked:true,pledgeAutoLinkedAt:new Date(now).toISOString()};const data=JSON.stringify(next);const revision=Number(row.revision)+1;const operationId=`${mutationId}-${row.id}`;updates.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(row.id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id,row.revision,revision,row.data,data,userId,userEmail,now,mutationId,operationId,'Automatically linked payment to pledge by campaign year'));linked++;}
+    for(let index=0;index<updates.length;index+=75)await c.env.DB.batch(updates.slice(index,index+75));
     const result={success:true,reviewed:rows.results.length,linked,unmatched};await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now).run();return c.json(result);
   });
 

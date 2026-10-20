@@ -404,6 +404,19 @@ describe('server-driven bank deposit matching', () => {
     expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='pledge-payment'").get() as any).data).pledgeId).toBe('legacy-pledge');
   });
 
+  it('auto-links an approved payment to the donor pledge in the payment calendar year', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db,'campaigns','campaign-2026',{id:'campaign-2026',name:'Campaign 2026',year:2026,startDate:'2026-01-01',endDate:'2026-12-31',currency:'CAD',status:'active'});
+    seedRecord(db,'donors','year-donor',{id:'year-donor',name:'Year Donor'});
+    seedRecord(db,'pledges','pledge-2025',{id:'pledge-2025',donorId:'year-donor',campaignId:'campaign-2025',amount:100,date:'2025-12-20'});
+    seedRecord(db,'pledges','pledge-2026',{id:'pledge-2026',donorId:'year-donor',campaignId:'campaign-2026',amount:500,date:'2026-11-01'});
+    seedRecord(db,'transactions','october-payment',{id:'october-payment',donorId:'year-donor',amount:60,date:'2026-10-15',type:'approved',method:'credit_card',solaRef:'sola-october'});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/system/data-safety/auto-link-payments',{method:'POST',headers:{'Idempotency-Key':'calendar-year-link'}},{DB:db} as any);
+    expect(response.status).toBe(200);expect(await response.json()).toMatchObject({linked:1,unmatched:0});
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='october-payment'").get() as any).data).pledgeId).toBe('pledge-2026');
+  });
+
   it('keeps one pledge follow-up reminder synchronized through create, edit, clear, and retry', async () => {
     const db=new MockD1();databases.push(db);seedRecord(db,'donors','reminder-donor',{id:'reminder-donor',name:'Reminder Donor'});const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
     const createRequest=()=>app.request('/v3/records/pledges',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'pledge-reminder-create'},body:JSON.stringify({data:{id:'pledge-reminder',donorId:'reminder-donor',amount:300,currency:'CAD',date:'2026-07-01',followUpDate:'2026-07-15',followUpNote:'Ask about payment plan'}})},{DB:db} as any);expect((await createRequest()).status).toBe(201);expect((await createRequest()).status).toBe(200);
