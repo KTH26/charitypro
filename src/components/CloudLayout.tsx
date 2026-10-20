@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   BarChart3, Building, Calendar, CalendarClock, CheckSquare, FileText,
   HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Printer,
-  Settings, ShieldCheck, Store, Users, Wallet
+  Menu, Settings, ShieldCheck, Store, Users, Wallet, X
 } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
 
@@ -51,40 +51,44 @@ const categories: NavCategory[] = [
 
 export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const pageLabel = categories.flatMap(category => category.items).find(item => item.path === location.pathname)?.label || 'CharityPro';
 
+  useEffect(() => setNavigationOpen(false), [location.pathname]);
+
   return (
-    <div className="app-container">
-      <aside className="sidebar" style={{ padding: '24px 0', overflowY: 'auto' }}>
-        <div className="sidebar-logo" style={{ padding: '0 24px 20px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
+    <div className={`app-container ${navigationOpen ? 'navigation-open' : ''}`}>
+      <button className="navigation-scrim" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />
+      <aside className="sidebar" aria-label="Main navigation">
+        <div className="sidebar-logo">
           <img className="sidebar-brand-logo" src="/hatzolah-tosh-logo.png" alt="Hatzolah Tosh" />
           <div><div className="sidebar-logo-text">Hatzolah Tosh</div><div className="sidebar-logo-sub">CharityPro</div></div>
+          <button className="sidebar-close" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)}><X size={20} /></button>
         </div>
-        <nav className="sidebar-nav" style={{ padding: '0 16px' }}>
-          {categories.map(category => <div key={category.label} style={{ marginBottom: 16 }}>
-            <div className="sidebar-section-label" style={{ padding: '0 8px', marginBottom: 8 }}>{category.label}</div>
+        <nav className="sidebar-nav">
+          {categories.map(category => <div className="sidebar-section" key={category.label}>
+            <div className="sidebar-section-label">{category.label}</div>
             {category.items.map(item => <NavLink
               key={item.path}
               to={item.path}
               end={item.path === '/'}
               className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-              style={{ padding: '8px 12px', borderRadius: 8, marginBottom: 4 }}
             >
-              <span className="nav-icon" style={{ opacity: 0.8 }}><item.icon size={18} /></span>
-              <span style={{ flex: 1, fontSize: '0.9rem' }}>{item.label}</span>
+              <span className="nav-icon"><item.icon size={18} /></span>
+              <span className="nav-label">{item.label}</span>
               {!item.ready && <span title="Being rebuilt for cloud" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--yellow)', opacity: 0.8 }} />}
             </NavLink>)}
           </div>)}
         </nav>
-        <div className="sidebar-footer" style={{ padding: '20px 24px 0', borderTop: '1px solid var(--border)', marginTop: 20 }}>
-          <a href="/cdn-cgi/access/logout" style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'inherit', textDecoration: 'none', marginBottom: 12 }}><LogOut size={16} /> Log out</a>
-          CharityPro Cloud · Canada 🇨🇦
+        <div className="sidebar-footer">
+          <a className="sidebar-logout" href="/cdn-cgi/access/logout"><LogOut size={16} /> Log out</a>
+          <span>CharityPro Cloud · Canada 🇨🇦</span>
         </div>
       </aside>
       <main className="main-content">
         <header className="topbar">
-          <div className="topbar-brand"><img src="/hatzolah-tosh-logo.png" alt="" /><h1 style={{ margin: 0, fontSize: '1.5rem', fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: 'var(--navy)' }}>{pageLabel}</h1></div>
-          <div style={{display:'flex',alignItems:'center',gap:12}}><ReminderBell/><div style={{ padding: '8px 16px', fontSize: '0.85rem', fontWeight: 800, color: 'var(--green)', background: 'var(--green-bg)', borderRadius: 999, border: '1px solid rgba(5,150,105,0.2)' }}>● CLOUD ONLY</div></div>
+          <div className="topbar-brand"><button className="menu-button" type="button" aria-label="Open navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><Menu size={22} /></button><img src="/hatzolah-tosh-logo.png" alt="" /><div><span className="topbar-eyebrow">Hatzolah Tosh</span><h1>{pageLabel}</h1></div></div>
+          <div className="topbar-actions"><ReminderBell/><div className="cloud-status"><span />Cloud live</div></div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>
       </main>
