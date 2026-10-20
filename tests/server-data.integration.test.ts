@@ -792,6 +792,7 @@ describe('server-driven bank deposit matching', () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });
     seedRecord(db, 'recurringPayments', 'schedule-safe', { id: 'schedule-safe', donorId: 'scheduled-donor', amount: 75, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', endDate: '2026-08-20', method: 'credit_card', active: true });
+    seedRecord(db, 'recurringPayments', 'locally-charged-schedule', { id: 'locally-charged-schedule', donorId: 'scheduled-donor', amount: 25, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', method: 'credit_card', paymentMethodIds: ['saved-card'], active: true });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const first = await app.request('/v3/schedules/process-due', { method: 'POST' }, { DB: db } as any); const firstBody = await first.json() as any;
     expect(first.status).toBe(200); expect(firstBody.created).toBe(1);
@@ -804,6 +805,9 @@ describe('server-driven bank deposit matching', () => {
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentExpectations'").get().count).toBe(1);
     const schedule: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='schedule-safe'").get();
     expect(JSON.parse(schedule.data)).toMatchObject({ nextDate: '2026-08-20', active: true });
+    const locallyCharged: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='locally-charged-schedule'").get();
+    expect(JSON.parse(locallyCharged.data)).toMatchObject({ nextDate: '2026-07-20', paymentMethodIds: ['saved-card'] });
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.scheduleId')='locally-charged-schedule'").get().count).toBe(0);
   });
 
   it('declines a pending payment and its linked expectation atomically', async () => {

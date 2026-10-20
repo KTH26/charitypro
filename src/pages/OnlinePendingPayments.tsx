@@ -8,7 +8,7 @@ const money = (value: number) => Number(value || 0).toLocaleString('en-CA', { mi
 export const OnlinePendingPayments: React.FC = () => {
   const [items, setItems] = useState<PendingPayment[]>([]);
   const [page, setPage] = useState(1); const [totalPages, setTotalPages] = useState(1); const [total, setTotal] = useState(0); const [totalCAD, setTotalCAD] = useState(0);
-  const [search, setSearch] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState('');
+  const [search, setSearch] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [status,setStatus]=useState<'pending'|'declined'>('pending');
   const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [selected, setSelected] = useState<PendingPayment | null>(null);
   const [sort, setSort] = useState('date'); const [direction, setDirection] = useState<SortDirection>('desc');
@@ -16,7 +16,6 @@ export const OnlinePendingPayments: React.FC = () => {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      if(status==='pending')await fetch('/api/v3/schedules/process-due', { method: 'POST' });
       const params = new URLSearchParams({ page: String(page), limit: '50', status, method: 'credit_card', search, from, to, sort, direction });
       const response = await fetch(`/api/v3/payments?${params}`); const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load pending payments.');

@@ -367,6 +367,8 @@ export const OnlineBank: React.FC = () => {
     setBillCandidates([]);
     setError("");
     setNotice("");
+    setOutgoing(transaction);
+    setShowFullExpense(true);
     try {
       const [billResponse, ruleResponse] = await Promise.all([
         fetch(`/api/v3/bank/bill-candidates?accountId=${encodeURIComponent(selectedBank)}&amount=${encodeURIComponent(String(Math.abs(transaction.amount)))}`),
@@ -377,9 +379,6 @@ export const OnlineBank: React.FC = () => {
       if (ruleResponse.ok && ruleData.success && ruleData.rule) setBankVendorRule(ruleData.rule);
     } catch {
       /* New expense and transfer matching remain available. */
-    } finally {
-      setOutgoing(transaction);
-      setShowFullExpense(true);
     }
   };
 
