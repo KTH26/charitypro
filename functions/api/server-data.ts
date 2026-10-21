@@ -198,7 +198,13 @@ const pledgeForPaymentDate = async (db: any, donorId: unknown, date: unknown) =>
 };
 
 export const registerServerDataRoutes = (app: Hono<any>) => {
-  app.use('/v3/*',async(c:any,next:any)=>{await resolveCoveredDeclines(c.env.DB);await next();});
+  app.use('/v3/*',async(c:any,next:any)=>{
+    const method=String(c.req.method||'GET').toUpperCase();
+    const path=String(c.req.path||'');
+    const readsResolvedPaymentState=method==='GET'&&(path.endsWith('/v3/tasks')||path.endsWith('/v3/payments')||path.includes('/v3/donors/')&&path.endsWith('/profile'));
+    if(readsResolvedPaymentState)await resolveCoveredDeclines(c.env.DB);
+    await next();
+  });
   app.get('/v3/summary', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;

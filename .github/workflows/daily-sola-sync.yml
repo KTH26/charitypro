@@ -23,6 +23,7 @@ jobs:
           run_automation() {
             local endpoint="$1"
             local response
+            echo "Running CharityPro automation endpoint: ${endpoint}"
             response="$(curl --silent --show-error --fail-with-body --retry 3 --retry-all-errors \
               --location --post301 --post302 --post303 \
               -X POST "${CHARITYPRO_URL%/}${endpoint}" \
