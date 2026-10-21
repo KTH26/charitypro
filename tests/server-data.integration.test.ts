@@ -473,6 +473,11 @@ describe('server-driven bank deposit matching', () => {
     expect(pledgeDetails.schedules).toHaveLength(1);
   });
 
+  it('removes a resolved decline from the declined queue and donor profile', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'donors','resolved-profile-donor',{id:'resolved-profile-donor',name:'Resolved Donor'});seedRecord(db,'transactions','old-decline',{id:'old-decline',donorId:'resolved-profile-donor',amount:100,amountCAD:100,date:'2026-09-10',type:'declined',method:'credit_card',expectationId:'old-expectation'});seedRecord(db,'transactions','approved-replacement',{id:'approved-replacement',donorId:'resolved-profile-donor',amount:100,amountCAD:100,date:'2026-09-20',type:'approved',method:'credit_card',solaRef:'approved-replacement-ref'});seedRecord(db,'transactions','open-decline',{id:'open-decline',donorId:'resolved-profile-donor',amount:75,amountCAD:75,date:'2026-10-10',type:'declined',method:'credit_card',expectationId:'open-expectation'});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);const queue=await (await app.request('/v3/payments?status=declined&method=credit_card&limit=50',{}, {DB:db} as any)).json() as any;expect(queue.total).toBe(1);expect(queue.items[0]).toMatchObject({id:'open-decline'});const profile=await (await app.request('/v3/donors/resolved-profile-donor/profile',{}, {DB:db} as any)).json() as any;expect(profile.payments.map((payment:any)=>payment.id)).toEqual(['open-decline','approved-replacement']);expect(profile.summary.declinedCount).toBe(1);
+  });
+
   it('loads bounded account choices used by the payment form', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'accounts', 'asset-1', { id: 'asset-1', name: 'Main Bank', type: 'asset', currency: 'CAD', startingBalance: 100 });
@@ -613,6 +618,14 @@ describe('server-driven bank deposit matching', () => {
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const response = await app.request('/v3/tasks?limit=50&status=pending', {}, { DB: db } as any); const body = await response.json() as any;
     expect(response.status).toBe(200); expect(body.total).toBe(1); expect(body.limit).toBe(50); expect(body.items[0]).toMatchObject({ id: 'task-high', donorName: 'Task Donor', priority: 'high' }); expect(body.summary).toEqual({ total: 2, pending: 1, high: 1, overdue: 1, dueToday: 0 });
+  });
+
+  it('hides false Sola reminders from removed schedules and reminders already satisfied by an approved payment', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'recurringPayments','real-sola-schedule',{id:'real-sola-schedule',solaScheduleId:'real-sola-id',active:true});seedRecord(db,'recurringPayments','local-schedule',{id:'local-schedule',active:true});
+    seedRecord(db,'transactions','resolved-decline',{id:'resolved-decline',donorId:'resolved-donor',amount:100,date:'2026-09-10',type:'declined',expectationId:'resolved-expectation'});seedRecord(db,'transactions','resolved-approved',{id:'resolved-approved',donorId:'resolved-donor',amount:100,date:'2026-09-20',type:'approved',solaRef:'approved-ref'});seedRecord(db,'tasks','resolved-task',{id:'resolved-task',title:'Sola payment declined',type:'declined_payment',priority:'high',dueDate:'2026-09-10',completed:false,linkedScheduleId:'real-sola-schedule',linkedPaymentId:'resolved-decline'});
+    seedRecord(db,'transactions','invalid-pending',{id:'invalid-pending',donorId:'invalid-donor',amount:50,date:'2026-09-10',type:'declined',expectationId:'invalid-expectation'});seedRecord(db,'tasks','invalid-task',{id:'invalid-task',title:'Sola payment not received',type:'declined_payment',priority:'high',dueDate:'2026-09-10',completed:false,linkedScheduleId:'local-schedule',linkedPaymentId:'invalid-pending'});
+    seedRecord(db,'transactions','real-decline',{id:'real-decline',donorId:'real-donor',amount:75,date:'2026-09-10',type:'declined',expectationId:'real-expectation'});seedRecord(db,'tasks','real-task',{id:'real-task',title:'Sola payment declined',type:'declined_payment',priority:'high',dueDate:'2026-09-10',completed:false,linkedScheduleId:'real-sola-schedule',linkedPaymentId:'real-decline'});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);const response=await app.request('/v3/tasks?limit=50&status=pending',{}, {DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(body.total).toBe(1);expect(body.items[0]).toMatchObject({id:'real-task'});expect(body.summary).toMatchObject({total:2,pending:1,high:1});
   });
 
   it('loads a bounded read-only cloud audit history with filters', async () => {
@@ -916,7 +929,7 @@ describe('server-driven bank deposit matching', () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-25T12:00:00Z'));
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });
-    seedRecord(db, 'recurringPayments', 'schedule-safe', { id: 'schedule-safe', donorId: 'scheduled-donor', amount: 75, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', endDate: '2026-08-20', method: 'credit_card', active: true });
+    seedRecord(db, 'recurringPayments', 'schedule-safe', { id: 'schedule-safe', donorId: 'scheduled-donor', solaScheduleId: 'sola-schedule-safe', amount: 75, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', endDate: '2026-08-20', method: 'credit_card', active: true });
     seedRecord(db, 'recurringPayments', 'locally-charged-schedule', { id: 'locally-charged-schedule', donorId: 'scheduled-donor', amount: 25, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', method: 'credit_card', paymentMethodIds: ['saved-card'], active: true });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const first = await app.request('/v3/schedules/process-due', { method: 'POST' }, { DB: db } as any); const firstBody = await first.json() as any;
