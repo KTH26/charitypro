@@ -2,6 +2,8 @@ import type { Hono } from 'hono';
 import { validatePayload } from './validation';
 import { buildDonorSheetPlan } from './donor-sheet';
 
+const parseSetting = (raw: unknown, fallback: any) => { try { return JSON.parse(String(raw)); } catch { return fallback; } };
+
 const parseRecord = (row: any) => ({
   ...JSON.parse(String(row.data)),
   id: String(row.id),
@@ -1057,7 +1059,6 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   });
 
   const settingDefaults: Record<string, any> = { isRtl: false, currency: 'CAD', exchangeRate: 1.35, donorSortBy: 'lastName', googleSheetSyncUrl: '' };
-  const parseSetting = (raw: unknown, fallback: any) => { try { return JSON.parse(String(raw)); } catch { return fallback; } };
   const getSolaKey = async (c: any) => {
     if (c.env.SOLA_API_KEY) return String(c.env.SOLA_API_KEY).trim();
     try {
