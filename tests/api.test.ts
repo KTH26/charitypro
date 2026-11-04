@@ -91,6 +91,7 @@ describe('Backend API & Security Rules', () => {
     expect(bankSource).toContain('Exact match');
     expect(bankSource).toContain('+ Add New Bank');
     expect(bankSource).toContain('Reconnect Bank');
+    expect(bankSource).toContain('forceRelink:true');
     expect(bankSource).toContain("usePlaidLink");
     expect(workerSource).toContain("access_token: accessToken");
     expect(workerSource).toContain("mode: accessToken ? 'reconnect'");

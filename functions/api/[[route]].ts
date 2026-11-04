@@ -52,11 +52,12 @@ app.post('/plaid/create_link_token', async (c) => {
     const PLAID_URL = getPlaidUrl(c.env.PLAID_ENV);
     const body = await c.req.json().catch(() => ({} as any));
     const accountId = String(body?.accountId || '').trim();
+    const forceRelink = body?.forceRelink === true;
     let accessToken = '';
     if (accountId) {
       await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS plaid_tokens (account_id TEXT PRIMARY KEY, access_token TEXT)').run();
       const tokenRow: any = await c.env.DB.prepare('SELECT access_token FROM plaid_tokens WHERE account_id = ?').bind(accountId).first();
-      accessToken = String(tokenRow?.access_token || '').trim();
+      accessToken = forceRelink ? '' : String(tokenRow?.access_token || '').trim();
     }
 
     const reqBody: any = {
