@@ -7,6 +7,7 @@ type BankAccount = {
   id: string;
   name: string;
   currency: string;
+  revision: number;
   bankConnected: boolean;
   savedTransactionCount?: number;
 };
@@ -448,6 +449,20 @@ export const OnlineBank: React.FC = () => {
     }
   };
 
+  const removeBank = async () => {
+    if (!selectedAccount || !window.confirm(`Remove ${selectedAccount.name} from Bank Feed?\n\nIts bank connection will be disconnected, but all saved transactions, matches, payments, expenses, transfers, and accounting history will remain.`)) return;
+    setLoading(true); setError(''); setNotice('');
+    const requestId = crypto.randomUUID();
+    try {
+      const response = await fetch('/api/v3/bank/remove', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId }, body: JSON.stringify({ accountId: selectedAccount.id, revision: selectedAccount.revision, requestId }) });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Unable to remove this bank.');
+      const remaining = accounts.filter(account => account.id !== selectedAccount.id);
+      setAccounts(remaining); setSelectedBank(remaining[0]?.id || ''); setFeed([]); setNotice(`${selectedAccount.name} was removed from Bank Feed. Its historical accounting records were preserved.`);
+    } catch (reason: any) { setError(reason.message || 'Unable to remove this bank.'); }
+    finally { setLoading(false); }
+  };
+
   const visibleFeed = useMemo(() => feed, [feed]);
   const selectedAccount = accounts.find((account) => account.id === selectedBank);
   const expenseAccounts = allAccounts.filter((account) => account.type === "expense");
@@ -520,7 +535,7 @@ export const OnlineBank: React.FC = () => {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(190px,1fr) auto auto",
+                gridTemplateColumns: "minmax(190px,1fr) auto auto auto",
                 gap: 10,
               }}
             >
@@ -530,6 +545,9 @@ export const OnlineBank: React.FC = () => {
               </button>
               <button className="btn btn-secondary" onClick={() => selectedAccount && void beginBankConnection("reconnect", selectedAccount.id)} disabled={loading || !selectedAccount}>
                 Reconnect Bank
+              </button>
+              <button className="btn btn-danger" onClick={() => void removeBank()} disabled={loading || !selectedAccount}>
+                Remove Bank
               </button>
             </div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Each bank keeps its own saved feed. Transactions load automatically when you open a bank tab. Sync only checks for newer transactions, starting from {startDate ? `your selected date (${startDate})` : lastSyncDate ? `the last successful sync (${lastSyncDate})` : "the last 30 days for this first sync"}.</div>

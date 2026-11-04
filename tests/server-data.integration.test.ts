@@ -707,6 +707,22 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200);expect(body.accounts[0]).toMatchObject({id:'recent-bank',savedTransactionCount:1,lastBankSync:20});
   });
 
+  it('removes a bank connection while preserving its account and historical records', async () => {
+    const db=new MockD1();databases.push(db);
+    seedRecord(db,'accounts','remove-bank',{id:'remove-bank',name:'Bank to Remove',type:'asset',currency:'CAD',plaidConnected:true});
+    seedRecord(db,'bankFeedTransactions','remove-bank:tx-1',{id:'tx-1',accountId:'remove-bank',date:'2026-07-22',description:'Saved history',amount:10});
+    seedRecord(db,'bills','historical-bill',{id:'historical-bill',vendor:'Vendor',amount:10,status:'paid',sourceAccountId:'remove-bank'});
+    db.database.prepare('CREATE TABLE plaid_tokens(account_id TEXT PRIMARY KEY,access_token TEXT NOT NULL)').run();
+    db.database.prepare('INSERT INTO plaid_tokens(account_id,access_token) VALUES(?,?)').run('remove-bank','saved-token');
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/bank/remove',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'remove-bank-once'},body:JSON.stringify({accountId:'remove-bank',revision:1})},{DB:db} as any);const body=await response.json() as any;
+    expect(response.status).toBe(200);expect(body).toMatchObject({success:true,accountId:'remove-bank',removed:true});
+    const account:any=db.database.prepare("SELECT data,is_deleted FROM sync_records WHERE type='accounts' AND id='remove-bank'").get();expect(account.is_deleted).toBe(0);expect(JSON.parse(account.data)).toMatchObject({plaidConnected:false,bankFeedRemoved:true});
+    expect(db.database.prepare("SELECT COUNT(*) count FROM plaid_tokens WHERE account_id='remove-bank'").get().count).toBe(0);
+    expect(db.database.prepare("SELECT COUNT(*) count FROM sync_records WHERE id IN ('remove-bank:tx-1','historical-bill') AND is_deleted=0").get().count).toBe(2);
+    const state:any=await (await app.request('/v3/bank/state',{}, {DB:db} as any)).json();expect(state.accounts).toEqual([]);
+  });
+
   it('calculates fundraising reports on the server in bounded pages', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'report-donor', { id: 'report-donor', name: 'Report Donor', phone: '555-0101' });
