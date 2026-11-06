@@ -712,7 +712,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
     const rows = await c.env.DB.prepare(`
       SELECT t.id, t.data, t.revision, t.updated_at,
-             d.data AS donor_data,
+             json_extract(d.data, '$.name') AS donor_name,
+             json_extract(d.data, '$.firstName') AS donor_first_name,
+             json_extract(d.data, '$.lastName') AS donor_last_name,
+             json_extract(d.data, '$.preTitle') AS donor_pre_title,
+             json_extract(d.data, '$.hebFirstName') AS donor_heb_first_name,
+             json_extract(d.data, '$.hebLastName') AS donor_heb_last_name,
+             json_extract(d.data, '$.title') AS donor_title,
              json_extract(src.data, '$.name') AS source_name,
              json_extract(off.data, '$.name') AS offset_name
       FROM sync_records t
@@ -733,9 +739,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const lines = [headers.map(csvCell).join(',')];
     for (const row of rows.results as any[]) {
       const payment = parseSetting(row.data, {});
-      const donor = parseSetting(row.donor_data, {});
-      const englishName = String(donor.name || [donor.firstName, donor.lastName].filter(Boolean).join(' ')).trim();
-      const yiddishName = [donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ').trim();
+      const englishName = String(row.donor_name || [row.donor_first_name, row.donor_last_name].filter(Boolean).join(' ')).trim();
+      const yiddishName = [row.donor_pre_title, row.donor_heb_first_name, row.donor_heb_last_name, row.donor_title].filter(Boolean).join(' ').trim();
       lines.push([
         row.id, payment.donorId, englishName, yiddishName, payment.date, payment.type, payment.method,
         payment.amount, payment.currency, payment.amountCAD, payment.sourceAccountId, row.source_name,
