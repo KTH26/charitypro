@@ -64,6 +64,26 @@ describe('expense category hierarchy totals', () => {
   });
 });
 
+describe('payment export', () => {
+  it('downloads every active payment with donor and account details in one CSV', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'export-donor', { id: 'export-donor', name: 'Moishe Example', hebFirstName: 'משה', hebLastName: 'ביישפיל' });
+    seedRecord(db, 'accounts', 'export-bank', { id: 'export-bank', name: 'Main Bank', type: 'asset', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'export-revenue', { id: 'export-revenue', name: 'General Donations', type: 'revenue', currency: 'CAD' });
+    seedRecord(db, 'transactions', 'export-payment', { id: 'export-payment', donorId: 'export-donor', amount: 125, amountCAD: 125, currency: 'CAD', date: '2026-11-01', type: 'approved', method: 'check', sourceAccountId: 'export-bank', offsetAccountId: 'export-revenue', referenceNumber: 'REF-125', notes: 'Annual gift' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/payments/export.csv', {}, { DB: db } as any);
+    const csv = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/csv');
+    expect(response.headers.get('content-disposition')).toContain('charitypro-all-payments-');
+    expect(csv).toContain('"Payment ID"');
+    expect(csv).toContain('"export-payment","export-donor","Moishe Example","משה ביישפיל"');
+    expect(csv).toContain('"export-bank","Main Bank","export-revenue","General Donations"');
+    expect(csv).toContain('"REF-125"');
+  });
+});
+
 describe('tokenized donor payment methods', () => {
   it('turns iFields single-use tokens into a reusable Sola token without storing card data', async () => {
     const db = new MockD1(); databases.push(db);

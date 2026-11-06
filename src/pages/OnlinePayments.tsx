@@ -51,6 +51,7 @@ export const OnlinePayments: React.FC = () => {
   const [notice, setNotice] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<OnlinePayment | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [sort, setSort] = useState('date');
   const [direction, setDirection] = useState<SortDirection>('desc');
   const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'date' || column === 'amount' ? 'desc' : 'asc')); setSort(column); setPage(1); };
@@ -100,6 +101,32 @@ export const OnlinePayments: React.FC = () => {
     await load();
   };
 
+  const exportAllPayments = async () => {
+    setExporting(true);
+    setError('');
+    try {
+      const response = await fetch('/api/v3/payments/export.csv');
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text.startsWith('{') ? JSON.parse(text).error : `Export failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `charitypro-all-payments-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setNotice('All payments were exported successfully.');
+    } catch (reason: any) {
+      setError(reason.message || 'Unable to export all payments.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: '28px', fontFamily: 'Inter, sans-serif' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
@@ -110,7 +137,10 @@ export const OnlinePayments: React.FC = () => {
             <div style={{ color: 'var(--green)', fontWeight: 700 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
             <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 3 }}>Live cloud data — updates automatically every 3 seconds</div>
           </div>
-          <button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button className="btn btn-secondary" onClick={() => void exportAllPayments()} disabled={exporting}>{exporting ? 'Preparing Export…' : 'Export All Payments'}</button>
+            <button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button>
+          </div>
         </div>
 
         {showCreate && <OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {

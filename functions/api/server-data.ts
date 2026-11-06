@@ -706,6 +706,55 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const response={success:true,item:{...next,id,revision,updatedAt:now}};statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));try{await c.env.DB.batch(statements);return c.json(response);}catch{return c.json({success:false,error:'This check changed. Reload it and try again.',conflict:true},409);}
   });
 
+  app.get('/v3/payments/export.csv', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read');
+    if (denied) return denied;
+
+    const rows = await c.env.DB.prepare(`
+      SELECT t.id, t.data, t.revision, t.updated_at,
+             d.data AS donor_data,
+             json_extract(src.data, '$.name') AS source_name,
+             json_extract(off.data, '$.name') AS offset_name
+      FROM sync_records t
+      LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0
+      LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(t.data,'$.sourceAccountId') AND src.is_deleted=0
+      LEFT JOIN sync_records off ON off.type='accounts' AND off.id=json_extract(t.data,'$.offsetAccountId') AND off.is_deleted=0
+      WHERE t.type='transactions' AND t.is_deleted=0
+      ORDER BY json_extract(t.data,'$.date') DESC, t.id DESC
+    `).all();
+
+    const csvCell = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const headers = [
+      'Payment ID', 'Donor ID', 'Donor English Name', 'Donor Yiddish Name', 'Date', 'Status', 'Method',
+      'Amount', 'Currency', 'Amount CAD', 'Receiving Account ID', 'Receiving Account Name',
+      'Offset Account ID', 'Offset Account Name', 'Pledge ID', 'Pledge Allocations', 'Reference Number',
+      'Sola Reference', 'Check Number', 'Deposit Status', 'Schedule ID', 'Notes', 'Revision', 'Updated At'
+    ];
+    const lines = [headers.map(csvCell).join(',')];
+    for (const row of rows.results as any[]) {
+      const payment = parseSetting(row.data, {});
+      const donor = parseSetting(row.donor_data, {});
+      const englishName = String(donor.name || [donor.firstName, donor.lastName].filter(Boolean).join(' ')).trim();
+      const yiddishName = [donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ').trim();
+      lines.push([
+        row.id, payment.donorId, englishName, yiddishName, payment.date, payment.type, payment.method,
+        payment.amount, payment.currency, payment.amountCAD, payment.sourceAccountId, row.source_name,
+        payment.offsetAccountId, row.offset_name, payment.pledgeId,
+        Array.isArray(payment.pledgeAllocations) ? JSON.stringify(payment.pledgeAllocations) : '',
+        payment.referenceNumber || payment.reference, payment.solaRef, payment.checkNumber, payment.depositStatus,
+        payment.scheduleId || payment.solaScheduleId, payment.notes, row.revision,
+        row.updated_at ? new Date(Number(row.updated_at)).toISOString() : ''
+      ].map(csvCell).join(','));
+    }
+
+    const filename = `charitypro-all-payments-${new Date().toISOString().slice(0, 10)}.csv`;
+    return c.body(`\uFEFF${lines.join('\r\n')}`, 200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store'
+    });
+  });
+
   app.get('/v3/payments', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
