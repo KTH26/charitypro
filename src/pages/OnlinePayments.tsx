@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { OnlinePaymentForm } from '../components/OnlinePaymentForm';
 import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
@@ -52,6 +52,8 @@ export const OnlinePayments: React.FC = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<OnlinePayment | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const reviewedImportRef = useRef<HTMLInputElement>(null);
   const [sort, setSort] = useState('date');
   const [direction, setDirection] = useState<SortDirection>('desc');
   const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'date' || column === 'amount' ? 'desc' : 'asc')); setSort(column); setPage(1); };
@@ -127,6 +129,32 @@ export const OnlinePayments: React.FC = () => {
     }
   };
 
+  const importReviewedPayments = async (file: File) => {
+    setImporting(true); setError(''); setNotice('');
+    try {
+      const parsed = JSON.parse(await file.text());
+      const payments = Array.isArray(parsed) ? parsed : parsed.payments;
+      if (!Array.isArray(payments) || !payments.length) throw new Error('The reviewed import file contains no payments.');
+      let imported = 0; let skipped = 0;
+      for (let start = 0; start < payments.length; start += 20) {
+        const response = await fetch('/api/v3/payments/import-reviewed', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payments: payments.slice(start, start + 20) }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || `Reviewed import failed (${response.status}).`);
+        imported += Number(data.imported || 0); skipped += Number(data.skipped || 0);
+      }
+      setNotice(`Reviewed import complete: ${imported} payment${imported === 1 ? '' : 's'} added${skipped ? `, ${skipped} already present and skipped` : ''}.`);
+      setPage(1); await load();
+    } catch (reason: any) {
+      setError(reason.message || 'Unable to import the reviewed payments.');
+    } finally {
+      setImporting(false);
+      if (reviewedImportRef.current) reviewedImportRef.current.value = '';
+    }
+  };
+
   return (
     <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: '28px', fontFamily: 'Inter, sans-serif' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
@@ -138,6 +166,8 @@ export const OnlinePayments: React.FC = () => {
             <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 3 }}>Live cloud data — updates automatically every 3 seconds</div>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <input ref={reviewedImportRef} type="file" accept="application/json,.json" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void importReviewedPayments(file); }} />
+            <button className="btn btn-secondary" onClick={() => reviewedImportRef.current?.click()} disabled={importing}>{importing ? 'Importing Reviewed…' : 'Import Reviewed Payments'}</button>
             <button className="btn btn-secondary" onClick={() => void exportAllPayments()} disabled={exporting}>{exporting ? 'Preparing Export…' : 'Export All Payments'}</button>
             <button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button>
           </div>

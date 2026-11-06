@@ -2982,6 +2982,78 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, account: parseRecord(account), items: rows.results.map((row: any) => ({ ...parseRecord(row), recordType: row.type })), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
+  app.post('/v3/payments/import-reviewed', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.create');
+    if (denied) return denied;
+    const body = await c.req.json();
+    const payments = Array.isArray(body.payments) ? body.payments : [];
+    if (!payments.length || payments.length > 25) return c.json({ success: false, error: 'Import between 1 and 25 reviewed payments at a time.' }, 400);
+
+    const normalized = payments.map((item: any) => ({
+      externalPaymentId: String(item.externalPaymentId || '').trim(),
+      donorId: String(item.donorId || '').trim(),
+      amount: Number(item.amount),
+      date: String(item.date || '').trim(),
+      currency: item.currency === 'USD' ? 'USD' : 'CAD',
+      method: String(item.method || '').trim(),
+      sourceAccountId: String(item.sourceAccountId || '').trim(),
+      offsetAccountId: String(item.offsetAccountId || '').trim(),
+      referenceNumber: String(item.referenceNumber || '').trim().slice(0, 200),
+      notes: String(item.notes || '').trim().slice(0, 1500),
+    }));
+    const allowedMethods = new Set(['credit_card', 'check', 'cash', 'e_transfer', 'vouchers', 'eizer', 'bnei_leivy', 'other']);
+    if (normalized.some((item: any) => !item.externalPaymentId || !item.donorId || !Number.isFinite(item.amount) || item.amount <= 0 || !isoDate(item.date) || !allowedMethods.has(item.method) || !item.sourceAccountId || !item.offsetAccountId)) {
+      return c.json({ success: false, error: 'Every reviewed payment needs an external ID, donor, date, positive amount, method, receiving account, and revenue account.' }, 400);
+    }
+    if (new Set(normalized.map((item: any) => item.externalPaymentId)).size !== normalized.length) return c.json({ success: false, error: 'The reviewed file contains duplicate DonorFuse payment IDs.' }, 400);
+
+    const donorIds = [...new Set(normalized.map((item: any) => item.donorId))];
+    const accountIds = [...new Set(normalized.flatMap((item: any) => [item.sourceAccountId, item.offsetAccountId]))];
+    const recordIds = normalized.map((item: any) => `donorfuse-payment-${item.externalPaymentId}`);
+    const [donorRows, accountRows, existingRows] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(donorIds)),
+      c.env.DB.prepare("SELECT id FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(accountIds)),
+      c.env.DB.prepare("SELECT id FROM sync_records WHERE type='transactions' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(recordIds)),
+    ]);
+    const foundDonors = new Set(donorRows.results.map((row: any) => String(row.id)));
+    const foundAccounts = new Set(accountRows.results.map((row: any) => String(row.id)));
+    const existing = new Set(existingRows.results.map((row: any) => String(row.id)));
+    const invalid = normalized.filter((item: any) => !foundDonors.has(item.donorId) || !foundAccounts.has(item.sourceAccountId) || !foundAccounts.has(item.offsetAccountId));
+    if (invalid.length) return c.json({ success: false, error: `The import contains ${invalid.length} payment(s) with a missing donor or account.`, invalidExternalPaymentIds: invalid.map((item: any) => item.externalPaymentId) }, 409);
+
+    const now = Date.now();
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    const statements: any[] = [];
+    const imported: string[] = [];
+    const skipped: string[] = [];
+    for (const item of normalized) {
+      const id = `donorfuse-payment-${item.externalPaymentId}`;
+      if (existing.has(id)) { skipped.push(item.externalPaymentId); continue; }
+      const pledge: any = await pledgeForPaymentDate(c.env.DB, item.donorId, item.date);
+      const amountCAD = item.amount;
+      const record = {
+        id, donorId: item.donorId, amount: item.amount, amountCAD, date: item.date,
+        type: 'approved', method: item.method, currency: item.currency,
+        sourceAccountId: item.sourceAccountId, offsetAccountId: item.offsetAccountId,
+        depositStatus: 'direct', externalSource: 'donorfuse', externalPaymentId: item.externalPaymentId,
+        referenceNumber: item.referenceNumber,
+        ...(pledge ? { pledgeId: String(pledge.id), pledgeAutoLinked: true } : {}),
+        notes: [`Imported from DonorFuse. Payment ID: ${item.externalPaymentId}.`, item.referenceNumber ? `Reference: ${item.referenceNumber}.` : '', item.notes].filter(Boolean).join(' '),
+      };
+      const data = JSON.stringify(record);
+      const operationId = `donorfuse-import-${item.externalPaymentId}`;
+      statements.push(
+        c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(id, data, now, operationId),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(id, data, now, operationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, operationId, operationId, 'Imported from reviewed DonorFuse migration file')
+      );
+      imported.push(item.externalPaymentId);
+    }
+    if (statements.length) await c.env.DB.batch(statements);
+    return c.json({ success: true, imported: imported.length, skipped: skipped.length, importedExternalPaymentIds: imported, skippedExternalPaymentIds: skipped }, imported.length ? 201 : 200);
+  });
+
   app.post('/v3/payments', async (c: any) => {
     const denied = requirePermission(c, 'transactions.create');
     if (denied) return denied;
