@@ -759,13 +759,19 @@ describe('server-driven bank deposit matching', () => {
     seedRecord(db, 'accounts', 'revenue-1', { id: 'revenue-1', name: 'Donations', type: 'revenue', currency: 'CAD' });
     seedRecord(db, 'accounts', 'expense-1', { id: 'expense-1', name: 'Programs', type: 'expense', currency: 'CAD' });
     seedRecord(db, 'projects', 'project-1', { id: 'project-1', name: 'Food Program' });
+    seedRecord(db, 'projects', 'project-2', { id: 'project-2', name: 'Holiday Food', parentId: 'project-1' });
     seedRecord(db, 'transactions', 'income-1', { id: 'income-1', amount: 200, amountCAD: 200, currency: 'CAD', date: '2026-07-20', type: 'approved', offsetAccountId: 'revenue-1', projectId: 'project-1' });
-    seedRecord(db, 'bills', 'expense-bill-1', { id: 'expense-bill-1', vendor: 'Supplier', amount: 75, currency: 'CAD', dueDate: '2026-07-20', paidDate: '2026-07-21', status: 'paid', category: 'expense-1', projectId: 'project-1' });
+    seedRecord(db, 'transactions', 'income-2', { id: 'income-2', amount: 50, amountCAD: 50, currency: 'CAD', date: '2026-07-21', type: 'approved', offsetAccountId: 'revenue-1', projectId: 'project-2' });
+    seedRecord(db, 'bills', 'expense-bill-1', { id: 'expense-bill-1', vendor: 'Supplier', amount: 75, currency: 'CAD', dueDate: '2026-07-20', paidDate: '2026-07-21', status: 'paid', category: 'expense-1', projectId: 'project-2' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const projectResponse = await app.request('/v3/reports?tab=by_project&limit=50', {}, { DB: db } as any); const project = await projectResponse.json() as any;
-    expect(projectResponse.status).toBe(200); expect(project.items[0]).toMatchObject({ id: 'project-1', income: 200, cost: 75 });
+    expect(projectResponse.status).toBe(200);
+    expect(project.items[0]).toMatchObject({ id: 'project-1', ownIncome: 200, ownCost: 0, income: 250, cost: 75, childCount: 1 });
+    expect(project.items[1]).toMatchObject({ id: 'project-2', parentId: 'project-1', parentName: 'Food Program', ownIncome: 50, ownCost: 75, income: 50, cost: 75 });
+    const ledgerResponse = await app.request('/v3/projects/project-1/ledger', {}, { DB: db } as any); const ledger = await ledgerResponse.json() as any;
+    expect(ledgerResponse.status).toBe(200); expect(ledger.transactions).toHaveLength(2); expect(ledger.bills).toHaveLength(1); expect(ledger).toMatchObject({ income: 250, cost: 75 });
     const response = await app.request('/v3/profit-loss?startDate=2026-07-01&endDate=2026-07-31&limit=50', {}, { DB: db } as any); const body = await response.json() as any;
-    expect(response.status).toBe(200); expect(body.summary).toEqual({ revenue: 200, expenses: 75, netIncome: 125 }); expect(body.items).toHaveLength(2);
+    expect(response.status).toBe(200); expect(body.summary).toEqual({ revenue: 250, expenses: 75, netIncome: 175 }); expect(body.items).toHaveLength(2);
   });
 
   it('restores shared expense categories, all-expenses default, and the processing queue', async () => {

@@ -277,6 +277,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const record = { ...body.data, id };
     const validation = validatePayload(type, record);
     if (!validation.success) return c.json({ success: false, error: 'The record contains invalid data.' }, 400);
+    if (type === 'projects') {
+      record.name = String(record.name || '').trim();
+      record.parentId = String(record.parentId || '').trim() || null;
+      if (!record.name) return c.json({ success: false, error: 'Project name is required.' }, 400);
+      if (record.parentId) {
+        const parent = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(record.parentId).first();
+        if (!parent) return c.json({ success: false, error: 'The selected main project does not exist.' }, 409);
+      }
+    }
     if (type === 'campaigns') {
       const year = Number(record.year);
       if (!String(record.name || '').trim() || !Number.isInteger(year) || year < 1900 || year > 2200 || !isoDate(record.startDate) || !isoDate(record.endDate) || record.startDate > record.endDate || !['CAD','USD'].includes(record.currency) || !['draft','active','closed'].includes(record.status)) return c.json({ success: false, error: 'Campaign name, year, dates, currency, and status are required.' }, 400);
@@ -348,6 +357,18 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const record = { ...existing, ...body.data, id };
     const validation = validatePayload(type, record);
     if (!validation.success) return c.json({ success: false, error: 'The record contains invalid data.' }, 400);
+    if (type === 'projects') {
+      record.name = String(record.name || '').trim();
+      record.parentId = String(record.parentId || '').trim() || null;
+      if (!record.name) return c.json({ success: false, error: 'Project name is required.' }, 400);
+      if (record.parentId) {
+        if (record.parentId === id) return c.json({ success: false, error: 'A project cannot be its own main project.' }, 409);
+        const parent = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(record.parentId).first();
+        if (!parent) return c.json({ success: false, error: 'The selected main project does not exist.' }, 409);
+        const cycle: any = await c.env.DB.prepare(`WITH RECURSIVE descendants(id) AS (SELECT id FROM sync_records WHERE type='projects' AND is_deleted=0 AND json_extract(data,'$.parentId')=? UNION ALL SELECT p.id FROM sync_records p JOIN descendants d ON json_extract(p.data,'$.parentId')=d.id WHERE p.type='projects' AND p.is_deleted=0) SELECT id FROM descendants WHERE id=? LIMIT 1`).bind(id, record.parentId).first();
+        if (cycle) return c.json({ success: false, error: 'This project hierarchy would create a loop.' }, 409);
+      }
+    }
     if (type === 'transactions' && record.pledgeId) {
       const pledge: any = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(String(record.pledgeId), String(record.donorId || '')).first();
       if (!pledge) return c.json({ success: false, error: 'The selected pledge does not belong to this donor.' }, 409);
@@ -433,6 +454,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (type === 'campaigns') {
       const pledge: any = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.campaignId')=? LIMIT 1").bind(id).first();
       if (pledge) return c.json({ success: false, error: 'This campaign has pledges and cannot be deleted. Close it instead.' }, 409);
+    }
+    if (type === 'projects') {
+      const child: any = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND is_deleted=0 AND json_extract(data,'$.parentId')=? LIMIT 1").bind(id).first();
+      if (child) return c.json({ success: false, error: 'Move or delete the projects underneath this main project first.' }, 409);
     }
     const expectedRevision = Number(body.revision);
     if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
@@ -1039,8 +1064,26 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     } else if (tab === 'by_donor') {
       listSql = "SELECT d.id,json_extract(d.data,'$.name') AS name,json_extract(d.data,'$.phone') AS phone,COUNT(t.id) AS count,COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)),0) AS total,MIN(json_extract(t.data,'$.date')) AS first_date,MAX(json_extract(t.data,'$.date')) AS last_date FROM sync_records d JOIN sync_records t ON t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.donorId')=d.id AND json_extract(t.data,'$.type')='approved' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 WHERE d.type='donors' AND d.is_deleted=0 GROUP BY d.id ORDER BY total DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(DISTINCT json_extract(data,'$.donorId')) AS count,COALESCE(SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)),0) AS grand_total FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0"; bindings.push(limit,offset);
     } else if (tab === 'by_project') {
-      const projectTotals = "WITH project_totals AS (SELECT p.id,json_extract(p.data,'$.name') AS name,COALESCE((SELECT SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.projectId')=p.id),0) AS income,COALESCE((SELECT SUM(COALESCE(json_extract(b.data,'$.amount'),0)) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId')=p.id),0) AS cost FROM sync_records p WHERE p.type='projects' AND p.is_deleted=0) ";
-      listSql = `${projectTotals}SELECT id,name,income,cost FROM project_totals WHERE income<>0 OR cost<>0 ORDER BY cost DESC LIMIT ? OFFSET ?`; countSql = `${projectTotals}SELECT COUNT(*) AS count FROM project_totals WHERE income<>0 OR cost<>0`; bindings.push(limit,offset);
+      const projectTotals = `WITH RECURSIVE projects AS (
+        SELECT id,json_extract(data,'$.name') AS name,NULLIF(json_extract(data,'$.parentId'),'') AS parent_id
+        FROM sync_records WHERE type='projects' AND is_deleted=0
+      ), tree(ancestor_id,descendant_id) AS (
+        SELECT id,id FROM projects
+        UNION ALL
+        SELECT tree.ancestor_id,projects.id FROM tree JOIN projects ON projects.parent_id=tree.descendant_id
+      ), own AS (
+        SELECT projects.id,
+          COALESCE((SELECT SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.projectId')=projects.id),0) AS own_income,
+          COALESCE((SELECT SUM(COALESCE(json_extract(b.data,'$.amount'),0)) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId')=projects.id),0) AS own_cost
+        FROM projects
+      ), project_totals AS (
+        SELECT projects.id,projects.name,projects.parent_id AS parentId,own.own_income AS ownIncome,own.own_cost AS ownCost,
+          SUM(descendant_own.own_income) AS income,SUM(descendant_own.own_cost) AS cost,
+          (SELECT COUNT(*) FROM projects child WHERE child.parent_id=projects.id) AS childCount
+        FROM projects JOIN own ON own.id=projects.id JOIN tree ON tree.ancestor_id=projects.id JOIN own descendant_own ON descendant_own.id=tree.descendant_id
+        GROUP BY projects.id,projects.name,projects.parent_id,own.own_income,own.own_cost
+      ) `;
+      listSql = `${projectTotals}SELECT totals.id,totals.name,totals.parentId,parent.name AS parentName,totals.ownIncome,totals.ownCost,totals.income,totals.cost,totals.childCount FROM project_totals totals LEFT JOIN projects parent ON parent.id=totals.parentId WHERE totals.income<>0 OR totals.cost<>0 ORDER BY lower(COALESCE(parent.name,totals.name)),CASE WHEN totals.parentId IS NULL THEN 0 ELSE 1 END,lower(totals.name) LIMIT ? OFFSET ?`; countSql = `${projectTotals}SELECT COUNT(*) AS count FROM project_totals WHERE income<>0 OR cost<>0`; bindings.push(limit,offset);
     } else if (tab === 'tax_summary') {
       listSql = "SELECT substr(json_extract(data,'$.dueDate'),1,4) AS year,COUNT(*) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.taxable'),0)=1 GROUP BY year ORDER BY year DESC LIMIT ? OFFSET ?"; countSql = "SELECT COUNT(DISTINCT substr(json_extract(data,'$.dueDate'),1,4)) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS grand_total FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.taxable'),0)=1"; bindings.push(limit,offset);
     } else return c.json({ success: false, error: 'Unknown report.' }, 404);
@@ -1054,13 +1097,17 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const id = String(c.req.param('id') || '');
     const project: any = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(id).first();
     if (!project) return c.json({ success: false, error: 'Project not found.' }, 404);
+    const descendants = `WITH RECURSIVE descendants(id) AS (
+      SELECT ? UNION ALL
+      SELECT p.id FROM sync_records p JOIN descendants d ON json_extract(p.data,'$.parentId')=d.id WHERE p.type='projects' AND p.is_deleted=0
+    ) `;
     const [transactions, bills] = await c.env.DB.batch([
-      c.env.DB.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.projectId')=? ORDER BY json_extract(t.data,'$.date') DESC,t.id DESC LIMIT 500").bind(id),
-      c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.projectId')=? ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT 500").bind(id)
+      c.env.DB.prepare(`${descendants}SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(p.data,'$.name') AS project_name FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records p ON p.type='projects' AND p.id=json_extract(t.data,'$.projectId') AND p.is_deleted=0 WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.projectId') IN (SELECT id FROM descendants) ORDER BY json_extract(t.data,'$.date') DESC,t.id DESC LIMIT 500`).bind(id),
+      c.env.DB.prepare(`${descendants}SELECT b.id,b.data,b.revision,b.updated_at,json_extract(p.data,'$.name') AS project_name FROM sync_records b LEFT JOIN sync_records p ON p.type='projects' AND p.id=json_extract(b.data,'$.projectId') AND p.is_deleted=0 WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId') IN (SELECT id FROM descendants) ORDER BY COALESCE(json_extract(b.data,'$.paidDate'),json_extract(b.data,'$.dueDate')) DESC,b.id DESC LIMIT 500`).bind(id)
     ]);
     const income = transactions.results.reduce((sum: number,row: any)=>{const item=JSON.parse(String(row.data));return sum+(item.type==='approved'?Number(item.amountCAD??item.amount??0):0);},0);
     const cost = bills.results.reduce((sum: number,row: any)=>sum+Number(JSON.parse(String(row.data)).amount||0),0);
-    return c.json({ success:true, project:{ id, ...JSON.parse(String(project.data)) }, transactions:transactions.results.map((row:any)=>({...parseRecord(row),donorName:row.donor_name||'Unknown Donor'})), bills:bills.results.map(parseRecord), income, cost });
+    return c.json({ success:true, project:{ id, ...JSON.parse(String(project.data)) }, transactions:transactions.results.map((row:any)=>({...parseRecord(row),donorName:row.donor_name||'Unknown Donor',projectName:row.project_name||''})), bills:bills.results.map((row:any)=>({...parseRecord(row),projectName:row.project_name||''})), income, cost });
   });
 
   app.get('/v3/profit-loss', async (c: any) => {
