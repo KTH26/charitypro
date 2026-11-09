@@ -32,8 +32,9 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
     setRunning(true); setError(''); setComplete(false); setProgress(0);
     try {
       const skipped: Operation[] = [];
-      for (let start = 0; start < operations.length; start += 25) {
-        const batch = operations.slice(start, start + 25);
+      const batchSize = 10;
+      for (let start = 0; start < operations.length; start += batchSize) {
+        const batch = operations.slice(start, start + batchSize);
         const response = await fetch('/api/v3/admin/reconcile-donorfuse', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `donorfuse-reconcile-${start}-${batch.map(item => item.id).join('-').slice(0, 110)}` },
@@ -53,6 +54,7 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
           } else throw new Error(result.error || `Reconciliation stopped at record ${start + 1}.`);
         }
         setProgress(Math.min(operations.length, start + batch.length));
+        if (start + batch.length < operations.length) await new Promise(resolve => window.setTimeout(resolve, 350));
       }
       setConflicts(skipped);
       setComplete(true);
