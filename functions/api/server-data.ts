@@ -200,6 +200,93 @@ const pledgeForPaymentDate = async (db: any, donorId: unknown, date: unknown) =>
 };
 
 export const registerServerDataRoutes = (app: Hono<any>) => {
+  app.post('/v3/admin/reconcile-donorfuse', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const body = await c.req.json().catch(() => ({}));
+    const operations = Array.isArray(body.operations) ? body.operations : [];
+    if (!operations.length || operations.length > 25) return c.json({ success: false, error: 'Send between 1 and 25 reconciliation operations per batch.' }, 400);
+    const mutationId = String(c.req.header('Idempotency-Key') || crypto.randomUUID()).slice(0, 180);
+    const userId = String(c.get('userId') || 'unknown');
+    const userEmail = String(c.get('userEmail') || 'unknown');
+    const now = Date.now();
+    const allowedUpdates: Record<string, Set<string>> = {
+      pledges: new Set(['donorId', 'date', 'campaignId']),
+      transactions: new Set(['pledgeId', 'pledgeAllocations', 'pledgeAutoLinked', 'pledgeAutoLinkedAt'])
+    };
+    const statements: any[] = [];
+    const applied: any[] = [];
+    const conflicts: any[] = [];
+
+    for (let index = 0; index < operations.length; index++) {
+      const operation = operations[index] || {};
+      const action = String(operation.action || '');
+      const type = String(operation.type || '');
+      const id = String(operation.id || '').trim();
+      const expectedRevision = Number(operation.revision);
+      const operationId = `${mutationId}-${index}`;
+      if (!id || !['pledges', 'transactions'].includes(type) || !['create', 'update', 'delete'].includes(action)) {
+        return c.json({ success: false, error: `Invalid reconciliation operation at row ${index + 1}.` }, 400);
+      }
+      if (action === 'delete' && type !== 'pledges') return c.json({ success: false, error: 'Only unmatched pledges can be deleted by this reconciliation.' }, 400);
+      const current: any = await c.env.DB.prepare('SELECT data,revision,is_deleted,last_operation_id FROM sync_records WHERE type=? AND id=?').bind(type, id).first();
+      if (current?.last_operation_id === operationId) { applied.push({ id, type, action, alreadyApplied: true }); continue; }
+
+      if (action === 'create') {
+        if (type !== 'pledges' || current) { conflicts.push({ id, type, action, error: current ? 'Record already exists.' : 'Only pledges can be created.' }); continue; }
+        const dataObject = { ...(operation.data || {}), id };
+        const data = JSON.stringify(dataObject);
+        const reason = String(operation.reason || 'Restored from DonorFuse reconciliation').slice(0, 500);
+        statements.push(
+          c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?, ?,1,0,?)').bind(id, type, data, now, operationId),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(id, type, data, now, mutationId, operationId),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, type, data, userId, userEmail, now, mutationId, operationId, reason)
+        );
+        applied.push({ id, type, action, revision: 1 });
+        continue;
+      }
+
+      if (!current || Number(current.is_deleted)) { conflicts.push({ id, type, action, error: 'Record no longer exists.' }); continue; }
+      if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) { conflicts.push({ id, type, action, expectedRevision, actualRevision: Number(current.revision), error: 'Record changed after the reconciliation backup.' }); continue; }
+      const nextRevision = Number(current.revision) + 1;
+      const reason = String(operation.reason || 'DonorFuse pledge reconciliation').slice(0, 500);
+
+      if (action === 'update') {
+        const changes = operation.changes && typeof operation.changes === 'object' ? operation.changes : {};
+        const allowed = allowedUpdates[type];
+        if (!allowed || Object.keys(changes).some(key => !allowed.has(key))) return c.json({ success: false, error: `Reconciliation tried to change a protected ${type} field.` }, 400);
+        const previous = parseSetting(current.data, {});
+        const next = { ...previous, ...changes, id };
+        if (type === 'transactions') {
+          const allocations = Array.isArray(next.pledgeAllocations) ? next.pledgeAllocations : [];
+          const allocated = allocations.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
+          const paymentAmount = Number(next.amountCAD ?? next.amount ?? 0);
+          if (allocated < -0.005 || allocated > paymentAmount + 0.005) return c.json({ success: false, error: `Payment ${id} has invalid pledge allocations.` }, 400);
+        }
+        const data = JSON.stringify(next);
+        statements.push(
+          c.env.DB.prepare('UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(data, nextRevision, now, operationId, type, id, expectedRevision),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,?,'update',?,?,?,?)").bind(id, type, nextRevision, data, now, mutationId, operationId),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'update',?,?,?,?,?,?,?,?,?,?)").bind(id, type, expectedRevision, nextRevision, current.data, data, userId, userEmail, now, mutationId, operationId, reason)
+        );
+        applied.push({ id, type, action, revision: nextRevision });
+      } else {
+        const linked: any = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND is_deleted=0 AND (json_extract(data,'$.pledgeId')=? OR EXISTS (SELECT 1 FROM json_each(COALESCE(json_extract(data,'$.pledgeAllocations'),'[]')) WHERE json_extract(value,'$.pledgeId')=?))").bind(id, id).first();
+        if (Number(linked?.count || 0) > 0) return c.json({ success: false, error: `Pledge ${id} cannot be deleted because payments are linked to it.` }, 409);
+        statements.push(
+          c.env.DB.prepare('UPDATE sync_records SET is_deleted=1,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(nextRevision, now, operationId, type, id, expectedRevision),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,?,'delete','{}',?,?,?)").bind(id, type, nextRevision, now, mutationId, operationId),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'delete',?,?,?,NULL,?,?,?,?,?,?)").bind(id, type, expectedRevision, nextRevision, current.data, userId, userEmail, now, mutationId, operationId, reason)
+        );
+        applied.push({ id, type, action, revision: nextRevision });
+      }
+    }
+
+    if (conflicts.length) return c.json({ success: false, error: 'No records were changed because this batch contains conflicts.', conflicts }, 409);
+    if (statements.length) await c.env.DB.batch(statements);
+    return c.json({ success: true, applied });
+  });
+
   app.use('/v3/*',async(c:any,next:any)=>{
     const method=String(c.req.method||'GET').toUpperCase();
     const path=String(c.req.path||'');

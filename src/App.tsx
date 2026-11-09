@@ -16,6 +16,7 @@ import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
 import { OnlineTasks } from './pages/OnlineTasks';
 import { OnlineCampaigns } from './pages/OnlineCampaigns';
 import { OnlineAuditHistory } from './pages/OnlineAuditHistory';
+import { OnlineDonorFuseReconcile } from './pages/OnlineDonorFuseReconcile';
 
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
@@ -59,6 +60,7 @@ function App() {
         <Route path="/tasks" element={cloudPage(<OnlineTasks />)} />
         <Route path="/audit-history" element={cloudPage(<OnlineAuditHistory />)} />
         <Route path="/settings" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading settings...</div>}><OnlineSettings /></React.Suspense>)} />
+        <Route path="/donorfuse-reconcile" element={cloudPage(<OnlineDonorFuseReconcile />)} />
 
         {/* Temporary aliases for bookmarks created during the migration. */}
         <Route path="/online/payments" element={<Navigate to="/payments" replace />} />
