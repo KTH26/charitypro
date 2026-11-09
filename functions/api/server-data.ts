@@ -1219,11 +1219,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         SELECT id,id FROM projects
         UNION ALL
         SELECT tree.ancestor_id,projects.id FROM tree JOIN projects ON projects.parent_id=tree.descendant_id
+      ), income_by_project AS (
+        SELECT json_extract(data,'$.projectId') AS id,SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) AS total
+        FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.projectId'),'')<>'' GROUP BY id
+      ), cost_by_project AS (
+        SELECT json_extract(data,'$.projectId') AS id,SUM(COALESCE(json_extract(data,'$.amount'),0)) AS total
+        FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.projectId'),'')<>'' GROUP BY id
       ), own AS (
-        SELECT projects.id,
-          COALESCE((SELECT SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.projectId')=projects.id),0) AS own_income,
-          COALESCE((SELECT SUM(COALESCE(json_extract(b.data,'$.amount'),0)) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId')=projects.id),0) AS own_cost
-        FROM projects
+        SELECT projects.id,COALESCE(income_by_project.total,0) AS own_income,COALESCE(cost_by_project.total,0) AS own_cost
+        FROM projects LEFT JOIN income_by_project ON income_by_project.id=projects.id LEFT JOIN cost_by_project ON cost_by_project.id=projects.id
       ), project_totals AS (
         SELECT projects.id,projects.name,projects.parent_id AS parentId,own.own_income AS ownIncome,own.own_cost AS ownCost,
           SUM(descendant_own.own_income) AS income,SUM(descendant_own.own_cost) AS cost,
@@ -1243,19 +1247,22 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const denied = requirePermission(c, 'reports.read');
     if (denied) return denied;
     const id = String(c.req.param('id') || '');
-    const project: any = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(id).first();
-    if (!project) return c.json({ success: false, error: 'Project not found.' }, 404);
-    const descendants = `WITH RECURSIVE descendants(id) AS (
-      SELECT ? UNION ALL
-      SELECT p.id FROM sync_records p JOIN descendants d ON json_extract(p.data,'$.parentId')=d.id WHERE p.type='projects' AND p.is_deleted=0
-    ) `;
-    const [transactions, bills] = await c.env.DB.batch([
-      c.env.DB.prepare(`${descendants}SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(p.data,'$.name') AS project_name FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records p ON p.type='projects' AND p.id=json_extract(t.data,'$.projectId') AND p.is_deleted=0 WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.projectId') IN (SELECT id FROM descendants) ORDER BY json_extract(t.data,'$.date') DESC,t.id DESC LIMIT 500`).bind(id),
-      c.env.DB.prepare(`${descendants}SELECT b.id,b.data,b.revision,b.updated_at,json_extract(p.data,'$.name') AS project_name FROM sync_records b LEFT JOIN sync_records p ON p.type='projects' AND p.id=json_extract(b.data,'$.projectId') AND p.is_deleted=0 WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.projectId') IN (SELECT id FROM descendants) ORDER BY COALESCE(json_extract(b.data,'$.paidDate'),json_extract(b.data,'$.dueDate')) DESC,b.id DESC LIMIT 500`).bind(id)
-    ]);
-    const income = transactions.results.reduce((sum: number,row: any)=>{const item=JSON.parse(String(row.data));return sum+(item.type==='approved'?Number(item.amountCAD??item.amount??0):0);},0);
-    const cost = bills.results.reduce((sum: number,row: any)=>sum+Number(JSON.parse(String(row.data)).amount||0),0);
-    return c.json({ success:true, project:{ id, ...JSON.parse(String(project.data)) }, transactions:transactions.results.map((row:any)=>({...parseRecord(row),donorName:row.donor_name||'Unknown Donor',projectName:row.project_name||''})), bills:bills.results.map((row:any)=>({...parseRecord(row),projectName:row.project_name||''})), income, cost });
+    try {
+      const project: any = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='projects' AND id=? AND is_deleted=0").bind(id).first();
+      if (!project) return c.json({ success: false, error: 'Project not found.' }, 404);
+      const descendants = await c.env.DB.prepare(`WITH RECURSIVE descendants(id) AS (SELECT ? UNION ALL SELECT p.id FROM sync_records p JOIN descendants d ON json_extract(p.data,'$.parentId')=d.id WHERE p.type='projects' AND p.is_deleted=0) SELECT id FROM descendants`).bind(id).all();
+      const descendantJson=JSON.stringify(descendants.results.map((row:any)=>String(row.id)));
+      const [transactions, bills] = await c.env.DB.batch([
+        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND json_extract(data,'$.projectId') IN (SELECT value FROM json_each(?)) ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT 500").bind(descendantJson),
+        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.projectId') IN (SELECT value FROM json_each(?)) ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT 500").bind(descendantJson)
+      ]);
+      const transactionItems=transactions.results.map((row:any)=>parseRecord(row));const billItems=bills.results.map((row:any)=>parseRecord(row));
+      const income=transactionItems.reduce((sum:number,item:any)=>sum+Number(item.amountCAD??item.amount??0),0);const cost=billItems.reduce((sum:number,item:any)=>sum+Number(item.amount||0),0);
+      return c.json({ success:true, project:{ id, ...JSON.parse(String(project.data)) }, transactions:transactionItems, bills:billItems, income, cost });
+    } catch (reason: any) {
+      console.error('Unable to load project ledger', reason);
+      return c.json({ success:false,error:'Project details are temporarily busy. Please try again.' },503,{ 'Retry-After':'1' });
+    }
   });
 
   app.get('/v3/profit-loss', async (c: any) => {
