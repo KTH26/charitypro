@@ -9,6 +9,7 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [complete, setComplete] = useState(false);
+  const [conflicts, setConflicts] = useState<Operation[]>([]);
   const counts = useMemo(() => operations.reduce<Record<string, number>>((result, item) => {
     const key = `${item.action} ${item.type}`;
     result[key] = (result[key] || 0) + 1;
@@ -16,7 +17,7 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
   }, {}), [operations]);
 
   const chooseFile = async (file?: File) => {
-    setError(''); setComplete(false); setProgress(0); setOperations([]); setFileName(file?.name || '');
+    setError(''); setComplete(false); setProgress(0); setConflicts([]); setOperations([]); setFileName(file?.name || '');
     if (!file) return;
     try {
       const parsed = JSON.parse(await file.text());
@@ -30,6 +31,7 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
     if (!operations.length || running) return;
     setRunning(true); setError(''); setComplete(false); setProgress(0);
     try {
+      const skipped: Operation[] = [];
       for (let start = 0; start < operations.length; start += 25) {
         const batch = operations.slice(start, start + 25);
         const response = await fetch('/api/v3/admin/reconcile-donorfuse', {
@@ -38,9 +40,21 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
           body: JSON.stringify({ operations: batch })
         });
         const result = await response.json().catch(() => ({}));
-        if (!response.ok || !result.success) throw new Error(result.error || `Reconciliation stopped at record ${start + 1}.`);
+        if (!response.ok || !result.success) {
+          if (response.status === 409 || Array.isArray(result.conflicts)) {
+            for (const item of batch) {
+              const singleResponse = await fetch('/api/v3/admin/reconcile-donorfuse', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `donorfuse-reconcile-single-${item.type}-${item.id}-${item.revision}` },
+                body: JSON.stringify({ operations: [item] })
+              });
+              const singleResult = await singleResponse.json().catch(() => ({}));
+              if (!singleResponse.ok || !singleResult.success) skipped.push(item);
+            }
+          } else throw new Error(result.error || `Reconciliation stopped at record ${start + 1}.`);
+        }
         setProgress(Math.min(operations.length, start + batch.length));
       }
+      setConflicts(skipped);
       setComplete(true);
     } catch (reason: any) { setError(reason.message || 'Unable to apply this reconciliation.'); }
     finally { setRunning(false); }
@@ -61,7 +75,8 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
         <button className="btn btn-primary" style={{ marginTop: 18 }} disabled={running || complete} onClick={apply}>{running ? `Applying ${progress.toLocaleString()} of ${operations.length.toLocaleString()}…` : complete ? 'Reconciliation completed' : 'Apply verified reconciliation'}</button>
       </>}
       {error && <div className="alert alert-error" style={{ marginTop: 18 }}>{error}</div>}
-      {complete && <div className="alert alert-success" style={{ marginTop: 18 }}>All verified DonorFuse pledge and payment links were applied successfully.</div>}
+      {complete && conflicts.length === 0 && <div className="alert alert-success" style={{ marginTop: 18 }}>All verified DonorFuse pledge and payment links were applied successfully.</div>}
+      {conflicts.length > 0 && <div className="alert alert-error" style={{ marginTop: 18 }}>{conflicts.length.toLocaleString()} changed records were safely skipped and need a fresh backup before they can be reconciled.</div>}
     </div>
   </div>;
 };
