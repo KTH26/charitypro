@@ -2664,7 +2664,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/bank/feed', (c: any) => serveBankFeed(c, {
     accountId:c.req.query('accountId'),limit:c.req.query('limit'),page:c.req.query('page'),search:c.req.query('search'),from:c.req.query('from'),to:c.req.query('to'),matchStatus:c.req.query('matchStatus')
   }));
-  app.post('/v3/bank/feed-query', async (c: any) => serveBankFeed(c, await c.req.json()));
+  app.post('/v3/bank/records', async (c: any) => serveBankFeed(c, await c.req.json()));
 
   app.post('/v3/bank/feed-status', async (c: any) => {
     const denied = requirePermission(c, 'transactions.approve');

@@ -156,7 +156,7 @@ export const OnlineBank: React.FC = () => {
       if (!silent) setLoading(true);
       setError("");
       try {
-        const { response, data } = await fetchApiJson<any>("/api/v3/bank/feed-query", {
+        const { response, data } = await fetchApiJson<any>("/api/v3/bank/records", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ accountId: selectedBank, page: feedPage, limit: 50, matchStatus: tab, search, from: filterFrom, to: filterTo }),
