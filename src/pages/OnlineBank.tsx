@@ -48,6 +48,36 @@ type RefundCandidate = BillCandidate & {
   memo?: string;
 };
 type IncomingTransferCandidate = { id:string;revision:number;candidateKind:'transfer'|'bankFeed';fromAccountId?:string;toAccountId?:string;sourceAccountId?:string;sourceBankTransactionId?:string;sourceName:string;amount:number;date:string;notes?:string;description?:string };
+
+const readApiJson = async <T = any>(response: Response): Promise<T> => {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.toLowerCase().includes("application/json")) return response.json() as Promise<T>;
+
+  const redirectedToAccess = response.redirected && (() => {
+    try { return new URL(response.url).hostname.endsWith(".cloudflareaccess.com"); }
+    catch { return false; }
+  })();
+  if (redirectedToAccess) {
+    window.location.assign(response.url);
+    throw new Error("Your secure session expired. Opening sign-in now…");
+  }
+
+  throw new Error(
+    response.status >= 500
+      ? "The bank service is temporarily unavailable. Please try again in a moment."
+      : "The bank service returned an invalid response. Please reload and try again.",
+  );
+};
+
+const fetchApiJson = async <T = any>(input: RequestInfo | URL, init?: RequestInit): Promise<{ response: Response; data: T }> => {
+  let response = await fetch(input, init);
+  const isRead = !init?.method || init.method.toUpperCase() === "GET";
+  if (isRead && [502, 503, 504].includes(response.status)) {
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    response = await fetch(input, init);
+  }
+  return { response, data: await readApiJson<T>(response) };
+};
 type BankVendorRule = { vendor: string; category: string; internalCategory?: string; taxCategory?: string; taxable: boolean; projectId?: string; creditAccountId?: string; isPayrollExpense?: boolean; employeeId?: string; t4aEligible?: boolean };
 
 export const OnlineBank: React.FC = () => {
@@ -109,8 +139,7 @@ export const OnlineBank: React.FC = () => {
       setError("");
     }
     try {
-      const response = await fetch("/api/v3/bank/state");
-      const data = await response.json();
+      const { response, data } = await fetchApiJson<any>("/api/v3/bank/state");
       if (!response.ok || !data.success) throw new Error(data.error || "Unable to load bank state.");
       setAccounts(data.accounts);
       setSelectedBank((current) => (current && data.accounts.some((account: BankAccount) => account.id === current) ? current : data.accounts[0]?.id || ""));
@@ -136,8 +165,7 @@ export const OnlineBank: React.FC = () => {
           from: filterFrom,
           to: filterTo,
         });
-        const response = await fetch(`/api/v3/bank/feed?${params}`);
-        const data = await response.json();
+        const { response, data } = await fetchApiJson<any>(`/api/v3/bank/feed?${params}`);
         if (!response.ok || !data.success) throw new Error(data.error || "Unable to load saved bank transactions.");
         setFeed(
           (data.items || []).map((transaction: any) => ({
@@ -197,9 +225,8 @@ export const OnlineBank: React.FC = () => {
     if (selectedBank) void loadFeed();
   }, [selectedBank, feedPage, loadFeed]);
   useEffect(() => {
-    fetch("/api/v3/accounts?limit=100")
-      .then((response) => response.json())
-      .then((data) => {
+    fetchApiJson<any>("/api/v3/accounts?limit=100")
+      .then(({ data }) => {
         if (data.success) setAllAccounts(data.items);
       })
       .catch(() => undefined);
