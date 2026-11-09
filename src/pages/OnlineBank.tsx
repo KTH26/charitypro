@@ -49,9 +49,14 @@ type RefundCandidate = BillCandidate & {
 };
 type IncomingTransferCandidate = { id:string;revision:number;candidateKind:'transfer'|'bankFeed';fromAccountId?:string;toAccountId?:string;sourceAccountId?:string;sourceBankTransactionId?:string;sourceName:string;amount:number;date:string;notes?:string;description?:string };
 
+const BANK_AUTH_REFRESH_KEY = "charitypro:bank-auth-refresh";
+
 const readApiJson = async <T = any>(response: Response): Promise<T> => {
   const contentType = response.headers.get("content-type") || "";
-  if (contentType.toLowerCase().includes("application/json")) return response.json() as Promise<T>;
+  if (contentType.toLowerCase().includes("application/json")) {
+    window.sessionStorage.removeItem(BANK_AUTH_REFRESH_KEY);
+    return response.json() as Promise<T>;
+  }
 
   const redirectedToAccess = response.redirected && (() => {
     try { return new URL(response.url).hostname.endsWith(".cloudflareaccess.com"); }
@@ -62,10 +67,18 @@ const readApiJson = async <T = any>(response: Response): Promise<T> => {
     throw new Error("Your secure session expired. Opening sign-in now…");
   }
 
+  if (contentType.toLowerCase().includes("text/html") && !window.sessionStorage.getItem(BANK_AUTH_REFRESH_KEY)) {
+    window.sessionStorage.setItem(BANK_AUTH_REFRESH_KEY, String(Date.now()));
+    const refreshUrl = new URL("/bank-feed", window.location.origin);
+    refreshUrl.searchParams.set("secureRefresh", String(Date.now()));
+    window.location.replace(refreshUrl.toString());
+    throw new Error("Refreshing your secure bank session…");
+  }
+
   throw new Error(
     response.status >= 500
       ? "The bank service is temporarily unavailable. Please try again in a moment."
-      : "The bank service returned an invalid response. Please reload and try again.",
+      : "Your secure bank session could not be renewed. Please sign in to CharityPro again.",
   );
 };
 
