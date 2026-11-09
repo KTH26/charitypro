@@ -2644,14 +2644,21 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (denied) return denied;
     const accountId = String(c.req.query('accountId') || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const search=String(c.req.query('search')||'').trim().toLowerCase();const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const matchStatus=String(c.req.query('matchStatus')||'');
     if (!accountId) return c.json({ success: false, error: 'Choose a bank account.' }, 400);
-    const conditions=["f.type='bankFeedTransactions'",'f.is_deleted=0',"json_extract(f.data,'$.accountId')=?"];const bindings:any[]=[accountId];if(search){conditions.push("lower(f.data) LIKE ?");bindings.push(`%${search}%`);}if(from){conditions.push("json_extract(f.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(f.data,'$.date')<=?");bindings.push(to);}if(matchStatus==='matched')conditions.push("EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");if(matchStatus==='unmatched'){conditions.push("NOT EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");conditions.push("COALESCE(json_extract(f.data,'$.reviewStatus'),'')<>'dismissed'");}if(matchStatus==='dismissed'){conditions.push("json_extract(f.data,'$.reviewStatus')='dismissed'");conditions.push("NOT EXISTS(SELECT 1 FROM sync_records m,json_each(m.data) j WHERE m.type='matchedBankTransactions' AND m.is_deleted=0 AND j.value=json_extract(f.data,'$.id'))");}const where=conditions.join(' AND ');
-    const [listResult,countResult,syncRow] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT f.data FROM sync_records f WHERE ${where} ORDER BY json_extract(f.data,'$.date') DESC,f.id DESC LIMIT ? OFFSET ?`).bind(...bindings,limit,offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records f WHERE ${where}`).bind(...bindings),
-      c.env.DB.prepare('SELECT value,updated_at FROM sync_metadata WHERE key=?').bind(`bank_sync:${accountId}`)
-    ]);
-    const total=Number(countResult.results[0]?.count||0); const sync:any=syncRow.results[0]; let syncState:any=null; try{syncState=sync?.value?JSON.parse(String(sync.value)):null;}catch{syncState=null;}
-    return c.json({success:true,items:listResult.results.map((row:any)=>JSON.parse(String(row.data))),page,limit,total,totalPages:Math.ceil(total/limit),sync:syncState});
+    const conditions=["f.type='bankFeedTransactions'",'f.is_deleted=0',"json_extract(f.data,'$.accountId')=?"];const bindings:any[]=[accountId];if(search){conditions.push("lower(f.data) LIKE ?");bindings.push(`%${search}%`);}if(from){conditions.push("json_extract(f.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(f.data,'$.date')<=?");bindings.push(to);}const where=conditions.join(' AND ');
+    try {
+      const [listResult,matchedRow,syncRow] = await c.env.DB.batch([
+        c.env.DB.prepare(`SELECT f.data FROM sync_records f WHERE ${where} ORDER BY json_extract(f.data,'$.date') DESC,f.id DESC`).bind(...bindings),
+        c.env.DB.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0 LIMIT 1"),
+        c.env.DB.prepare('SELECT value,updated_at FROM sync_metadata WHERE key=?').bind(`bank_sync:${accountId}`)
+      ]);
+      let matchedIds:any[]=[];try{const parsed=matchedRow.results[0]?.data?JSON.parse(String(matchedRow.results[0].data)):[];matchedIds=Array.isArray(parsed)?parsed:[];}catch{matchedIds=[];}const matchedSet=new Set(matchedIds.map((id:any)=>String(id)));
+      const records=listResult.results.map((row:any)=>JSON.parse(String(row.data))).filter((item:any)=>{const matched=matchedSet.has(String(item.id));const dismissed=item.reviewStatus==='dismissed';if(matchStatus==='matched')return matched;if(matchStatus==='dismissed')return !matched&&dismissed;if(matchStatus==='unmatched')return !matched&&!dismissed;return true;});
+      const total=records.length; const sync:any=syncRow.results[0]; let syncState:any=null; try{syncState=sync?.value?JSON.parse(String(sync.value)):null;}catch{syncState=null;}
+      return c.json({success:true,items:records.slice(offset,offset+limit),page,limit,total,totalPages:Math.ceil(total/limit),sync:syncState});
+    } catch (reason: any) {
+      console.error('Unable to load saved bank feed', reason);
+      return c.json({ success: false, error: 'Unable to load saved bank transactions. Please try again.' }, 500);
+    }
   });
 
   app.post('/v3/bank/feed-status', async (c: any) => {
