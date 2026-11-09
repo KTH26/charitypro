@@ -10,6 +10,8 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
   const [error, setError] = useState('');
   const [complete, setComplete] = useState(false);
   const [conflicts, setConflicts] = useState<Operation[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState('');
   const counts = useMemo(() => operations.reduce<Record<string, number>>((result, item) => {
     const key = `${item.action} ${item.type}`;
     result[key] = (result[key] || 0) + 1;
@@ -17,7 +19,7 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
   }, {}), [operations]);
 
   const chooseFile = async (file?: File) => {
-    setError(''); setComplete(false); setProgress(0); setConflicts([]); setOperations([]); setFileName(file?.name || '');
+    setError(''); setComplete(false); setProgress(0); setConflicts([]); setRefreshNotice(''); setOperations([]); setFileName(file?.name || '');
     if (!file) return;
     try {
       const parsed = JSON.parse(await file.text());
@@ -25,6 +27,28 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
       if (!next.length) throw new Error('This file does not contain reconciliation operations.');
       setOperations(next);
     } catch (reason: any) { setError(reason.message || 'Unable to read this reconciliation file.'); }
+  };
+
+  const refreshAgainstCloud = async () => {
+    if (!operations.length || refreshing || running) return;
+    setRefreshing(true); setError(''); setComplete(false); setConflicts([]); setRefreshNotice('');
+    try {
+      const next: Operation[] = []; const changed: Operation[] = []; let alreadyCorrect = 0;
+      for (let start = 0; start < operations.length; start += 50) {
+        const response = await fetch('/api/v3/admin/reconcile-donorfuse/refresh', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operations: operations.slice(start, start + 50) })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) throw new Error(result.error || `Live verification stopped at record ${start + 1}.`);
+        next.push(...(Array.isArray(result.refreshed) ? result.refreshed : []));
+        changed.push(...(Array.isArray(result.conflicts) ? result.conflicts : []));
+        alreadyCorrect += Array.isArray(result.alreadyCorrect) ? result.alreadyCorrect.length : 0;
+      }
+      setOperations(next); setConflicts(changed);
+      setRefreshNotice(`${alreadyCorrect.toLocaleString()} records were already correct. ${next.length.toLocaleString()} current corrections remain.`);
+    } catch (reason: any) { setError(reason.message || 'Unable to verify corrections against the live cloud.'); }
+    finally { setRefreshing(false); }
   };
 
   const apply = async () => {
@@ -74,8 +98,9 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
           <ul>{Object.entries(counts).map(([key, value]) => <li key={key}>{value.toLocaleString()} — {key}</li>)}</ul>
           <p className="muted">Every change checks the current cloud revision first. If any record changed since the backup, that batch stops without changing anything.</p>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 18 }} disabled={running || complete} onClick={apply}>{running ? `Applying ${progress.toLocaleString()} of ${operations.length.toLocaleString()}…` : complete ? 'Reconciliation completed' : 'Apply verified reconciliation'}</button>
+        <div style={{display:'flex',gap:10,marginTop:18,flexWrap:'wrap'}}><button className="btn btn-secondary" disabled={running || refreshing || complete} onClick={()=>void refreshAgainstCloud()}>{refreshing?'Checking live cloud…':'Refresh against live cloud'}</button><button className="btn btn-primary" disabled={running || refreshing || complete} onClick={apply}>{running ? `Applying ${progress.toLocaleString()} of ${operations.length.toLocaleString()}…` : complete ? 'Reconciliation completed' : 'Apply verified reconciliation'}</button></div>
       </>}
+      {refreshNotice && <div className="alert alert-success" style={{ marginTop: 18 }}>{refreshNotice}</div>}
       {error && <div className="alert alert-error" style={{ marginTop: 18 }}>{error}</div>}
       {complete && conflicts.length === 0 && <div className="alert alert-success" style={{ marginTop: 18 }}>All verified DonorFuse pledge and payment links were applied successfully.</div>}
       {conflicts.length > 0 && <div className="alert alert-error" style={{ marginTop: 18 }}>{conflicts.length.toLocaleString()} changed records were safely skipped and need a fresh backup before they can be reconciled.</div>}

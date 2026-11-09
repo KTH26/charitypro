@@ -200,6 +200,45 @@ const pledgeForPaymentDate = async (db: any, donorId: unknown, date: unknown) =>
 };
 
 export const registerServerDataRoutes = (app: Hono<any>) => {
+  app.post('/v3/admin/reconcile-donorfuse/refresh', async (c: any) => {
+    const denied = requirePermission(c, 'system.manage');
+    if (denied) return denied;
+    const body = await c.req.json().catch(() => ({}));
+    const operations = Array.isArray(body.operations) ? body.operations : [];
+    if (!operations.length || operations.length > 50) return c.json({ success: false, error: 'Send between 1 and 50 reconciliation operations per refresh batch.' }, 400);
+    const refreshed: any[] = [];
+    const alreadyCorrect: any[] = [];
+    const conflicts: any[] = [];
+    const same = (left: any, right: any) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+    for (const operation of operations) {
+      const action = String(operation?.action || '');
+      const type = String(operation?.type || '');
+      const id = String(operation?.id || '').trim();
+      if (!id || !['pledges', 'transactions'].includes(type) || !['create', 'update', 'delete'].includes(action)) {
+        conflicts.push({ ...operation, error: 'Invalid reconciliation operation.' });
+        continue;
+      }
+      const current: any = await c.env.DB.prepare('SELECT data,revision,is_deleted FROM sync_records WHERE type=? AND id=?').bind(type, id).first();
+      if (action === 'create') {
+        if (!current || Number(current.is_deleted)) refreshed.push(operation);
+        else conflicts.push({ ...operation, actualRevision: Number(current.revision), error: 'Record already exists.' });
+        continue;
+      }
+      if (!current || Number(current.is_deleted)) {
+        conflicts.push({ ...operation, error: 'Record no longer exists.' });
+        continue;
+      }
+      if (action === 'update') {
+        const data = parseSetting(current.data, {});
+        const changes = operation.changes && typeof operation.changes === 'object' ? operation.changes : {};
+        const correct = Object.entries(changes).every(([key, value]) => same(data[key], value));
+        if (correct) alreadyCorrect.push({ id, type, action, revision: Number(current.revision) });
+        else refreshed.push({ ...operation, revision: Number(current.revision) });
+      } else refreshed.push({ ...operation, revision: Number(current.revision) });
+    }
+    return c.json({ success: true, refreshed, alreadyCorrect, conflicts });
+  });
+
   app.post('/v3/admin/reconcile-donorfuse', async (c: any) => {
     const denied = requirePermission(c, 'system.manage');
     if (denied) return denied;
