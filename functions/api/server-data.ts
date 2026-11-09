@@ -1220,14 +1220,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         UNION ALL
         SELECT tree.ancestor_id,projects.id FROM tree JOIN projects ON projects.parent_id=tree.descendant_id
       ), income_by_project AS (
-        SELECT json_extract(data,'$.projectId') AS id,SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) AS total
-        FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.projectId'),'')<>'' GROUP BY id
+        SELECT json_extract(data,'$.projectId') AS project_id,SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) AS total
+        FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.projectId'),'')<>'' GROUP BY json_extract(data,'$.projectId')
       ), cost_by_project AS (
-        SELECT json_extract(data,'$.projectId') AS id,SUM(COALESCE(json_extract(data,'$.amount'),0)) AS total
-        FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.projectId'),'')<>'' GROUP BY id
+        SELECT json_extract(data,'$.projectId') AS project_id,SUM(COALESCE(json_extract(data,'$.amount'),0)) AS total
+        FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.projectId'),'')<>'' GROUP BY json_extract(data,'$.projectId')
       ), own AS (
         SELECT projects.id,COALESCE(income_by_project.total,0) AS own_income,COALESCE(cost_by_project.total,0) AS own_cost
-        FROM projects LEFT JOIN income_by_project ON income_by_project.id=projects.id LEFT JOIN cost_by_project ON cost_by_project.id=projects.id
+        FROM projects LEFT JOIN income_by_project ON income_by_project.project_id=projects.id LEFT JOIN cost_by_project ON cost_by_project.project_id=projects.id
       ), project_totals AS (
         SELECT projects.id,projects.name,projects.parent_id AS parentId,own.own_income AS ownIncome,own.own_cost AS ownCost,
           SUM(descendant_own.own_income) AS income,SUM(descendant_own.own_cost) AS cost,
