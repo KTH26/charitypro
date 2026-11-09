@@ -233,8 +233,30 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (current?.last_operation_id === operationId) { applied.push({ id, type, action, alreadyApplied: true }); continue; }
 
       if (action === 'create') {
-        if (type !== 'pledges' || current) { conflicts.push({ id, type, action, error: current ? 'Record already exists.' : 'Only pledges can be created.' }); continue; }
+        if (current) { conflicts.push({ id, type, action, error: 'Record already exists.' }); continue; }
         const dataObject = { ...(operation.data || {}), id };
+        if (type === 'transactions') {
+          const donorId = String(dataObject.donorId || '');
+          const pledgeId = String(dataObject.pledgeId || '');
+          const amount = Number(dataObject.amount);
+          const date = String(dataObject.date || '');
+          if (!donorId || !pledgeId || !Number.isFinite(amount) || amount <= 0 || !isoDate(date) || dataObject.type !== 'approved') {
+            return c.json({ success: false, error: `Restored payment ${id} is missing its donor, pledge, date, approved status, or positive amount.` }, 400);
+          }
+          const [donor, pledge, source, offset]: any = await c.env.DB.batch([
+            c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId),
+            c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0").bind(pledgeId),
+            c.env.DB.prepare("SELECT id FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(String(dataObject.sourceAccountId || '')),
+            c.env.DB.prepare("SELECT id FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(String(dataObject.offsetAccountId || '')),
+          ]);
+          const pledgeData = parseSetting(pledge.results?.[0]?.data, {});
+          if (!donor.results?.length || !pledge.results?.length || !source.results?.length || !offset.results?.length || String(pledgeData.donorId || '') !== donorId) {
+            return c.json({ success: false, error: `Restored payment ${id} has an invalid donor, pledge, or account.` }, 409);
+          }
+        } else if (type !== 'pledges') {
+          conflicts.push({ id, type, action, error: 'Unsupported create operation.' });
+          continue;
+        }
         const data = JSON.stringify(dataObject);
         const reason = String(operation.reason || 'Restored from DonorFuse reconciliation').slice(0, 500);
         statements.push(
