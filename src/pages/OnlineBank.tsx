@@ -156,16 +156,11 @@ export const OnlineBank: React.FC = () => {
       if (!silent) setLoading(true);
       setError("");
       try {
-        const params = new URLSearchParams({
-          accountId: selectedBank,
-          page: String(feedPage),
-          limit: "50",
-          matchStatus: tab,
-          search,
-          from: filterFrom,
-          to: filterTo,
+        const { response, data } = await fetchApiJson<any>("/api/v3/bank/feed-query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accountId: selectedBank, page: feedPage, limit: 50, matchStatus: tab, search, from: filterFrom, to: filterTo }),
         });
-        const { response, data } = await fetchApiJson<any>(`/api/v3/bank/feed?${params}`);
         if (!response.ok || !data.success) throw new Error(data.error || "Unable to load saved bank transactions.");
         setFeed(
           (data.items || []).map((transaction: any) => ({

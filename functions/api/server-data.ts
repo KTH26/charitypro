@@ -2639,10 +2639,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
   });
 
-  app.get('/v3/bank/feed', async (c: any) => {
+  const serveBankFeed = async (c: any, input: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
-    const accountId = String(c.req.query('accountId') || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const search=String(c.req.query('search')||'').trim().toLowerCase();const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const matchStatus=String(c.req.query('matchStatus')||'');
+    const accountId = String(input.accountId || ''); const limit = boundedLimit(input.limit); const page = boundedPage(input.page); const offset = (page - 1) * limit; const search=String(input.search||'').trim().toLowerCase();const from=String(input.from||'');const to=String(input.to||'');const matchStatus=String(input.matchStatus||'');
     if (!accountId) return c.json({ success: false, error: 'Choose a bank account.' }, 400);
     try {
       const matchedRecord: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0 LIMIT 1").first();
@@ -2659,7 +2659,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       console.error('Unable to load saved bank feed', reason);
       return c.json({ success: false, error: 'Unable to load saved bank transactions. Please try again.' }, 500);
     }
-  });
+  };
+
+  app.get('/v3/bank/feed', (c: any) => serveBankFeed(c, {
+    accountId:c.req.query('accountId'),limit:c.req.query('limit'),page:c.req.query('page'),search:c.req.query('search'),from:c.req.query('from'),to:c.req.query('to'),matchStatus:c.req.query('matchStatus')
+  }));
+  app.post('/v3/bank/feed-query', async (c: any) => serveBankFeed(c, await c.req.json()));
 
   app.post('/v3/bank/feed-status', async (c: any) => {
     const denied = requirePermission(c, 'transactions.approve');
