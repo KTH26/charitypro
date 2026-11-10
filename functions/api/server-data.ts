@@ -2425,6 +2425,31 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({success:true,items:result.results.map((row:any)=>({id:String(row.name),name:String(row.name)}))});
   });
 
+  app.get('/v3/vendor-defaults', async (c:any) => {
+    const denied=requirePermission(c,'bills.read');if(denied)return denied;
+    const name=String(c.req.query('name')||'').trim();
+    if(!name)return c.json({success:false,error:'Vendor name is required.'},400);
+    const row:any=await c.env.DB.prepare(`SELECT data FROM sync_records
+      WHERE type='bills' AND is_deleted=0 AND lower(trim(json_extract(data,'$.vendor')))=lower(trim(?))
+      ORDER BY updated_at DESC,json_extract(data,'$.dueDate') DESC,id DESC LIMIT 1`).bind(name).first();
+    if(!row)return c.json({success:true,defaults:null});
+    const bill=JSON.parse(String(row.data));
+    return c.json({success:true,defaults:{
+      vendor:String(bill.vendor||name),
+      category:String(bill.category||''),
+      internalCategory:String(bill.internalCategory||bill.taxCategory||''),
+      taxable:Boolean(bill.taxable),
+      projectId:String(bill.projectId||''),
+      sourceAccountId:String(bill.sourceAccountId||''),
+      creditAccountId:String(bill.creditAccountId||''),
+      currency:String(bill.currency||'CAD'),
+      exchangeRate:Number(bill.exchangeRate||1.35),
+      isPayrollExpense:Boolean(bill.isPayrollExpense||bill.isPayroll||bill.employeeId),
+      employeeId:String(bill.employeeId||''),
+      t4aEligible:Boolean(bill.t4aEligible)
+    }});
+  });
+
   app.get('/v3/internal-category-choices', async (c:any) => {
     const denied=requirePermission(c,'bills.read');if(denied)return denied;
     const result=await c.env.DB.prepare("SELECT DISTINCT name FROM (SELECT trim(COALESCE(json_extract(data,'$.internalCategory'),json_extract(data,'$.taxCategory'))) AS name FROM sync_records WHERE type='bills' AND is_deleted=0 UNION SELECT trim(json_extract(data,'$.name')) AS name FROM sync_records WHERE type='internalCategories' AND is_deleted=0) WHERE COALESCE(name,'')<>'' ORDER BY lower(name) LIMIT 500").all();

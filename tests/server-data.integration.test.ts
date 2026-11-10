@@ -302,7 +302,7 @@ describe('server-driven bank deposit matching', () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'vendors', 'vendor-1', { id: 'vendor-1', name: 'Registered Vendor' });
     seedRecord(db, 'vendors', 'vendor-2', { id: 'vendor-2', name: 'Shared Vendor' });
-    seedRecord(db, 'bills', 'bill-vendor-1', { id: 'bill-vendor-1', vendor: 'Historical Vendor', amount: 10 });
+    seedRecord(db, 'bills', 'bill-vendor-1', { id: 'bill-vendor-1', vendor: 'Historical Vendor', amount: 10, currency: 'USD', exchangeRate: 1.36, category: 'office-expense', internalCategory: 'Administration', taxable: true, projectId: 'office-project', sourceAccountId: 'bank-main', creditAccountId: 'cash-main' });
     seedRecord(db, 'bills', 'bill-vendor-2', { id: 'bill-vendor-2', vendor: 'Shared Vendor', amount: 20 });
     const app = new Hono();
     app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
@@ -311,6 +311,10 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200);
     const body = await response.json() as any;
     expect(body.items.map((item: any) => item.name)).toEqual(['Historical Vendor', 'Registered Vendor', 'Shared Vendor']);
+    const defaultsResponse = await app.request('/v3/vendor-defaults?name=historical%20vendor', {}, { DB: db } as any);
+    const defaults = await defaultsResponse.json() as any;
+    expect(defaultsResponse.status).toBe(200);
+    expect(defaults.defaults).toMatchObject({ vendor: 'Historical Vendor', category: 'office-expense', internalCategory: 'Administration', taxable: true, projectId: 'office-project', sourceAccountId: 'bank-main', creditAccountId: 'cash-main', currency: 'USD', exchangeRate: 1.36 });
   });
 
   it('searches and matches deposits using a user-selected payment date window', async()=>{
