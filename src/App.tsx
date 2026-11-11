@@ -17,6 +17,7 @@ import { OnlineTasks } from './pages/OnlineTasks';
 import { OnlineCampaigns } from './pages/OnlineCampaigns';
 import { OnlineAuditHistory } from './pages/OnlineAuditHistory';
 import { OnlineDonorFuseReconcile } from './pages/OnlineDonorFuseReconcile';
+import { NotFound } from './pages/NotFound';
 
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
@@ -69,7 +70,7 @@ function App() {
         <Route path="/online/accounts" element={<Navigate to="/chart-of-accounts" replace />} />
         <Route path="/online/bank" element={<Navigate to="/bank-feed" replace />} />
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={cloudPage(<NotFound />)} />
       </Routes>
     </BrowserRouter>
   );
