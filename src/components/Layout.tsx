@@ -22,6 +22,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const [showAddDonor, setShowAddDonor] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [payDonorId] = useState(donors[0]?.id || '');
 
   const pendingTasks = tasks.filter(t => !t.completed).length;
@@ -130,11 +131,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                 <div key={i} style={{ marginBottom: '4px' }}>
                   <Link
                     to={item.path === '#logout' ? '#' : item.path}
-                    onClick={item.path === '#logout' ? (e) => { 
-                      e.preventDefault(); 
-                      if (window.confirm("Are you sure you want to log out?")) {
-                        window.location.href = '/cdn-cgi/access/logout'; 
-                      }
+                    onClick={item.path === '#logout' ? (e) => {
+                      e.preventDefault();
+                      setShowLogoutConfirm(true);
                     } : undefined}
                     className={`nav-item ${location.pathname === item.path && item.path !== '/coming-soon' ? 'active' : ''}`}
                     style={{
@@ -255,6 +254,19 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       {showAddDonor && <AddDonorModal onClose={() => setShowAddDonor(false)} />}
       {showPayment && payDonorId && <PaymentModal donorId={payDonorId} onClose={() => setShowPayment(false)} />}
       {showBulkUpload && <BulkUploadModal onClose={() => setShowBulkUpload(false)} />}
+
+      {showLogoutConfirm && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(10,28,37,.57)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'white', borderRadius: 18, padding: '32px 36px', boxShadow: 'var(--shadow-float)', maxWidth: 360, width: '100%', margin: '0 16px' }}>
+            <h3 style={{ margin: '0 0 8px', color: 'var(--navy)', fontFamily: 'Outfit, sans-serif' }}>Log out?</h3>
+            <p style={{ margin: '0 0 24px', color: 'var(--text-muted)', fontSize: '.9rem' }}>Are you sure you want to log out of CharityPro?</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setShowLogoutConfirm(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => { window.location.href = '/cdn-cgi/access/logout'; }}>Log out</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

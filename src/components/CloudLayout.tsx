@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   BarChart3, Building, Calendar, CalendarClock, CheckSquare, FileText,
-  HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Printer,
+  HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Megaphone, Printer,
   Menu, Settings, ShieldCheck, Store, Users, Wallet, X
 } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
+import { startLiveRefresh, subscribeLiveStatus, type LiveStatus } from '../utils/liveUpdates';
 
 type NavItem = { path: string; label: string; icon: React.ElementType; ready?: boolean };
 type NavCategory = { label: string; items: NavItem[] };
@@ -19,7 +20,7 @@ const categories: NavCategory[] = [
     { path: '/donors', label: 'Donors', icon: Users, ready: true }
   ] },
   { label: 'DONATIONS', items: [
-    { path: '/campaigns', label: 'Campaigns', icon: HeartHandshake, ready: true },
+    { path: '/campaigns', label: 'Campaigns', icon: Megaphone, ready: true },
     { path: '/pledges', label: 'Pledges', icon: HeartHandshake, ready: true },
     { path: '/payments', label: 'Payments', icon: Wallet, ready: true },
     { path: '/pending-payments', label: 'Pending Verification', icon: CalendarClock, ready: true },
@@ -56,6 +57,17 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => setNavigationOpen(false), [location.pathname]);
 
+  // Keep the live-update check running on every page and show its real status.
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>('connecting');
+  useEffect(() => subscribeLiveStatus(setLiveStatus), []);
+  useEffect(() => startLiveRefresh(() => undefined), []);
+  const liveLabel = liveStatus === 'live' ? 'Live' : liveStatus === 'offline' ? 'Offline – retrying' : 'Connecting…';
+  const liveTitle = liveStatus === 'live'
+    ? 'Changes made by anyone appear here within about 2 seconds.'
+    : liveStatus === 'offline'
+      ? 'Cannot reach the server right now. Your screen will catch up automatically when the connection returns.'
+      : 'Connecting to live updates…';
+
   return (
     <div className={`app-container ${navigationOpen ? 'navigation-open' : ''}`}>
       <button className="navigation-scrim" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />
@@ -81,14 +93,20 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           </div>)}
         </nav>
         <div className="sidebar-footer">
-          <a className="sidebar-logout" href="/cdn-cgi/access/logout"><LogOut size={16} /> Log out</a>
+          <button
+            type="button"
+            className="sidebar-logout"
+            onClick={() => { window.location.href = '/cdn-cgi/access/logout'; }}
+          >
+            <LogOut size={16} /> Log out
+          </button>
           <span>CharityPro Cloud · Canada 🇨🇦</span>
         </div>
       </aside>
       <main className="main-content">
         <header className="topbar">
           <div className="topbar-brand"><button className="menu-button" type="button" aria-label="Open navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><Menu size={22} /></button><img src="/charitypro-kth-company-logo.png" alt="" /><div><span className="topbar-eyebrow">Hatzolah Tosh</span><h1>{pageLabel}</h1></div></div>
-          <div className="topbar-actions"><ReminderBell/><div className="cloud-status"><span />Cloud live</div></div>
+          <div className="topbar-actions"><ReminderBell/><div className={`cloud-status cloud-status-${liveStatus}`} title={liveTitle} role="status" aria-live="polite"><span />{liveLabel}</div></div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>
       </main>
