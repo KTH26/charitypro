@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CloudPledgeAllocationEditor, type PledgeAllocationDraft } from './CloudPledgeAllocationEditor';
+import { FundraiserAllocationEditor, type FundraiserAllocationDraft } from './FundraiserAllocationEditor';
 
 type Donor = { id: string; name: string; email?: string };
 type Account = { id: string; name: string; type: string; currency: 'CAD' | 'USD' };
@@ -27,6 +28,7 @@ export const OnlinePaymentForm: React.FC<{
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [projects, setProjects] = useState<Choice[]>([]);
   const [fundraisers, setFundraisers] = useState<Choice[]>([]);
+  const [fundraisingGroups,setFundraisingGroups]=useState<{id:string;name:string;allocations:FundraiserAllocationDraft[]}[]>([]);
   const [amount, setAmount] = useState(defaultAmount?String(defaultAmount):'');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [exchangeRate, setExchangeRate] = useState('');
@@ -43,7 +45,8 @@ export const OnlinePaymentForm: React.FC<{
   const [offsetAccountId, setOffsetAccountId] = useState('');
   const [notes, setNotes] = useState('');
   const [projectId, setProjectId] = useState('');
-  const [fundraiserId, setFundraiserId] = useState('');
+  const [fundraiserAllocations, setFundraiserAllocations] = useState<FundraiserAllocationDraft[]>([]);
+  const [fundraiserGroupId,setFundraiserGroupId]=useState('');
   const [allocations, setAllocations] = useState<PledgeAllocationDraft[]>([]);
   const [sponsor, setSponsor] = useState('');
   const [loadingDonors, setLoadingDonors] = useState(false);
@@ -53,9 +56,9 @@ export const OnlinePaymentForm: React.FC<{
 
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all(['/api/v3/accounts?limit=100','/api/v3/records/projects?limit=100','/api/v3/records/fundraisers?limit=100'].map(url=>fetch(url,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load payment choices.');return data;})))
-      .then(([accountData,projectData,fundraiserData]) => {
-        setAccounts(accountData.items||[]); setProjects(projectData.items||[]); setFundraisers(fundraiserData.items||[]);
+    Promise.all(['/api/v3/accounts?limit=100','/api/v3/records/projects?limit=100','/api/v3/records/fundraisers?limit=100','/api/v3/records/fundraisingGroups?limit=100'].map(url=>fetch(url,{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load payment choices.');return data;})))
+      .then(([accountData,projectData,fundraiserData,groupData]) => {
+        setAccounts(accountData.items||[]); setProjects(projectData.items||[]); setFundraisers(fundraiserData.items||[]);setFundraisingGroups(groupData.items||[]);
       })
       .catch(e => { if (e.name !== 'AbortError') setError(e.message || 'Unable to load payment choices.'); });
     return () => controller.abort();
@@ -116,7 +119,7 @@ export const OnlinePaymentForm: React.FC<{
       const response = await fetch(chargingSavedCard ? `/api/v3/donors/${encodeURIComponent(donorId)}/charge-saved-card` : '/api/v3/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, exchangeRate:currency==='USD'?Number(exchangeRate):undefined, exchangeRateSource:currency==='USD'?exchangeRateSource:undefined, exchangeRateDate:currency==='USD'?(exchangeRateDate||date):undefined, method:chargingSavedCard?'credit_card':method, paymentMethodId:chargingSavedCard?paymentMethodId:undefined, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserId, allocations, sponsor, checkNumber, availabilityDate, type: status })
+        body: JSON.stringify({ requestId, donorId, amount: parsedAmount, currency, exchangeRate:currency==='USD'?Number(exchangeRate):undefined, exchangeRateSource:currency==='USD'?exchangeRateSource:undefined, exchangeRateDate:currency==='USD'?(exchangeRateDate||date):undefined, method:chargingSavedCard?'credit_card':method, paymentMethodId:chargingSavedCard?paymentMethodId:undefined, date, sourceAccountId, offsetAccountId, notes, projectId, fundraiserAllocations, allocations, sponsor, checkNumber, availabilityDate, type: status })
       });
       const responseText = await response.text();
       let data: any; try { data = JSON.parse(responseText); } catch { throw new Error(response.ok ? 'The server returned an unreadable response.' : `The payment server failed (${response.status}). Please try again.`); }
@@ -159,7 +162,7 @@ export const OnlinePaymentForm: React.FC<{
           {method === 'check' && <><label className="form-group" style={{ margin: 0 }}><span>Check number *</span><input value={checkNumber} onChange={e=>setCheckNumber(e.target.value)} maxLength={100}/></label><label className="form-group" style={{ margin: 0 }}><span>Available to deposit *</span><input type="date" min={date} value={availabilityDate} onChange={e=>setAvailabilityDate(e.target.value)}/></label><div style={{padding:12,borderRadius:10,background:'var(--navy-bg)',color:'var(--navy)',fontSize:13}}>This check stays pending and does not enter an account until you mark it deposited. A reminder will appear on the availability date.</div></>}
           <label className="form-group" style={{ margin: 0 }}><span>Allocated to (revenue)</span><select value={offsetAccountId} onChange={e => setOffsetAccountId(e.target.value)}><option value="">Select revenue account</option>{revenueAccounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>
           <label className="form-group" style={{ margin: 0 }}><span>Project (optional)</span><select value={projectId} onChange={e=>setProjectId(e.target.value)}><option value="">— No Project —</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label className="form-group" style={{ margin: 0 }}><span>Fundraiser / Campaign (optional)</span><select value={fundraiserId} onChange={e=>setFundraiserId(e.target.value)}><option value="">— No Fundraiser —</option>{fundraisers.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          {allocations.length===0?<><div style={{gridColumn:'1 / -1',fontSize:13,color:'var(--text-muted)'}}>General charge only: choose a group or fundraiser split here only when this money is not paying a pledge. Pledge payments automatically use the fundraiser split saved on the pledge.</div><label className="form-group" style={{margin:0,gridColumn:'1 / -1'}}><span>Saved fundraiser group</span><select value={fundraiserGroupId} onChange={event=>{const group=fundraisingGroups.find(item=>item.id===event.target.value);setFundraiserGroupId(event.target.value);if(group)setFundraiserAllocations(group.allocations||[]);}}><option value="">— Custom split —</option>{fundraisingGroups.map(group=><option key={group.id} value={group.id}>{group.name}</option>)}</select></label><FundraiserAllocationEditor fundraisers={fundraisers} value={fundraiserAllocations} onChange={value=>{setFundraiserGroupId('');setFundraiserAllocations(value);}} disabled={saving}/></>:<div style={{gridColumn:'1 / -1',padding:12,borderRadius:10,background:'var(--navy-bg)',color:'var(--navy)',fontWeight:700}}>Fundraiser commission will be inherited automatically from the selected pledge allocation.</div>}
           <label className="form-group" style={{ margin: 0 }}><span>Sponsor / Source (optional)</span><input value={sponsor} onChange={e=>setSponsor(e.target.value)} maxLength={300}/></label>
           <CloudPledgeAllocationEditor donorId={donorId} totalAmount={Number(amount)||0} currency={currency} value={allocations} onChange={setAllocations} disabled={saving}/>
         </div>

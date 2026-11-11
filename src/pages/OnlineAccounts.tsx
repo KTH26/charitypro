@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { CloudAccountDetailsModal } from '../components/CloudAccountDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
 
-type Account = { id: string; revision: number; name: string; type: string; subType?: string; currency: string; balance: number; startingBalance?: number };
+type Account = { id: string; revision: number; name: string; type: string; subType?: string; currency: string; balance: number; actualBalance?:number; fundraiserReserved?:number; availableBalance?:number; startingBalance?: number };
 
 export const OnlineAccounts: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -53,8 +53,8 @@ export const OnlineAccounts: React.FC = () => {
             {['asset','liability','equity','revenue','expense'].filter(type => grouped[type]?.length).map(type => (
               <section className="card" style={{ padding: 0, overflow: 'hidden' }} key={type}>
                 <h2 style={{ margin: 0, padding: '16px 20px', textTransform: 'capitalize', color: 'var(--navy)', borderBottom: '1px solid var(--border)' }}>{type}</h2>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><SortableTh column="name" label="Account" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="currency" label="Currency" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="balance" label="Cloud-calculated balance" sort={sort} direction={direction} onSort={changeSort} align="right"/></tr></thead><tbody>
-                  {grouped[type].map(account => <tr key={account.id} onClick={() => setSelectedAccount(account)} style={{ cursor: 'pointer' }}><td style={{ fontWeight: 700 }}>{account.name}</td><td>{account.currency}</td><td style={{ textAlign: 'right', fontWeight: 800, color: account.balance >= 0 ? 'var(--green)' : 'var(--red)' }}>{account.currency} ${account.balance.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>)}
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><SortableTh column="name" label="Account" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="currency" label="Currency" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="balance" label="Actual balance" sort={sort} direction={direction} onSort={changeSort} align="right"/><th style={{textAlign:'right'}}>Fundraiser reserve</th><th style={{textAlign:'right'}}>Available balance</th></tr></thead><tbody>
+                  {grouped[type].map(account => <tr key={account.id} onClick={() => setSelectedAccount(account)} style={{ cursor: 'pointer' }}><td style={{ fontWeight: 700 }}>{account.name}</td><td>{account.currency}</td><td style={{ textAlign: 'right', fontWeight: 800 }}>{account.currency} ${Number(account.actualBalance??account.balance).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td style={{textAlign:'right',color:Number(account.fundraiserReserved||0)>0?'var(--gold)':'var(--text-muted)'}}>{account.type==='asset'?`${account.currency} $${Number(account.fundraiserReserved||0).toFixed(2)}`:'—'}</td><td style={{ textAlign: 'right', fontWeight: 900, color: Number(account.availableBalance??account.balance) >= 0 ? 'var(--green)' : 'var(--red)' }}>{account.currency} ${Number(account.availableBalance??account.balance).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>)}
                 </tbody></table>
               </section>
             ))}

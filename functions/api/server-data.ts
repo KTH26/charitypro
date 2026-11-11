@@ -53,6 +53,76 @@ const uniquePaymentsForAccounting = (payments: any[]) => {
   }
   return [...unique.values()];
 };
+
+type FundraiserAllocation = { fundraiserId: string; percentage: number };
+const cleanFundraiserAllocations = (value: unknown): FundraiserAllocation[] => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.flatMap((entry: any) => {
+    const fundraiserId = String(entry?.fundraiserId || '').trim();
+    const percentage = Number(entry?.percentage);
+    if (!fundraiserId || seen.has(fundraiserId) || !Number.isFinite(percentage) || percentage <= 0) return [];
+    seen.add(fundraiserId);
+    return [{ fundraiserId, percentage }];
+  });
+};
+const fundraiserAllocationsForPayment = (payment: any, pledgesById: Map<string, any>, fundraisersById: Map<string, any>) => {
+  const direct = cleanFundraiserAllocations(payment.fundraiserAllocations);
+  if (direct.length) return direct;
+  const pledgeIds = Array.isArray(payment.pledgeAllocations)
+    ? payment.pledgeAllocations.map((item: any) => String(item?.pledgeId || '')).filter(Boolean)
+    : payment.pledgeId ? [String(payment.pledgeId)] : [];
+  for (const pledgeId of pledgeIds) {
+    const pledge = pledgesById.get(pledgeId);
+    const inherited = cleanFundraiserAllocations(pledge?.fundraiserAllocations);
+    if (inherited.length) return inherited;
+    if (pledge?.fundraiserId) {
+      const fundraiser = fundraisersById.get(String(pledge.fundraiserId));
+      const percentage = Number(pledge.fundraiserPercentage ?? fundraiser?.percentage ?? 30);
+      if (Number.isFinite(percentage) && percentage > 0) return [{ fundraiserId: String(pledge.fundraiserId), percentage }];
+    }
+  }
+  if (payment.fundraiserId) {
+    const fundraiser = fundraisersById.get(String(payment.fundraiserId));
+    const percentage = Number(payment.fundraiserPercentage ?? fundraiser?.percentage ?? 30);
+    if (Number.isFinite(percentage) && percentage > 0) return [{ fundraiserId: String(payment.fundraiserId), percentage }];
+  }
+  return [];
+};
+const calculateFundraiserAccounting = (payments: any[], pledges: any[], fundraisers: any[], payouts: any[]) => {
+  const pledgesById = new Map(pledges.map(item => [String(item.id), item]));
+  const fundraisersById = new Map(fundraisers.map(item => [String(item.id), item]));
+  const byFundraiser = new Map<string, { raised: number; earned: number; paid: number; owed: number }>();
+  const reservedByAccount = new Map<string, number>();
+  for (const fundraiser of fundraisers) byFundraiser.set(String(fundraiser.id), { raised: 0, earned: 0, paid: 0, owed: 0 });
+  for (const payment of uniquePaymentsForAccounting(payments)) {
+    const amount = Number(payment.amountCAD ?? payment.amount ?? 0);
+    if (!(amount > 0)) continue;
+    const pledgeParts = Array.isArray(payment.pledgeAllocations) && payment.pledgeAllocations.length
+      ? payment.pledgeAllocations.map((part:any)=>({ amount:Number(part.amountCAD ?? part.amount ?? 0), pledge:pledgesById.get(String(part.pledgeId||'')) })).filter((part:any)=>part.amount>0&&part.pledge)
+      : payment.pledgeId && pledgesById.has(String(payment.pledgeId)) ? [{amount,pledge:pledgesById.get(String(payment.pledgeId))}] : [];
+    const portions = pledgeParts.length ? pledgeParts.map((part:any)=>({amount:part.amount,allocations:cleanFundraiserAllocations(part.pledge.fundraiserAllocations).length?cleanFundraiserAllocations(part.pledge.fundraiserAllocations):fundraiserAllocationsForPayment({...payment,pledgeId:part.pledge.id,fundraiserAllocations:[]},pledgesById,fundraisersById)})) : [{amount,allocations:fundraiserAllocationsForPayment(payment,pledgesById,fundraisersById)}];
+    for (const portion of portions) for (const allocation of portion.allocations) {
+      const earned = portion.amount * allocation.percentage / 100;
+      const current = byFundraiser.get(allocation.fundraiserId) || { raised: 0, earned: 0, paid: 0, owed: 0 };
+      current.raised += portion.amount; current.earned += earned; current.owed += earned;
+      byFundraiser.set(allocation.fundraiserId, current);
+      const accountId = String(payment.sourceAccountId || '');
+      if (accountId) reservedByAccount.set(accountId, (reservedByAccount.get(accountId) || 0) + earned);
+    }
+  }
+  for (const payout of payouts) {
+    const amount = Number(payout.amount || 0); const fundraiserId = String(payout.fundraiserId || '');
+    if (!(amount > 0) || !fundraiserId) continue;
+    const current = byFundraiser.get(fundraiserId) || { raised: 0, earned: 0, paid: 0, owed: 0 };
+    current.paid += amount; current.owed -= amount; byFundraiser.set(fundraiserId, current);
+    const accountId = String(payout.sourceAccountId || '');
+    if (accountId) reservedByAccount.set(accountId, (reservedByAccount.get(accountId) || 0) - amount);
+  }
+  for (const current of byFundraiser.values()) current.owed = Math.max(0, current.owed);
+  for (const [accountId, amount] of reservedByAccount) reservedByAccount.set(accountId, Math.max(0, amount));
+  return { byFundraiser, reservedByAccount };
+};
 const paymentMonth=(payment:any)=>String(payment.scheduledDate||payment.date||'').slice(0,7);
 const paymentCents=(payment:any)=>Math.round(Number(payment.amountCAD??payment.amount??0)*100);
 const sameDonorAmount=(left:any,right:any)=>String(left.donorId||'')===String(right.donorId||'')&&paymentCents(left)===paymentCents(right);
@@ -129,6 +199,9 @@ const genericCollections: Record<string, { read: string; create: string; update:
   paymentAllocations: { read: 'transactions.read', create: 'transactions.approve', update: 'transactions.approve', delete: 'transactions.reverse' },
   paymentExpectations: { read: 'transactions.read', create: 'transactions.create', update: 'transactions.approve', delete: 'transactions.reverse' },
   fundraisers: { read: 'donors.read', create: 'donors.create', update: 'donors.update', delete: 'donors.delete' },
+  fundraisingGroups: { read: 'donors.read', create: 'donors.update', update: 'donors.update', delete: 'donors.update' },
+  fundraiserPayouts: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
+  donorContacts: { read: 'donors.read', create: 'donors.update', update: 'donors.update', delete: 'donors.update' },
   employees: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
   t4aSlips: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
   recurringPayroll: { read: 'payroll.read', create: 'payroll.manage', update: 'payroll.manage', delete: 'payroll.manage' },
@@ -1160,7 +1233,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type=? AND is_deleted=0 AND (?='' OR lower(data) LIKE ?)").bind(type,search,`%${search}%`)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
-    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), balanceOwed: Number(row.balance_owed || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+    let fundraiserAccounting:any=null;
+    if(type==='fundraisers'){
+      const rows=await c.env.DB.prepare("SELECT id,type,data,revision,updated_at FROM sync_records WHERE is_deleted=0 AND type IN ('transactions','pledges','fundraisers','fundraiserPayouts')").all();const grouped=new Map<string,any[]>();for(const row of rows.results as any[])grouped.set(String(row.type),[...(grouped.get(String(row.type))||[]),parseRecord(row)]);fundraiserAccounting=calculateFundraiserAccounting(grouped.get('transactions')||[],grouped.get('pledges')||[],grouped.get('fundraisers')||[],grouped.get('fundraiserPayouts')||[]);
+    }
+    return c.json({ success: true, items: listResult.results.map((row: any) => {const item=parseRecord(row);const calculated=fundraiserAccounting?.byFundraiser.get(String(item.id));return {...item,balanceOwed:calculated?Number(calculated.owed):Number(row.balance_owed||0),totalRaised:calculated?Number(calculated.raised):0,commissionEarned:calculated?Number(calculated.earned):0,commissionPaid:calculated?Number(calculated.paid):0};}), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.get('/v3/payroll/:entityType/:id/ledger', async (c: any) => {
@@ -1171,10 +1248,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const id = String(c.req.param('id') || ''); const entity: any = await c.env.DB.prepare('SELECT data FROM sync_records WHERE type=? AND id=? AND is_deleted=0').bind(recordType, id).first();
     if (!entity) return c.json({ success: false, error: 'Payroll entity not found.' }, 404);
     const name = String(JSON.parse(String(entity.data)).name || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
-    const where = "type='bills' AND is_deleted=0 AND (COALESCE(json_extract(data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(data,'$.isPayrollExpense'),0)=1) AND (json_extract(data,'$.employeeId')=? OR lower(json_extract(data,'$.vendor'))=lower(?))";
+    const where = "type='bills' AND is_deleted=0 AND (COALESCE(json_extract(data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(data,'$.isPayrollExpense'),0)=1) AND (json_extract(data,'$.employeeId')=? OR json_extract(data,'$.fundraiserId')=? OR lower(json_extract(data,'$.vendor'))=lower(?))";
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE ${where} ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT ? OFFSET ?`).bind(id, `Payroll: ${name}`, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE ${where}`).bind(id, `Payroll: ${name}`)
+      c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE ${where} ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT ? OFFSET ?`).bind(id,id, `Payroll: ${name}`, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE ${where}`).bind(id,id, `Payroll: ${name}`)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map(parseRecord), page, limit, total, totalPages: Math.ceil(total / limit) });
@@ -1215,10 +1292,57 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     try { await c.env.DB.batch(statements); return c.json(response, 201); } catch { const repeated = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first(); if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json))); return c.json({ success: false, error: 'Payroll was not recorded. You can safely try again.' }, 409); }
   });
 
+  app.post('/v3/fundraiser-payouts', async (c: any) => {
+    const denied = requirePermission(c, 'payroll.manage'); if (denied) return denied;
+    const body = await c.req.json(); const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success:false,error:'Idempotency-Key is required.' },400);
+    const mutationId=`v3-fundraiser-payout-${requestId}`; const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
+    const fundraiserId=String(body.fundraiserId||''); const sourceAccountId=String(body.sourceAccountId||''); const amount=Number(body.amount); const date=isoDate(body.date); const memo=String(body.memo||'').trim().slice(0,2000);
+    if(!fundraiserId||!sourceAccountId||!(amount>0)||!date)return c.json({success:false,error:'Fundraiser, paid-from account, positive amount, and date are required.'},400);
+    const [fundraiserRow,sourceRow,expenseRow,accountingRows]=await Promise.all([
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='fundraisers' AND id=? AND is_deleted=0").bind(fundraiserId).first(),
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first(),
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.type')='expense' ORDER BY CASE WHEN lower(json_extract(data,'$.name')) LIKE '%fundrais%' THEN 0 ELSE 1 END,lower(json_extract(data,'$.name')) LIMIT 1").first(),
+      c.env.DB.prepare("SELECT id,type,data,revision,updated_at FROM sync_records WHERE is_deleted=0 AND type IN ('transactions','pledges','fundraisers','fundraiserPayouts')").all()
+    ]);
+    if(!fundraiserRow||!sourceRow)return c.json({success:false,error:'The fundraiser or paid-from account does not exist.'},409);
+    const source=parseSetting((sourceRow as any).data,{});if(!['asset','liability'].includes(source.type))return c.json({success:false,error:'Choose a bank, cash, or credit-card account.'},409);
+    const grouped=new Map<string,any[]>();for(const row of accountingRows.results as any[])grouped.set(String(row.type),[...(grouped.get(String(row.type))||[]),parseRecord(row)]);
+    const accounting=calculateFundraiserAccounting(grouped.get('transactions')||[],grouped.get('pledges')||[],grouped.get('fundraisers')||[],grouped.get('fundraiserPayouts')||[]);const owed=Number(accounting.byFundraiser.get(fundraiserId)?.owed||0);
+    if(amount-owed>0.005)return c.json({success:false,error:`This payout exceeds the amount currently owed (${owed.toFixed(2)}).`},409);
+    if(!expenseRow)return c.json({success:false,error:'Add a Fundraising Commission expense account before paying a fundraiser.'},409);
+    const fundraiser=parseSetting((fundraiserRow as any).data,{});const id=crypto.randomUUID();const billId=crypto.randomUUID();const now=Date.now();
+    const payout={id,fundraiserId,sourceAccountId,amount,date,memo,linkedBillId:billId};
+    const bill={id:billId,vendor:`Fundraiser: ${fundraiser.name||'Unknown'}`,fundraiserId,amount,currency:'CAD',dueDate:date,paidDate:date,status:'paid',sourceAccountId,offsetAccountId:String((expenseRow as any).id),category:String((expenseRow as any).id),isPayroll:true,isFundraiserPayout:true,earningType:'Commission payout',memo:memo||'Fundraiser commission payout'};
+    const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const response={success:true,item:{...payout,revision:1,updatedAt:now},bill:{...bill,revision:1,updatedAt:now}};
+    const records:[string,string,any][]=[[id,'fundraiserPayouts',payout],[billId,'bills',bill]];const statements:any[]=[];
+    for(const [recordId,type,value] of records){const data=JSON.stringify(value);const operationId=`${mutationId}-${type}`;statements.push(c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?,?,1,0,?)').bind(recordId,type,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(recordId,type,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(recordId,type,data,userId,userEmail,now,mutationId,operationId,'Recorded fundraiser commission payout'));}
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));
+    try{await c.env.DB.batch(statements);return c.json(response,201);}catch{const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json)));return c.json({success:false,error:'The payout was not recorded. You can safely try again.'},409);}
+  });
+
+  app.post('/v3/donor-contacts', async (c:any) => {
+    const denied=requirePermission(c,'donors.update');if(denied)return denied;const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||body.requestId||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);
+    const mutationId=`v3-donor-contact-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
+    const donorId=String(body.donorId||'');const fundraiserId=String(body.fundraiserId||'');const campaignId=String(body.campaignId||'');const pledgeId=String(body.pledgeId||'');const date=isoDate(body.date);const notes=String(body.notes||'').trim().slice(0,4000);const outcome=String(body.outcome||'contacted').trim().slice(0,100);const followUpDate=body.followUpDate?isoDate(body.followUpDate):'';
+    if(!donorId||!date||!notes|| (body.followUpDate&&!followUpDate))return c.json({success:false,error:'Donor, contact date, notes, and a valid follow-up date are required.'},400);
+    const refs=await c.env.DB.prepare("SELECT type,id,data FROM sync_records WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='fundraisers' AND id=?) OR (type='campaigns' AND id=?) OR (type='pledges' AND id=?))").bind(donorId,fundraiserId,campaignId,pledgeId).all();const found=new Set((refs.results as any[]).map(row=>`${row.type}:${row.id}`));
+    if(!found.has(`donors:${donorId}`)||fundraiserId&&!found.has(`fundraisers:${fundraiserId}`)||campaignId&&!found.has(`campaigns:${campaignId}`)||pledgeId&&!found.has(`pledges:${pledgeId}`))return c.json({success:false,error:'A selected donor, fundraiser, campaign, or pledge no longer exists.'},409);
+    const donor=parseSetting((refs.results as any[]).find(row=>row.type==='donors')?.data,{});const id=crypto.randomUUID();const now=Date.now();const contact={id,donorId,fundraiserId,campaignId,pledgeId,date,outcome,notes,followUpDate,createdAt:new Date(now).toISOString()};const taskId=`donor-contact-follow-up-${id}`;const task=followUpDate?{id:taskId,donorId,title:`Follow up with ${donor.name||'donor'}`,notes,dueDate:followUpDate,priority:'high',type:'follow_up',completed:false,linkedContactId:id,linkedPledgeId:pledgeId,createdAt:new Date(now).toISOString().slice(0,10)}:null;const response={success:true,item:{...contact,revision:1,updatedAt:now},task};const statements:any[]=[];
+    for(const [recordId,type,value] of [[id,'donorContacts',contact],...(task?[[taskId,'tasks',task]]:[])] as any[]){const data=JSON.stringify(value);const operationId=`${mutationId}-${type}`;statements.push(c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?,?,1,0,?)').bind(recordId,type,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(recordId,type,data,now,mutationId,operationId));}
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));try{await c.env.DB.batch(statements);return c.json(response,201);}catch{return c.json({success:false,error:'The contact record was not saved. You can safely try again.'},409);}
+  });
+
+  app.get('/v3/contact-reports',async(c:any)=>{const denied=requirePermission(c,'reports.read');if(denied)return denied;const year=String(c.req.query('year')||new Date().getUTCFullYear());const month=String(c.req.query('month')||'');const from=month&&/^\d{4}-\d{2}$/.test(month)?`${month}-01`:`${year}-01-01`;const to=month&&/^\d{4}-\d{2}$/.test(month)?`${month}-31`:`${year}-12-31`;const today=new Date().toISOString().slice(0,10);const [summary,contacts,notContacted]=await c.env.DB.batch([c.env.DB.prepare("SELECT COUNT(*) count,COUNT(DISTINCT json_extract(data,'$.donorId')) donors,COALESCE(SUM(CASE WHEN json_extract(data,'$.followUpDate')=? THEN 1 ELSE 0 END),0) due_today,COALESCE(SUM(CASE WHEN json_extract(data,'$.followUpDate')<? THEN 1 ELSE 0 END),0) overdue FROM sync_records WHERE type='donorContacts' AND is_deleted=0 AND json_extract(data,'$.date') BETWEEN ? AND ?").bind(today,today,from,to),c.env.DB.prepare("SELECT c.id,c.data,c.revision,c.updated_at,json_extract(d.data,'$.name') donor_name,json_extract(f.data,'$.name') fundraiser_name,json_extract(g.data,'$.name') campaign_name FROM sync_records c LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(c.data,'$.donorId') LEFT JOIN sync_records f ON f.type='fundraisers' AND f.id=json_extract(c.data,'$.fundraiserId') LEFT JOIN sync_records g ON g.type='campaigns' AND g.id=json_extract(c.data,'$.campaignId') WHERE c.type='donorContacts' AND c.is_deleted=0 AND json_extract(c.data,'$.date') BETWEEN ? AND ? ORDER BY json_extract(c.data,'$.date') DESC LIMIT 100").bind(from,to),c.env.DB.prepare("SELECT d.id,d.data,d.revision,d.updated_at FROM sync_records d WHERE d.type='donors' AND d.is_deleted=0 AND NOT EXISTS(SELECT 1 FROM sync_records c WHERE c.type='donorContacts' AND c.is_deleted=0 AND json_extract(c.data,'$.donorId')=d.id AND json_extract(c.data,'$.date') BETWEEN ? AND ?) ORDER BY lower(json_extract(d.data,'$.name')) LIMIT 100").bind(from,to)]);return c.json({success:true,period:{from,to},summary:summary.results[0]||{},contacts:contacts.results.map((row:any)=>({...parseRecord(row),donorName:String(row.donor_name||''),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')})),notContacted:notContacted.results.map(parseRecord)});});
+
   app.get('/v3/reports', async (c: any) => {
     const denied = requirePermission(c, 'reports.read');
     if (denied) return denied;
     const tab = String(c.req.query('tab') || 'monthly'); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
+    if(tab==='by_fundraiser'){
+      const rows=await c.env.DB.prepare("SELECT id,type,data,revision,updated_at FROM sync_records WHERE is_deleted=0 AND type IN ('transactions','pledges','fundraisers','fundraiserPayouts')").all();const grouped=new Map<string,any[]>();for(const row of rows.results as any[])grouped.set(String(row.type),[...(grouped.get(String(row.type))||[]),parseRecord(row)]);const fundraisers=grouped.get('fundraisers')||[];const accounting=calculateFundraiserAccounting(grouped.get('transactions')||[],grouped.get('pledges')||[],fundraisers,grouped.get('fundraiserPayouts')||[]);const all=fundraisers.map(fundraiser=>{const value=accounting.byFundraiser.get(String(fundraiser.id))||{raised:0,earned:0,paid:0,owed:0};return {...fundraiser,total:value.raised,commission:value.earned,paid:value.paid,owed:value.owed};}).sort((a,b)=>b.total-a.total);return c.json({success:true,items:all.slice(offset,offset+limit),page,limit,total:all.length,totalPages:Math.ceil(all.length/limit),grandTotal:all.reduce((sum,item)=>sum+item.total,0)});
+    }
     let listSql = ''; let countSql = ''; const bindings: any[] = [];
     if (tab === 'monthly') {
       listSql = "SELECT substr(json_extract(data,'$.date'),1,7) AS label,COUNT(*) AS count,COALESCE(SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)),0) AS total FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 GROUP BY label ORDER BY label DESC LIMIT 12";
@@ -2150,11 +2274,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const id = String(c.req.param('id') || '');
     const donor: any = await c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(id).first();
     if (!donor) return c.json({ success: false, error: 'Donor not found.' }, 404);
-    const [payments, pledges, pledgeSummary, recurring] = await c.env.DB.batch([
+    const [payments, pledges, pledgeSummary, recurring, contacts] = await c.env.DB.batch([
       c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.date') DESC,id DESC").bind(id),
       c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT 50").bind(id),
       c.env.DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)),0) AS total FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(id),
-      c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.nextDate'),id LIMIT 50").bind(id)
+      c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.nextDate'),id LIMIT 50").bind(id),
+      c.env.DB.prepare("SELECT c.id,c.data,c.revision,c.updated_at,json_extract(f.data,'$.name') AS fundraiser_name,json_extract(g.data,'$.name') AS campaign_name FROM sync_records c LEFT JOIN sync_records f ON f.type='fundraisers' AND f.id=json_extract(c.data,'$.fundraiserId') AND f.is_deleted=0 LEFT JOIN sync_records g ON g.type='campaigns' AND g.id=json_extract(c.data,'$.campaignId') AND g.is_deleted=0 WHERE c.type='donorContacts' AND c.is_deleted=0 AND json_extract(c.data,'$.donorId')=? ORDER BY json_extract(c.data,'$.date') DESC,c.updated_at DESC LIMIT 100").bind(id)
     ]);
     const paymentItems = payments.results.map(parseRecord);
     const pledgeItems = pledges.results.map(parseRecord);
@@ -2175,8 +2300,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({
       success: true,
       donor: { ...parseRecord(donor), totalGiven: approvedTotal },
-      payments: paymentItems.slice(0, 50), pledges: enrichedPledges, recurring: recurringItems,
-      summary: { paymentCount: paymentItems.length, approvedTotal, declinedCount: paymentItems.filter(payment => payment.type === 'declined').length, pledgeCount: Number(pledgeStats.count || 0), pledgedTotal: Number(pledgeStats.total || 0), pledgePaidTotal, pledgePendingTotal, scheduledTotal, pledgeBalance, unappliedTotal: approvedTotal - pledgePaidTotal, recurringCount: recurringItems.length, activeRecurringCount: recurringItems.filter(item => item.active).length, activeRecurringTotal: scheduledTotal }
+      payments: paymentItems.slice(0, 50), pledges: enrichedPledges, recurring: recurringItems, contacts: contacts.results.map((row:any)=>({...parseRecord(row),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')})),
+      summary: { paymentCount: paymentItems.length, approvedTotal, declinedCount: paymentItems.filter(payment => payment.type === 'declined').length, pledgeCount: Number(pledgeStats.count || 0), pledgedTotal: Number(pledgeStats.total || 0), pledgePaidTotal, pledgePendingTotal, scheduledTotal, pledgeBalance, unappliedTotal: approvedTotal - pledgePaidTotal, recurringCount: recurringItems.length, activeRecurringCount: recurringItems.filter(item => item.active).length, activeRecurringTotal: scheduledTotal, contactCount: contacts.results.length }
     });
   });
 
@@ -3217,7 +3342,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     `).bind(search, `%${search}%`,typesJson,typesJson, limit, offset).all();
     const countResult: any = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='accounts' AND is_deleted=0 AND (?='' OR lower(COALESCE(json_extract(data,'$.name'),'')) LIKE ?) AND (?='[]' OR json_extract(data,'$.type') IN (SELECT value FROM json_each(?)))").bind(search, `%${search}%`,typesJson,typesJson).first();
     const total = Number(countResult?.count || 0);
-    return c.json({ success: true, items: result.results.map((row: any) => ({ ...parseRecord(row), balance: Number(row.calculated_balance || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+    const accountingRows = await c.env.DB.prepare("SELECT id,type,data,revision,updated_at FROM sync_records WHERE is_deleted=0 AND type IN ('transactions','pledges','fundraisers','fundraiserPayouts')").all();
+    const groupedAccounting = new Map<string, any[]>();
+    for (const row of accountingRows.results as any[]) groupedAccounting.set(String(row.type), [...(groupedAccounting.get(String(row.type)) || []), parseRecord(row)]);
+    const fundraiserAccounting = calculateFundraiserAccounting(groupedAccounting.get('transactions') || [], groupedAccounting.get('pledges') || [], groupedAccounting.get('fundraisers') || [], groupedAccounting.get('fundraiserPayouts') || []);
+    return c.json({ success: true, items: result.results.map((row: any) => {
+      const item = parseRecord(row); const actualBalance = Number(row.calculated_balance || 0);
+      const fundraiserReserved = item.type === 'asset' ? Number(fundraiserAccounting.reservedByAccount.get(String(item.id)) || 0) : 0;
+      return { ...item, balance: actualBalance, actualBalance, fundraiserReserved, availableBalance: actualBalance - fundraiserReserved };
+    }), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.get('/v3/accounts/:id/ledger', async (c: any) => {
@@ -3335,6 +3468,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
     const projectId = String(body.projectId || '');
     const fundraiserId = String(body.fundraiserId || '');
+    const fundraiserAllocations = cleanFundraiserAllocations(body.fundraiserAllocations);
+    const fundraiserPercentageTotal = fundraiserAllocations.reduce((sum,item)=>sum+item.percentage,0);
+    if(fundraiserPercentageTotal>100.0001)return c.json({success:false,error:'Fundraiser percentages cannot total more than 100%.'},400);
     const pledgeId = String(body.pledgeId || '');
     const requestedAllocations = Array.isArray(body.allocations) ? body.allocations.map((allocation: any) => ({ pledgeId: String(allocation?.pledgeId || '').trim(), amount: Number(allocation?.amount) })).filter((allocation: any) => allocation.pledgeId || allocation.amount) : [];
     if (requestedAllocations.some((allocation: any) => !allocation.pledgeId || !Number.isFinite(allocation.amount) || allocation.amount <= 0)) return c.json({ success: false, error: 'Every pledge allocation needs a pledge and a positive amount.' }, 400);
@@ -3351,6 +3487,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
     if (projectId && !found.has(`projects:${projectId}`)) return c.json({ success:false,error:'The selected project does not exist.' },409);
     if (fundraiserId && !found.has(`fundraisers:${fundraiserId}`)) return c.json({ success:false,error:'The selected fundraiser does not exist.' },409);
+    if(fundraiserAllocations.length){const rows=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='fundraisers' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(fundraiserAllocations.map(item=>item.fundraiserId))).all();const valid=new Set((rows.results as any[]).map(row=>String(row.id)));if(fundraiserAllocations.some(item=>!valid.has(item.fundraiserId)))return c.json({success:false,error:'A selected fundraiser no longer exists.'},409);}
     const pledgeRow: any = refs.results.find((row:any)=>row.type==='pledges'&&row.id===pledgeId);
     if (pledgeId && (!pledgeRow || String(JSON.parse(String(pledgeRow.data)).donorId||'')!==donorId)) return c.json({ success:false,error:'The selected pledge does not belong to this donor.' },409);
     if (requestedAllocations.length) {
@@ -3390,6 +3527,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       offsetAccountId,
       depositStatus: undeposited ? 'undeposited' : 'direct',
       ...(fundraiserId ? { fundraiserId } : {}),
+      ...(fundraiserAllocations.length && !effectivePledgeId && !pledgeAllocations.length ? { fundraiserAllocations } : {}),
       ...(projectId ? { projectId } : {}),
       ...(pledgeAllocations.length ? { pledgeAllocations } : effectivePledgeId ? { pledgeId: effectivePledgeId, ...(datePledge ? { pledgeAutoLinked: true } : {}) } : {}),
       ...(sponsor ? { sponsor } : {}),

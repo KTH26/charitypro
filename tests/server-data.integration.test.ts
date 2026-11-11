@@ -64,6 +64,28 @@ describe('expense category hierarchy totals', () => {
   });
 });
 
+describe('fundraiser reserve accounting and donor contacts',()=>{
+  it('keeps actual cash intact, reserves the pledge split, and releases the reserve when paid',async()=>{
+    const db=new MockD1();databases.push(db);
+    seedRecord(db,'accounts','bank',{id:'bank',name:'Bank',type:'asset',currency:'CAD'});seedRecord(db,'accounts','revenue',{id:'revenue',name:'Donations',type:'revenue',currency:'CAD'});seedRecord(db,'accounts','commission-expense',{id:'commission-expense',name:'Fundraising Commission',type:'expense',currency:'CAD'});
+    seedRecord(db,'donors','donor',{id:'donor',name:'Donor'});seedRecord(db,'fundraisers','f1',{id:'f1',name:'One',percentage:10});seedRecord(db,'fundraisers','f2',{id:'f2',name:'Two',percentage:20});seedRecord(db,'pledges','pledge',{id:'pledge',donorId:'donor',amount:1000,date:'2026-03-01',fundraiserAllocations:[{fundraiserId:'f1',percentage:10},{fundraiserId:'f2',percentage:20}]});
+    seedRecord(db,'transactions','payment',{id:'payment',donorId:'donor',pledgeId:'pledge',amount:1000,amountCAD:1000,date:'2026-04-01',type:'approved',currency:'CAD',sourceAccountId:'bank',offsetAccountId:'revenue'});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','tester');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
+    let response=await app.request('/v3/accounts?limit=100',{}, {DB:db} as any);let body=await response.json() as any;let bank=body.items.find((item:any)=>item.id==='bank');expect(bank).toMatchObject({actualBalance:1000,fundraiserReserved:300,availableBalance:700});
+    response=await app.request('/v3/payroll/entities?type=fundraisers&limit=100',{}, {DB:db} as any);body=await response.json() as any;expect(body.items.find((item:any)=>item.id==='f1')).toMatchObject({totalRaised:1000,commissionEarned:100,balanceOwed:100});expect(body.items.find((item:any)=>item.id==='f2')).toMatchObject({commissionEarned:200,balanceOwed:200});
+    response=await app.request('/v3/fundraiser-payouts',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'payout-f1'},body:JSON.stringify({fundraiserId:'f1',sourceAccountId:'bank',amount:100,date:'2026-04-02'})},{DB:db} as any);expect(response.status).toBe(201);
+    response=await app.request('/v3/accounts?limit=100',{}, {DB:db} as any);body=await response.json() as any;bank=body.items.find((item:any)=>item.id==='bank');expect(bank).toMatchObject({actualBalance:900,fundraiserReserved:200,availableBalance:700});
+  });
+
+  it('records a permanent contact and creates one linked follow-up task',async()=>{
+    const db=new MockD1();databases.push(db);seedRecord(db,'donors','donor',{id:'donor',name:'Contact Donor'});seedRecord(db,'fundraisers','f1',{id:'f1',name:'Caller'});seedRecord(db,'campaigns','c1',{id:'c1',name:'Campaign 2026'});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/donor-contacts',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'contact-1'},body:JSON.stringify({donorId:'donor',fundraiserId:'f1',campaignId:'c1',date:'2026-11-11',outcome:'Call back',notes:'Asked us to call Friday.',followUpDate:'2026-11-13'})},{DB:db} as any);expect(response.status).toBe(201);const body=await response.json() as any;
+    const task:any=db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND id=?").get(`donor-contact-follow-up-${body.item.id}`);expect(JSON.parse(task.data)).toMatchObject({donorId:'donor',linkedContactId:body.item.id,dueDate:'2026-11-13',completed:false});
+    const profileResponse=await app.request('/v3/donors/donor/profile',{}, {DB:db} as any);const profile=await profileResponse.json() as any;expect(profile.contacts[0]).toMatchObject({notes:'Asked us to call Friday.',fundraiserName:'Caller',campaignName:'Campaign 2026'});
+  });
+});
+
 describe('payment export', () => {
   it('downloads every active payment with donor and account details in one CSV', async () => {
     const db = new MockD1(); databases.push(db);

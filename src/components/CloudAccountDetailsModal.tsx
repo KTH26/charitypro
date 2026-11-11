@@ -5,7 +5,7 @@ import { CloudAccountEditModal } from './CloudAccountEditModal';
 import { CloudBillDetailsModal } from './CloudBillDetailsModal';
 import { CloudTransferDetailsModal } from './CloudTransferDetailsModal';
 
-type Account = { id: string; name: string; type: string; currency: string; balance: number; revision: number; subType?: string; startingBalance?: number };
+type Account = { id: string; name: string; type: string; currency: string; balance: number; actualBalance?:number; fundraiserReserved?:number; availableBalance?:number; revision: number; subType?: string; startingBalance?: number };
 type Entry = { id: string; recordType: string; [key: string]: any };
 
 export const CloudAccountDetailsModal: React.FC<{ account: Account; onClose: () => void; onUpdated?: (account: Account) => void; onDeleted?: (accountId: string) => void }> = ({ account, onClose, onUpdated, onDeleted }) => {
