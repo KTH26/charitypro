@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { usePlaidLink } from "react-plaid-link";
 import { OnlinePaymentForm } from "../components/OnlinePaymentForm";
 import { CloudTransactionModal } from "../components/CloudTransactionModal";
@@ -213,8 +214,7 @@ export const OnlineBank: React.FC = () => {
     if (selectedBank) window.localStorage.setItem("charitypro:selected-bank-account", selectedBank);
   }, [selectedBank]);
   useEffect(() => {
-    const interval = window.setInterval(() => void loadState(true), 3000);
-    return () => window.clearInterval(interval);
+    return startLiveRefresh(() => void loadState(true));
   }, [loadState]);
   useEffect(() => {
     if (selectedBank) void loadFeed();

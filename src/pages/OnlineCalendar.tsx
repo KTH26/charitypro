@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { Calendar, Plus, Star, Trash2, X } from 'lucide-react';
 import { HDate } from '@hebcal/core';
 
@@ -56,8 +57,7 @@ export const OnlineCalendar: React.FC = () => {
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(true), 3000);
-    return () => window.clearInterval(timer);
+    return startLiveRefresh(() => void load(true));
   }, [load]);
 
   useEffect(() => {

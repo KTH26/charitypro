@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { OnlineDonorForm, type OnlineDonor } from '../components/OnlineDonorForm';
 import { CloudDonorProfileModal } from '../components/CloudDonorProfileModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
@@ -44,8 +45,7 @@ export const OnlineDonors: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    const interval = window.setInterval(() => void load(true), 3000);
-    return () => window.clearInterval(interval);
+    return startLiveRefresh(() => void load(true));
   }, [load]);
   useEffect(() => { setPage(1); }, [search]);
   useEffect(() => { const timer = window.setTimeout(() => setSearch(searchInput.trim()), 220); return () => window.clearTimeout(timer); }, [searchInput]);

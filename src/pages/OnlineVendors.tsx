@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { Search } from 'lucide-react';
 import { CloudVendorDetailsModal } from '../components/CloudVendorDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
@@ -20,7 +21,7 @@ export const OnlineVendors: React.FC = () => {
     } catch (reason: any) { if (!silent) setError(reason.message || 'Unable to load vendors.'); }
     finally { if (!silent) setLoading(false); }
   }, [page, search, sort, direction]);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(true), 3000); return () => window.clearInterval(timer); }, [load]);
+  useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
   return <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28 }}><div style={{ maxWidth: 1400, margin: '0 auto' }}>
     <div style={{ marginBottom: 22 }}><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Vendors ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Shared vendor totals calculated from cloud bills · 50 vendors per page</div></div>
     <section className="filter-strip"><div className="search-box" style={{ maxWidth: 420 }}><Search className="search-icon" size={18} /><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search vendors..." /></div></section>

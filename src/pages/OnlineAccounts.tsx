@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudAccountDetailsModal } from '../components/CloudAccountDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
 
@@ -31,8 +32,7 @@ export const OnlineAccounts: React.FC = () => {
   }, [page, search, sort, direction]);
   useEffect(() => {
     void load();
-    const interval = window.setInterval(() => void load(true), 3000);
-    return () => window.clearInterval(interval);
+    return startLiveRefresh(() => void load(true));
   }, [load]);
 
   const grouped = accounts.reduce<Record<string, Account[]>>((result, account) => {

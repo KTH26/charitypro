@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudScheduleDetailsModal } from '../components/CloudScheduleDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
 
@@ -18,7 +19,7 @@ export const OnlineSchedules: React.FC = () => {
   const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'amount' ? 'desc' : 'asc')); setSort(column); setPage(1); };
   const requestId = useRef('');
   const load = useCallback(async (silent = false) => { if (!silent) setLoading(true); try { const response = await fetch(`/api/v3/schedules?page=${page}&limit=50&status=${status}&search=${encodeURIComponent(search)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&sort=${sort}&direction=${direction}`); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load schedules.'); setItems(data.items); setTotal(Number(data.total || 0)); setTotalPages(Math.max(1, Number(data.totalPages || 1))); } catch (e: any) { if (!silent) setError(e.message || 'Unable to load schedules.'); } finally { if (!silent) setLoading(false); } }, [page, search, status, from, to, sort, direction]);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(true), 3000); return () => window.clearInterval(timer); }, [load]);
+  useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
   useEffect(() => { const timer = window.setTimeout(() => { fetch(`/api/v3/donors?limit=50&search=${encodeURIComponent(donorSearch)}`).then(response => response.json()).then(data => { if (data.success) setDonors(data.items); }).catch(() => undefined); }, 250); return () => window.clearTimeout(timer); }, [donorSearch]);
   const beginNew = () => { setForm(blank()); setDonorSearch(''); setEditing(true); setError(''); setNotice(''); requestId.current = ''; };
   const beginEdit = (item: Schedule) => { setForm({ id: item.id, revision: item.revision, donorId: item.donorId, amount: String(item.amount), currency: item.currency, frequency: item.frequency, nextDate: item.nextDate, endDate: item.endDate || '', method: item.method, active: item.active }); setDonorSearch(item.donorName); setDonors(current => current.some(donor => donor.id === item.donorId) ? current : [{ id: item.donorId, name: item.donorName }, ...current]); setEditing(true); setError(''); setNotice(''); requestId.current = ''; };

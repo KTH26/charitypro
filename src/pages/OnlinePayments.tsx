@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { OnlinePaymentForm } from '../components/OnlinePaymentForm';
 import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
@@ -83,8 +84,7 @@ export const OnlinePayments: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    const interval = window.setInterval(() => void load(true), 3000);
-    return () => window.clearInterval(interval);
+    return startLiveRefresh(() => void load(true));
   }, [load]);
   useEffect(() => { setPage(1); }, [search, method, from, to, status]);
   useEffect(() => { const timer = window.setTimeout(() => setSearch(searchInput.trim()), 220); return () => window.clearTimeout(timer); }, [searchInput]);

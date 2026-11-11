@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { Download, TrendingDown, TrendingUp, Wallet } from 'lucide-react';
 
 type Entry = { id: string; name: string; section: 'revenue' | 'expense'; amount: number };
@@ -34,7 +35,7 @@ export const OnlineProfitLoss: React.FC = () => {
     }
   }, [appliedRange, page]);
 
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(true), 5000); return () => window.clearInterval(timer); }, [load]);
+  useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
   const revenue = useMemo(() => items.filter(item => item.section === 'revenue'), [items]);
   const expenses = useMemo(() => items.filter(item => item.section === 'expense'), [items]);
   const apply = (event: React.FormEvent) => { event.preventDefault(); setPage(1); setAppliedRange({ startDate, endDate }); };

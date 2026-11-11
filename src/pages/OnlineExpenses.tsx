@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import Papa from 'papaparse';
 import { get } from 'idb-keyval';
 import { CloudBillDetailsModal } from '../components/CloudBillDetailsModal';
@@ -29,7 +30,7 @@ export const OnlineExpenses: React.FC = () => {
     else if(tab==='categories'){const response=await fetch(`/api/v3/expense-categories?page=${page}&limit=50&search=${encodeURIComponent(search)}`);const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load expense categories.');setCategories(data.items);setTotal(data.total);setTotalPages(Math.max(1,data.totalPages));setTotalYTD(Number(data.totalYTD||0));}
     else {const response=await fetch(`/api/v3/records/expenseQueueItems?page=${page}&limit=50&search=${encodeURIComponent(search)}`);const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load the processing queue.');setQueue(data.items);setTotal(data.total);setTotalPages(Math.max(1,data.totalPages));}
   }catch(reason:any){if(!silent)setError(reason.message||'Unable to load expenses.');}finally{if(!silent)setLoading(false);}},[tab,page,status,category,account,from,to,search,sort,direction]);
-  useEffect(()=>{void load();const timer=window.setInterval(()=>void load(true),3000);return()=>window.clearInterval(timer);},[load]);
+  useEffect(()=>{void load();return startLiveRefresh(() => void load(true));},[load]);
   const changeTab=(value:Tab)=>{setTab(value);setPage(1);setSearchInput('');setSearch('');setError('');setNotice('');};
 
   useEffect(()=>{let active=true;(async()=>{try{const raw:any=await get('charity-store');const saved=typeof raw==='string'?JSON.parse(raw):raw;const oldQueue=saved?.state?.uploadedExpenseQueue;if(!Array.isArray(oldQueue)||!oldQueue.length)return;let rescued=0;for(const item of oldQueue){if(!item?.id||!item?.date||!item?.description||!(Number(item.amount)>0))continue;const response=await fetch('/api/v3/records/expenseQueueItems',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':`legacy-expense-queue-${item.id}`},body:JSON.stringify({data:{id:String(item.id),date:String(item.date).slice(0,10),description:String(item.description),amount:Math.abs(Number(item.amount)),taxable:Boolean(item.taxable)}})});if(response.ok)rescued++;}if(active&&rescued){setNotice(`${rescued} waiting expense${rescued===1?' was':'s were'} recovered from this computer and saved online.`);void load(true);}}catch{/* Old local storage may not exist on this computer. */}})();return()=>{active=false;};},[]);

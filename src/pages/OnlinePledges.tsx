@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudPledgeDetailsModal } from '../components/CloudPledgeDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
 import { FundraiserAllocationEditor, type FundraiserAllocationDraft } from '../components/FundraiserAllocationEditor';
@@ -41,7 +42,7 @@ export const OnlinePledges: React.FC = () => {
     } catch (e: any) { if (!silent) setError(e.message || 'Unable to load pledges.'); }
     finally { if (!silent) setLoading(false); }
   }, [page, search, from, to, sort, direction]);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(true), 3000); return () => window.clearInterval(timer); }, [load]);
+  useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
   useEffect(() => { const timer = window.setTimeout(() => { fetch(`/api/v3/donors?limit=50&search=${encodeURIComponent(donorSearch)}`).then(response => response.json()).then(data => { if (data.success) setDonors(data.items); }).catch(() => undefined); }, 250); return () => window.clearTimeout(timer); }, [donorSearch]);
   useEffect(() => { Promise.all([fetch('/api/v3/records/campaigns?limit=100'),fetch('/api/v3/records/fundraisers?limit=100'),fetch('/api/v3/records/fundraisingGroups?limit=100')]).then(async responses=>Promise.all(responses.map(response=>response.json()))).then(([campaignData,fundraiserData,groupData])=>{if(campaignData.success)setCampaigns(campaignData.items||[]);if(fundraiserData.success)setFundraisers(fundraiserData.items||[]);if(groupData.success)setFundraisingGroups(groupData.items||[]);}).catch(() => undefined); }, []);
 

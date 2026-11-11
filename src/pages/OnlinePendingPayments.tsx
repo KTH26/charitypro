@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
 
@@ -23,7 +24,7 @@ export const OnlinePendingPayments: React.FC = () => {
     } catch (reason: any) { if (!silent) setError(reason.message || 'Unable to load pending payments.'); }
     finally { if (!silent) setLoading(false); }
   }, [page, search, from, to, sort, direction,status]);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(true), 4000); return () => window.clearInterval(timer); }, [load]);
+  useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
   const decline = async (item: PendingPayment) => {
     if (!confirm(`Mark the ${item.date} payment for ${item.donorName} as declined?`)) return;
     try {
