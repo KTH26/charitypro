@@ -11,6 +11,30 @@ const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAI
 app.use('*', requireAuth);
 app.use('/debug/*',async(c,next)=>{if(c.env.ENABLE_DEBUG_ENDPOINTS!=='true')return c.json({success:false,error:'Not found.'},404);if(!hasPermission((c.get('userRoles')||[]) as string[],'system.manage'))return c.json({success:false,error:'Forbidden.'},403);await next();});
 
+/**
+ * Live-update signal.
+ *
+ * Every saved change in CharityPro is written to the `sync_changes` ledger
+ * (auto-incrementing change_id), and Sola/bank status lives in `sync_metadata`.
+ * This endpoint returns a tiny "version" string built from those two values.
+ * Browsers poll it every couple of seconds; when the version changes they know
+ * someone saved something and refresh the page they are looking at.
+ * It is one cheap indexed query and reveals no record data.
+ */
+app.get('/v3/live', async (c) => {
+  try {
+    const row: any = await c.env.DB.prepare(
+      `SELECT
+         (SELECT COALESCE(MAX(change_id), 0) FROM sync_changes) AS change_id,
+         (SELECT COALESCE(MAX(updated_at), 0) FROM sync_metadata) AS meta_at`
+    ).first();
+    const version = `${row?.change_id ?? 0}-${row?.meta_at ?? 0}`;
+    return c.json({ success: true, version }, 200, { 'Cache-Control': 'no-store' });
+  } catch (err: any) {
+    return c.json({ success: false, error: err?.message || 'Live check failed.' }, 500);
+  }
+});
+
 const goneHandler = (c: any) => c.json({ error: 'Endpoint deprecated and removed.' }, 410);
 
 app.all('/sync', goneHandler);
