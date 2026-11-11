@@ -62,7 +62,7 @@ export const OnlineAccounts: React.FC = () => {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14 }}><span>Page {page} of {totalPages} · 50 accounts maximum per page</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
       </div>
-      {selectedAccount && <CloudAccountDetailsModal account={selectedAccount} onClose={() => setSelectedAccount(null)} onUpdated={account => { setSelectedAccount(account); setAccounts(current => current.map(item => item.id === account.id ? account : item)); }} />}
+      {selectedAccount && <CloudAccountDetailsModal account={selectedAccount} onClose={() => setSelectedAccount(null)} onUpdated={account => { setSelectedAccount(account); setAccounts(current => current.map(item => item.id === account.id ? account : item)); }} onDeleted={accountId=>{setSelectedAccount(null);setAccounts(current=>current.filter(item=>item.id!==accountId));void load(true);}} />}
     </main>
   );
 };

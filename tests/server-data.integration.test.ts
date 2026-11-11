@@ -401,6 +401,21 @@ describe('server-driven bank deposit matching', () => {
     expect(Number((db.database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE record_type='pledges'").get() as any).count)).toBe(3);
   });
 
+  it('deletes only empty bank accounts and protects accounts with linked activity', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'empty-bank', { id: 'empty-bank', name: 'Empty Bank', type: 'asset', subType: 'checking', currency: 'CAD', startingBalance: 0 }, 2);
+    seedRecord(db, 'accounts', 'used-bank', { id: 'used-bank', name: 'Used Bank', type: 'asset', subType: 'checking', currency: 'CAD', startingBalance: 0 }, 3);
+    seedRecord(db, 'accounts', 'revenue-account', { id: 'revenue-account', name: 'Donations', type: 'revenue', currency: 'CAD', startingBalance: 0 });
+    seedRecord(db, 'transactions', 'used-bank-payment', { id: 'used-bank-payment', donorId: 'donor-1', amount: 100, date: '2026-07-21', type: 'approved', sourceAccountId: 'used-bank', offsetAccountId: 'revenue-account' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const blocked = await app.request('/v3/records/accounts/used-bank', { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'delete-used-bank' }, body: JSON.stringify({ revision: 3 }) }, { DB: db } as any);
+    expect(blocked.status).toBe(409); expect((await blocked.json() as any).error).toContain('1 payment');
+    expect(Number((db.database.prepare("SELECT is_deleted FROM sync_records WHERE type='accounts' AND id='used-bank'").get() as any).is_deleted)).toBe(0);
+    const removed = await app.request('/v3/records/accounts/empty-bank', { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'delete-empty-bank' }, body: JSON.stringify({ revision: 2 }) }, { DB: db } as any);
+    expect(removed.status).toBe(200);
+    expect(Number((db.database.prepare("SELECT is_deleted FROM sync_records WHERE type='accounts' AND id='empty-bank'").get() as any).is_deleted)).toBe(1);
+  });
+
   it('creates first-class campaigns and safely links pledges to them', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'campaign-donor', { id: 'campaign-donor', name: 'Campaign Donor' });

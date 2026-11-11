@@ -607,6 +607,28 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const child: any = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='projects' AND is_deleted=0 AND json_extract(data,'$.parentId')=? LIMIT 1").bind(id).first();
       if (child) return c.json({ success: false, error: 'Move or delete the projects underneath this main project first.' }, 409);
     }
+    if (type === 'accounts') {
+      const account = parseSetting(current.data, {});
+      if (id.startsWith('sys-')) return c.json({ success: false, error: 'This is a required system account and cannot be deleted.' }, 409);
+      if (account.plaidConnected) return c.json({ success: false, error: 'Disconnect this bank from Bank Feed before deleting its account.' }, 409);
+      if (Math.abs(Number(account.startingBalance || 0)) > 0.005) return c.json({ success: false, error: 'This account has a starting balance. Set it to zero before deleting the account.' }, 409);
+      const linked: any = await c.env.DB.prepare(`SELECT
+        (SELECT COUNT(*) FROM sync_records WHERE type='transactions' AND is_deleted=0 AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.offsetAccountId')=?)) AS payments,
+        (SELECT COUNT(*) FROM sync_records WHERE type='bills' AND is_deleted=0 AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.creditAccountId')=? OR json_extract(data,'$.category')=?)) AS bills,
+        (SELECT COUNT(*) FROM sync_records WHERE type='accountTransfers' AND is_deleted=0 AND (json_extract(data,'$.fromAccountId')=? OR json_extract(data,'$.toAccountId')=?)) AS transfers,
+        (SELECT COUNT(*) FROM sync_records WHERE type IN ('recurringPayments','recurringExpenses') AND is_deleted=0 AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.offsetAccountId')=? OR json_extract(data,'$.category')=? OR json_extract(data,'$.creditAccountId')=?)) AS schedules,
+        (SELECT COUNT(*) FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=?) AS bank_feed,
+        (SELECT COUNT(*) FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.parentId')=?) AS children,
+        (SELECT COUNT(*) FROM sync_records WHERE type='bankVendorRules' AND is_deleted=0 AND (json_extract(data,'$.category')=? OR json_extract(data,'$.creditAccountId')=?)) AS vendor_rules
+      `).bind(id,id,id,id,id,id,id,id,id,id,id,id,id,id,id).first();
+      const counts = { payments:Number(linked?.payments||0),bills:Number(linked?.bills||0),transfers:Number(linked?.transfers||0),schedules:Number(linked?.schedules||0),bankFeed:Number(linked?.bank_feed||0),children:Number(linked?.children||0),vendorRules:Number(linked?.vendor_rules||0) };
+      const totalLinks = Object.values(counts).reduce((sum,value)=>sum+value,0);
+      if (totalLinks) {
+        const nouns:Record<string,string>={payments:'payment',bills:'bill',transfers:'transfer',schedules:'schedule',bankFeed:'bank-feed transaction',children:'subaccount',vendorRules:'saved vendor rule'};
+        const labels = Object.entries(counts).filter(([,value])=>value>0).map(([key,value])=>`${value} ${nouns[key]}${value === 1 ? '' : 's'}`);
+        return c.json({ success: false, error: `This account cannot be deleted because it has linked activity: ${labels.join(', ')}.`, linked: counts }, 409);
+      }
+    }
     const expectedRevision = Number(body.revision);
     if (!Number.isInteger(expectedRevision) || expectedRevision !== Number(current.revision)) return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
     const now = Date.now();
