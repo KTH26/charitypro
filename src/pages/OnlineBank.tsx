@@ -26,6 +26,8 @@ type BankTransaction = {
   date: string;
   description: string;
   amount: number;
+  pending?: boolean;
+  matchState?: "matched" | "unmatched" | "dismissed";
   sourceAccountId: string;
 };
 type Candidate = {
@@ -89,7 +91,7 @@ export const OnlineBank: React.FC = () => {
   const [allAccounts, setAllAccounts] = useState<CloudAccount[]>([]);
   const [selectedBank, setSelectedBank] = useState(() => window.localStorage.getItem("charitypro:selected-bank-account") || "");
   const [feed, setFeed] = useState<BankTransaction[]>([]);
-  const [tab, setTab] = useState<"unmatched" | "matched" | "dismissed">("unmatched");
+  const [tab, setTab] = useState<"unmatched" | "matched" | "dismissed" | "all">("unmatched");
   const [startDate, setStartDate] = useState("");
   const [feedPage, setFeedPage] = useState(1);
   const [feedPages, setFeedPages] = useState(1);
@@ -292,7 +294,8 @@ export const OnlineBank: React.FC = () => {
   const selectedTotal = candidates.filter((candidate) => selectedIds.includes(candidate.id)).reduce((sum, candidate) => sum + Number(candidate.amountCAD ?? candidate.amount), 0);
   const totalsMatch = matching ? Math.abs(selectedTotal - matching.amount) < 0.005 : false;
   const removeMatchedFromVisibleFeed = (bankTransactionId: string) => setFeed((current) => current.filter((transaction) => transaction.id !== bankTransactionId));
-  const changeFeedStatus = async (transaction: BankTransaction, action: "dismiss" | "restore") => {
+  const changeFeedStatus = async (transaction: BankTransaction, action: "dismiss" | "restore" | "delete") => {
+    if (action === "delete" && !window.confirm(`Delete this bank transaction forever?\n\n${transaction.date} · ${transaction.description} · ${Math.abs(transaction.amount).toFixed(2)}\n\nIt will not come back, even if the bank sends it again. Nothing in your accounting changes.`)) return;
     setSaving(true); setError(""); setNotice("");
     try {
       const requestId = crypto.randomUUID();
@@ -300,7 +303,7 @@ export const OnlineBank: React.FC = () => {
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || "Unable to update this bank transaction.");
       removeMatchedFromVisibleFeed(transaction.id);
-      setNotice(action === "dismiss" ? "Transaction moved to Dismissed. No accounting entry was created." : "Transaction restored to Unmatched and is ready to review.");
+      setNotice(action === "dismiss" ? "Transaction moved to Dismissed. No accounting entry was created." : action === "delete" ? "Transaction deleted forever." : "Transaction restored to Unmatched and is ready to review.");
       await loadFeed(true);
     } catch (reason: any) { setError(reason.message || "Unable to update this bank transaction."); }
     finally { setSaving(false); }
@@ -1147,6 +1150,15 @@ export const OnlineBank: React.FC = () => {
             >
               Dismissed
             </button>
+            <button
+              className={`btn ${tab === "all" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => {
+                setTab("all");
+                setFeedPage(1);
+              }}
+            >
+              All
+            </button>
             <input
               style={{ marginLeft: "auto", minWidth: 260 }}
               value={search}
@@ -1190,7 +1202,7 @@ export const OnlineBank: React.FC = () => {
                 {visibleFeed.map((transaction) => (
                   <tr key={transaction.id}>
                     <td>{transaction.date}</td>
-                    <td style={{ fontWeight: 700 }}>{transaction.description}</td>
+                    <td style={{ fontWeight: 700 }}>{transaction.description}{transaction.pending && <span className="feed-pending-tag">Pending</span>}</td>
                     <td>{transaction.amount > 0 ? "Money in" : "Money out"}</td>
                     <td
                       style={{
@@ -1202,13 +1214,23 @@ export const OnlineBank: React.FC = () => {
                       {transaction.amount > 0 ? "+" : "-"}${Math.abs(transaction.amount).toFixed(2)}
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      {tab === "unmatched" && <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                      {(() => {
+                        // In the All tab each row shows its own status and the actions for it.
+                        const state = tab === "all" ? transaction.matchState || "unmatched" : tab;
+                        return <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
+                      {tab === "all" && <span className={`feed-state feed-state-${state}`}>{state === "matched" ? "Matched" : state === "dismissed" ? "Dismissed" : "Unmatched"}</span>}
+                      {state === "unmatched" && <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
                         {transaction.amount > 0 && <button className="btn btn-primary btn-sm" onClick={() => void openDepositMatch(transaction)}>Match Deposit</button>}
                         {transaction.amount < 0 && <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Match Transaction</button>}
                         <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"dismiss")}>Dismiss</button>
                       </div>}
                       {tab === "matched" && <span style={{ color: "var(--green)", fontWeight: 700 }}>Matched</span>}
-                      {tab === "dismissed" && <button className="btn btn-primary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"restore")}>Restore to Unmatched</button>}
+                      {state === "dismissed" && <>
+                        <button className="btn btn-primary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"restore")}>Restore to Unmatched</button>
+                        <button className="btn btn-danger btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"delete")}>Delete forever</button>
+                      </>}
+                        </div>;
+                      })()}
                     </td>
                   </tr>
                 ))}

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { registerServerDataRoutes, creditCardCycle } from '../functions/api/server-data';
+import { buildBankFeedSaveStatements, registerServerDataRoutes, creditCardCycle } from '../functions/api/server-data';
 
 const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
 
@@ -93,8 +93,9 @@ describe('credit cards due', () => {
     expect(visa).toMatchObject({ dueDate: '2026-11-15', amountDue: 100 });
     result = await call('GET', '/v3/credit-cards-due?today=2026-11-26');
     visa = result.body.items.find((item: any) => item.id === 'visa');
-    expect(visa).toMatchObject({ dueDate: '2026-12-15', statementDate: '2026-11-24', periodCharges: 250, amountDue: 350 });
-    // Paid the November bill (100) on Nov 14, so December still owes 250.
+    // Only this statement's charges count; the earlier bill is separate.
+    expect(visa).toMatchObject({ dueDate: '2026-12-15', statementDate: '2026-11-24', periodCharges: 250, amountDue: 250 });
+    // Paid the November bill (100) on Nov 14, during this period: it was for the previous bill, so December still owes 250.
     const paid = await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'visa', amount: 100, date: '2026-11-14' } });
     expect(paid.status).toBe(201);
     result = await call('GET', '/v3/credit-cards-due?today=2026-11-26');
@@ -231,5 +232,77 @@ describe('bank feed on a connected credit card', () => {
     // Charges 2 + 50, refund -2: the card owes 50.
     const card = (await call('GET', '/v3/credit-cards-due?today=2026-11-26')).body.items.find((item: any) => item.id === 'amexfeed');
     expect(card.balance).toBe(50);
+  });
+});
+
+describe('credit card bill: payments during the period are for the previous bill', () => {
+  it('ignores a payment made during the period, counts refunds in the period and payments after the statement', async () => {
+    const { call, charge, db } = setup();
+    await charge(400, '2026-10-01'); // Sep 25 - Oct 24 period, due Nov 15
+    seed(db, 'bills', 'refund-1', { vendor: 'Store refund', amount: -30, currency: 'CAD', dueDate: '2026-10-05', paidDate: '2026-10-05', status: 'paid', category: 'supplies', sourceAccountId: 'visa', refundOfBillId: 'x' }); // refund in the period
+    await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'visa', amount: 900, date: '2026-10-15' } }); // paid the previous bill
+    let visa = (await call('GET', '/v3/credit-cards-due?today=2026-11-10')).body.items.find((item: any) => item.id === 'visa');
+    expect(visa).toMatchObject({ dueDate: '2026-11-15', periodCharges: 370, paidSinceStatement: 0, amountDue: 370 });
+    await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'visa', amount: 100, date: '2026-11-01' } }); // after the statement
+    visa = (await call('GET', '/v3/credit-cards-due?today=2026-11-10')).body.items.find((item: any) => item.id === 'visa');
+    expect(visa).toMatchObject({ paidSinceStatement: 100, amountDue: 270 });
+  });
+});
+
+describe('bank feed: pending charges, all tab, and delete forever', () => {
+  const feed = (db: any) => (db.database.prepare("SELECT id,is_deleted,data FROM sync_records WHERE type='bankFeedTransactions' ORDER BY id").all() as any[]).map(row => ({ id: row.id, deleted: row.is_deleted, ...JSON.parse(String(row.data)) }));
+  const save = async (db: any, transactions: any[], now: number) => { const statements = await buildBankFeedSaveStatements(db, 'bmo', transactions, now); if (statements.length) await db.batch(statements); };
+  const setupFeed = () => {
+    const ctx = setup();
+    ctx.db.database.prepare("UPDATE sync_records SET data=json_set(data,'$.plaidConnected',json('true')) WHERE type='accounts' AND id='bmo'").run();
+    ctx.db.database.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES('matchedBankTransactions','matchedBankTransactions','[]',1,1,0)").run();
+    return ctx;
+  };
+  const pending = { transaction_id: 'p1', date: '2026-10-12', name: 'KT SUPERMARKET', amount: 200, pending: true };
+  const posted = { transaction_id: 'n1', pending_transaction_id: 'p1', date: '2026-10-13', name: 'KT SUPERMARKET', amount: 200, pending: false };
+
+  it('a posted charge replaces its unmatched pending copy', async () => {
+    const { db } = setupFeed();
+    await save(db, [pending], 1);
+    await save(db, [posted], 2);
+    const live = feed(db).filter(row => !row.deleted);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ id: 'n1', date: '2026-10-13', pending: false });
+  });
+
+  it('a posted charge updates its pending copy when the pending one was already matched', async () => {
+    const { db } = setupFeed();
+    await save(db, [pending], 1);
+    db.database.prepare("UPDATE sync_records SET data='[\"p1\"]' WHERE type='matchedBankTransactions'").run();
+    await save(db, [posted], 2);
+    await save(db, [posted], 3); // syncing again changes nothing
+    const live = feed(db).filter(row => !row.deleted);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ id: 'p1', date: '2026-10-13', pending: false, postedTransactionId: 'n1' });
+  });
+
+  it('cleans up an existing duplicate when synced again', async () => {
+    const { db } = setupFeed();
+    await save(db, [pending], 1);
+    db.database.prepare("UPDATE sync_records SET data='[\"p1\"]' WHERE type='matchedBankTransactions'").run();
+    await save(db, [{ ...posted, pending_transaction_id: undefined }], 2); // older sync without the link made a copy
+    expect(feed(db).filter(row => !row.deleted)).toHaveLength(2);
+    await save(db, [posted], 3);
+    expect(feed(db).filter(row => !row.deleted).map(row => row.id)).toEqual(['p1']);
+  });
+
+  it('keeps dismissed, shows all with a status, and deletes forever only dismissed ones', async () => {
+    const { db, call } = setupFeed();
+    await save(db, [{ transaction_id: 'a', date: '2026-10-01', name: 'A', amount: 5 }, { transaction_id: 'b', date: '2026-10-02', name: 'B', amount: 6 }], 1);
+    const status = (action: string, id: string) => call('POST', '/v3/bank/feed-status', { requestId: crypto.randomUUID(), action, accountId: 'bmo', bankTransactionId: id });
+    expect((await status('delete', 'a')).status).toBe(409); // not dismissed yet
+    expect((await status('dismiss', 'a')).status).toBe(200);
+    await save(db, [{ transaction_id: 'a', date: '2026-10-01', name: 'A', amount: 5 }], 2); // resync keeps it dismissed
+    const all = await call('POST', '/v3/bank/records', { accountId: 'bmo', matchStatus: 'all' });
+    expect(Object.fromEntries(all.body.items.map((item: any) => [item.id, item.matchState]))).toEqual({ a: 'dismissed', b: 'unmatched' });
+    expect((await status('delete', 'a')).status).toBe(200);
+    await save(db, [{ transaction_id: 'a', date: '2026-10-01', name: 'A', amount: 5 }], 3); // the bank sends it again
+    const after = await call('POST', '/v3/bank/records', { accountId: 'bmo', matchStatus: 'all' });
+    expect(after.body.items.map((item: any) => item.id)).toEqual(['b']);
   });
 });

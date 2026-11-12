@@ -4,7 +4,7 @@ import { requireAuth } from './middleware';
 import { getRequiredPermission, hasPermission } from './permissions';
 import { validatePayload } from './validation';
 import { isOperationAlreadyApplied } from './idempotency';
-import { registerServerDataRoutes } from './server-data';
+import { registerServerDataRoutes, buildBankFeedSaveStatements } from './server-data';
 
 const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string, ENABLE_DEBUG_ENDPOINTS?: string, CRON_SECRET?: string, SOLA_API_KEY?: string } }>().basePath('/api')
 
@@ -224,14 +224,8 @@ app.post('/plaid/transactions', async (c) => {
     }
 
     const now = Date.now();
-    for (let offset = 0; offset < allTransactions.length; offset += 50) {
-      const chunk = allTransactions.slice(offset, offset + 50).map((transaction: any) => {
-        const record = { id: String(transaction.transaction_id), accountId, date: String(transaction.date || ''), description: String(transaction.name || ''), amount: Number(transaction.amount || 0) * -1, rawAmount: Number(transaction.amount || 0), pending: Boolean(transaction.pending), merchantName: String(transaction.merchant_name || ''), category: Array.isArray(transaction.category) ? transaction.category : [] };
-        const operationId = `plaid-${accountId}-${record.id}-${now}`;
-        return c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bankFeedTransactions',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(`${accountId}:${record.id}`, JSON.stringify(record), now, operationId);
-      });
-      if (chunk.length) await c.env.DB.batch(chunk);
-    }
+    const statements = await buildBankFeedSaveStatements(c.env.DB, accountId, allTransactions, now);
+    for (let offset = 0; offset < statements.length; offset += 50) await c.env.DB.batch(statements.slice(offset, offset + 50));
     const lastSuccessfulDate = endDateObj.toISOString().slice(0, 10);
     await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(`bank_sync:${accountId}`, JSON.stringify({ lastSuccessfulDate, lastSyncAt: now, fetchedFrom: reqBody.start_date, fetchedTo: reqBody.end_date }), now).run();
     data.transactions = allTransactions;

@@ -98,7 +98,7 @@ export const calculateLoansPayable = (loanAccounts: { id: string; name: string; 
 };
 
 type LiabilityAccount = { id: string; name: string; currency: string; data: any; revision: number };
-type LiabilityPayment = { date: string; amount: number };
+type LiabilityPayment = { date: string; amount: number; refund?: boolean };
 /**
  * Reads every movement in and out of the given liability accounts (loans or credit cards).
  * charges = money that came OUT of the account (adds to what is owed).
@@ -121,9 +121,9 @@ const loadLiabilityMovements = async (db: any, accounts: LiabilityAccount[]) => 
   const rawRate = rateRow ? Number(parseSetting((rateRow as any).data, 1.35)) : 1.35;
   const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
   const byId = new Map(accounts.map(account => [account.id, account]));
-  const pay = (accountId: string, date: string, amount: number) => { if (byId.has(accountId) && amount) payments.set(accountId, [...(payments.get(accountId) || []), { date, amount }]); };
+  const pay = (accountId: string, date: string, amount: number, refund = false) => { if (byId.has(accountId) && amount) payments.set(accountId, [...(payments.get(accountId) || []), { date, amount, ...(refund ? { refund: true } : {}) }]); };
   // A negative charge (for example a refund put back on a credit card) lowers what is owed, like a payment.
-  const charge = (accountId: string, event: LoanEvent) => { if (!byId.has(accountId)) return; if (event.amount > 0) charges.set(accountId, [...(charges.get(accountId) || []), event]); else if (event.amount < 0) pay(accountId, event.date, -event.amount); };
+  const charge = (accountId: string, event: LoanEvent) => { if (!byId.has(accountId)) return; if (event.amount > 0) charges.set(accountId, [...(charges.get(accountId) || []), event]); else if (event.amount < 0) pay(accountId, event.date, -event.amount, true); };
   for (const row of recordRows.results as any[]) {
     const data = parseSetting(row.data, {}); const type = String(row.type); const revision = Number(row.revision); const recordId = String(row.id);
     const amountFor = (accountId: string) => {
@@ -177,15 +177,76 @@ export const creditCardCycle = (statementDay: number, dueDay: number, today: str
  * (plus the opening balance), minus everything already paid into the card.
  */
 export const calculateCreditCardDue = (cards: { id: string; name: string; currency: string; startingBalance: number; statementDay: number; dueDay: number }[], charges: Map<string, { date: string; amount: number }[]>, payments: Map<string, LiabilityPayment[]>, today: string) => cards.map(card => {
-  const paid = (payments.get(card.id) || []).filter(item => !item.date || item.date <= today).reduce((sum, item) => sum + item.amount, 0);
+  // The bill for a statement = what was charged in that statement period (minus refunds in that period),
+  // minus payments made AFTER the statement date (up to today). Payments made during the period paid the
+  // previous bill, so they are not counted against this one.
   const allCharges = charges.get(card.id) || [];
-  const balance = Math.round((card.startingBalance + allCharges.reduce((sum, item) => sum + item.amount, 0) - (payments.get(card.id) || []).reduce((sum, item) => sum + item.amount, 0)) * 100) / 100;
-  if (!card.statementDay || !card.dueDay) return { id: card.id, name: card.name, currency: card.currency, needsSetup: true, dueDate: '', statementDate: '', periodStart: '', amountDue: 0, periodCharges: 0, balance };
+  const allPayments = payments.get(card.id) || [];
+  const balance = Math.round((card.startingBalance + allCharges.reduce((sum, item) => sum + item.amount, 0) - allPayments.reduce((sum, item) => sum + item.amount, 0)) * 100) / 100;
+  if (!card.statementDay || !card.dueDay) return { id: card.id, name: card.name, currency: card.currency, needsSetup: true, dueDate: '', statementDate: '', periodStart: '', amountDue: 0, periodCharges: 0, paidSinceStatement: 0, balance };
   const cycle = creditCardCycle(card.statementDay, card.dueDay, today);
-  const chargedThroughStatement = card.startingBalance + allCharges.filter(item => !item.date || item.date <= cycle.statementDate).reduce((sum, item) => sum + item.amount, 0);
-  const periodCharges = allCharges.filter(item => item.date && item.date >= cycle.periodStart && item.date <= cycle.statementDate).reduce((sum, item) => sum + item.amount, 0);
-  return { id: card.id, name: card.name, currency: card.currency, needsSetup: false, ...cycle, amountDue: Math.max(0, Math.round((chargedThroughStatement - paid) * 100) / 100), periodCharges: Math.round(periodCharges * 100) / 100, balance };
+  const inPeriod = (date: string) => Boolean(date) && date >= cycle.periodStart && date <= cycle.statementDate;
+  const periodCharges = allCharges.filter(item => inPeriod(item.date)).reduce((sum, item) => sum + item.amount, 0)
+    - allPayments.filter(item => item.refund && inPeriod(item.date)).reduce((sum, item) => sum + item.amount, 0);
+  const paidSinceStatement = allPayments.filter(item => !item.refund && item.date > cycle.statementDate && item.date <= today).reduce((sum, item) => sum + item.amount, 0);
+  return { id: card.id, name: card.name, currency: card.currency, needsSetup: false, ...cycle, amountDue: Math.max(0, Math.round((periodCharges - paidSinceStatement) * 100) / 100), periodCharges: Math.round(periodCharges * 100) / 100, paidSinceStatement: Math.round(paidSinceStatement * 100) / 100, balance };
 });
+/**
+ * Save bank transactions from Plaid without creating duplicates.
+ * - A charge first arrives as "pending" and later comes back "posted" with a NEW id, plus
+ *   pending_transaction_id pointing at the pending one. The two are merged into one row:
+ *   if the pending row was already matched, it is kept (updated with the posted date/amount);
+ *   otherwise the pending row is removed and the posted row is kept.
+ * - Saving again never brings back a row the user deleted, and keeps "dismissed".
+ */
+export const buildBankFeedSaveStatements = async (db: any, accountId: string, transactions: any[], now: number) => {
+  const rowId = (transactionId: string) => `${accountId}:${transactionId}`;
+  const ids = new Set<string>();
+  for (const transaction of transactions) {
+    ids.add(rowId(String(transaction.transaction_id)));
+    if (transaction.pending_transaction_id) ids.add(rowId(String(transaction.pending_transaction_id)));
+  }
+  const [existingRows, matchRow] = await Promise.all([
+    ids.size ? db.prepare("SELECT id,is_deleted,data FROM sync_records WHERE type='bankFeedTransactions' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify([...ids])).all() : Promise.resolve({ results: [] }),
+    db.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0").first()
+  ]);
+  const existing = new Map<string, any>(((existingRows as any).results || []).map((row: any) => [String(row.id), row]));
+  let matched: string[] = [];
+  try { const parsed = JSON.parse(String((matchRow as any)?.data || '[]')); if (Array.isArray(parsed)) matched = parsed.map(String); } catch { matched = []; }
+  const isMatched = (transactionId: string) => matched.includes(transactionId);
+  const live = (transactionId: string) => { const row = existing.get(rowId(transactionId)); return row && Number(row.is_deleted) === 0 ? row : null; };
+  const statements: any[] = [];
+  const upsert = (transactionId: string, record: any) => statements.push(
+    // json_patch keeps fields the user set (like "dismissed"); is_deleted is left alone so deleted rows stay deleted.
+    db.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bankFeedTransactions',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=json_patch(sync_records.data,excluded.data),updated_at=excluded.updated_at,revision=sync_records.revision+1,last_operation_id=excluded.last_operation_id")
+      .bind(rowId(transactionId), JSON.stringify(record), now, `plaid-${accountId}-${transactionId}-${now}`)
+  );
+  const remove = (transactionId: string, mergedInto: string) => statements.push(
+    db.prepare("UPDATE sync_records SET is_deleted=1,data=json_set(data,'$.mergedInto',?),updated_at=?,revision=revision+1,last_operation_id=? WHERE type='bankFeedTransactions' AND id=? AND is_deleted=0")
+      .bind(mergedInto, now, `plaid-merge-${accountId}-${transactionId}-${now}`, rowId(transactionId))
+  );
+  for (const transaction of transactions) {
+    const postedId = String(transaction.transaction_id);
+    const pendingId = transaction.pending_transaction_id ? String(transaction.pending_transaction_id) : '';
+    const record: any = { id: postedId, accountId, date: String(transaction.date || ''), description: String(transaction.name || ''), amount: Number(transaction.amount || 0) * -1, rawAmount: Number(transaction.amount || 0), pending: Boolean(transaction.pending), merchantName: String(transaction.merchant_name || ''), category: Array.isArray(transaction.category) ? transaction.category : [] };
+    const pendingRow = pendingId ? live(pendingId) : null;
+    if (pendingRow && isMatched(pendingId) && !isMatched(postedId)) {
+      // The pending one is already matched: keep it, update it with the posted details.
+      upsert(pendingId, { ...record, id: pendingId, postedTransactionId: postedId, pending: false });
+      if (live(postedId)) remove(postedId, pendingId);
+      continue;
+    }
+    if (pendingRow && !isMatched(pendingId)) {
+      const pendingData = (() => { try { return JSON.parse(String(pendingRow.data)); } catch { return {}; } })();
+      if (pendingData.reviewStatus === 'dismissed' && !existing.get(rowId(postedId))) { record.reviewStatus = 'dismissed'; record.dismissedAt = pendingData.dismissedAt || now; }
+      remove(pendingId, postedId);
+    }
+    const postedRow = existing.get(rowId(postedId));
+    if (postedRow && Number(postedRow.is_deleted) === 1) continue; // deleted forever, or merged earlier
+    upsert(postedId, record);
+  }
+  return statements;
+};
 const normalizeExternalDate = (value: unknown) => {
   const raw = String(value || '').trim();
   const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -3155,7 +3216,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         c.env.DB.prepare('SELECT value,updated_at FROM sync_metadata WHERE key=?').bind(`bank_sync:${accountId}`)
       ]);
       const total=Number(countResult.results[0]?.count||0); const sync:any=syncRow.results[0]; let syncState:any=null; try{syncState=sync?.value?JSON.parse(String(sync.value)):null;}catch{syncState=null;}
-      return c.json({success:true,items:listResult.results.map((row:any)=>JSON.parse(String(row.data))),page,limit,total,totalPages:Math.ceil(total/limit),sync:syncState});
+      const matchedSet=new Set<string>(JSON.parse(matchedJson));return c.json({success:true,items:listResult.results.map((row:any)=>{const item=JSON.parse(String(row.data));return {...item,matchState:matchedSet.has(String(item.id))?'matched':item.reviewStatus==='dismissed'?'dismissed':'unmatched'};}),page,limit,total,totalPages:Math.ceil(total/limit),sync:syncState});
     } catch (reason: any) {
       console.error('Unable to load saved bank feed', reason);
       return c.json({ success: false, error: 'Unable to load saved bank transactions. Please try again.' }, 500);
@@ -3176,24 +3237,33 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const accountId = String(body.accountId || '').trim();
     const bankTransactionId = String(body.bankTransactionId || '').trim();
     if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
-    if (!['dismiss','restore'].includes(action) || !accountId || !bankTransactionId) return c.json({ success: false, error: 'Choose a bank transaction and a valid review action.' }, 400);
+    if (!['dismiss','restore','delete'].includes(action) || !accountId || !bankTransactionId) return c.json({ success: false, error: 'Choose a bank transaction and a valid review action.' }, 400);
     const mutationId = `v3-bank-feed-status-${requestId}`;
     const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
     if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
     const current: any = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=? AND json_extract(data,'$.id')=? LIMIT 1").bind(accountId, bankTransactionId).first();
     if (!current) return c.json({ success: false, error: 'The saved bank transaction was not found.' }, 404);
     const record = JSON.parse(String(current.data));
-    if (action === 'dismiss') { record.reviewStatus = 'dismissed'; record.dismissedAt = Date.now(); }
+    if (action === 'delete') {
+      // Delete forever: only a dismissed, unmatched transaction. It stays deleted even if the bank sends it again.
+      if (record.reviewStatus !== 'dismissed') return c.json({ success: false, error: 'Only a dismissed transaction can be deleted. Dismiss it first.' }, 409);
+      const matchRow: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0").first();
+      const matchedIds = Array.isArray(parseSetting(matchRow?.data, [])) ? parseSetting(matchRow?.data, []).map(String) : [];
+      if (matchedIds.includes(bankTransactionId)) return c.json({ success: false, error: 'This transaction is matched, so it cannot be deleted.' }, 409);
+      record.deletedAt = Date.now();
+    }
+    else if (action === 'dismiss') { record.reviewStatus = 'dismissed'; record.dismissedAt = Date.now(); }
     else { delete record.reviewStatus; delete record.dismissedAt; }
+    const deleting = action === 'delete' ? 1 : 0;
     const now = Date.now(); const nextRevision = Number(current.revision) + 1; const data = JSON.stringify(record); const operationId = `${mutationId}-${action}`;
     const response = { success: true, action, item: { ...record, revision: nextRevision, updatedAt: now } };
     const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
     try {
       await c.env.DB.batch([
         c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bankFeedTransactions' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(operationId, current.id, current.revision),
-        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bankFeedTransactions','update',?,?,?,?,?,?,?,?,?,?)").bind(current.id, current.revision, nextRevision, current.data, data, userId, userEmail, now, mutationId, operationId, action === 'dismiss' ? 'Dismissed bank transaction from accounting review' : 'Restored bank transaction to accounting review'),
-        c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='bankFeedTransactions' AND id=? AND revision=? AND is_deleted=0").bind(data, nextRevision, now, operationId, current.id, current.revision),
-        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bankFeedTransactions',?,'update',?,?,?,?)").bind(current.id, nextRevision, data, now, mutationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bankFeedTransactions',?,?,?,?,?,?,?,?,?,?,?)").bind(current.id, deleting ? 'delete' : 'update', current.revision, nextRevision, current.data, data, userId, userEmail, now, mutationId, operationId, action === 'dismiss' ? 'Dismissed bank transaction from accounting review' : 'Restored bank transaction to accounting review'),
+        c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=?,is_deleted=? WHERE type='bankFeedTransactions' AND id=? AND revision=? AND is_deleted=0").bind(data, nextRevision, now, operationId, deleting, current.id, current.revision),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bankFeedTransactions',?,?,?,?,?,?)").bind(current.id, nextRevision, deleting ? 'delete' : 'update', data, now, mutationId, operationId),
         c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id=?').bind(operationId),
         c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
       ]);
