@@ -21,6 +21,53 @@ const requestedOrder = (c: any, columns: Record<string, string>, fallback: strin
 };
 
 const isoDate = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
+
+// ---- Loans payable ---------------------------------------------------------
+// A loan account is a liability account with subType "loan" (credit cards use
+// subType "credit_card" and are handled separately). Every time money goes OUT
+// of a loan account it must carry `loanDueDate`: the date it has to be paid back.
+export const isLoanAccountData = (data: any) => String(data?.type || '') === 'liability' && String(data?.subType || '') === 'loan';
+export const LOAN_DUE_DATE_ERROR = 'This money comes from a loan account. Enter the date it has to be paid back.';
+const validLoanDueDate = (value: unknown) => { const date = isoDate(value); return date && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ? date : ''; };
+/** The account money leaves from, for records that can borrow from a loan. */
+const loanSourceAccountId = (type: string, record: any) => type === 'bills' && record?.status === 'paid' ? String(record.sourceAccountId || '') : type === 'accountTransfers' ? String(record?.fromAccountId || '') : '';
+/**
+ * Checks (and normalises) record.loanDueDate. Returns an error message, or ''.
+ * When the money does not come from a loan account, any stale loanDueDate is removed.
+ */
+const checkLoanDueDate = async (db: any, type: string, record: any) => {
+  if (type !== 'bills' && type !== 'accountTransfers') return '';
+  const fromId = loanSourceAccountId(type, record);
+  const row: any = fromId ? await db.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(fromId).first() : null;
+  if (!row || !isLoanAccountData(parseSetting(row.data, {}))) { if (record && 'loanDueDate' in record) delete record.loanDueDate; return ''; }
+  const date = validLoanDueDate(record.loanDueDate);
+  if (!date) return LOAN_DUE_DATE_ERROR;
+  record.loanDueDate = date;
+  return '';
+};
+
+type LoanEvent = { recordType: string; recordId: string; revision: number; date: string; description: string; amount: number; dueDate: string };
+/**
+ * Works out what is still owed on each loan. Money paid back into a loan account
+ * goes to the earliest loan payment first (first in, first out).
+ */
+export const calculateLoansPayable = (loanAccounts: { id: string; name: string; currency: string }[], borrowed: Map<string, LoanEvent[]>, repaid: Map<string, number>) => {
+  const items: any[] = []; const accounts: any[] = [];
+  for (const account of loanAccounts) {
+    const events = [...(borrowed.get(account.id) || [])].sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.recordId.localeCompare(b.recordId));
+    let pool = Math.round((repaid.get(account.id) || 0) * 100) / 100;
+    let owed = 0;
+    for (const event of events) {
+      const amount = Math.round(event.amount * 100) / 100;
+      const applied = Math.max(0, Math.min(pool, amount)); pool = Math.round((pool - applied) * 100) / 100;
+      const remaining = Math.round((amount - applied) * 100) / 100;
+      if (remaining > 0.004) { owed += remaining; items.push({ ...event, amount, remaining, paid: Math.round(applied * 100) / 100, accountId: account.id, accountName: account.name, currency: account.currency }); }
+    }
+    accounts.push({ id: account.id, name: account.name, currency: account.currency, owed: Math.round(owed * 100) / 100 });
+  }
+  items.sort((a, b) => (a.dueDate ? 1 : 0) - (b.dueDate ? 1 : 0) || (a.dueDate || '').localeCompare(b.dueDate || '') || (a.date || '').localeCompare(b.date || ''));
+  return { items, accounts };
+};
 const normalizeExternalDate = (value: unknown) => {
   const raw = String(value || '').trim();
   const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -533,6 +580,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       }
       if (record.sourceAccountId || record.offsetAccountId) { const accounts=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (?,?)").bind(String(record.sourceAccountId||''),String(record.offsetAccountId||'')).all();const found=new Set(accounts.results.map((row:any)=>String(row.id)));if(!found.has(String(record.sourceAccountId||''))||!found.has(String(record.offsetAccountId||'')))return c.json({success:false,error:'Choose valid receiving and revenue accounts.'},409); }
     }
+    const loanProblem = await checkLoanDueDate(c.env.DB, type, record);
+    if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const now = Date.now();
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;
@@ -631,6 +680,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (creditAccountId && !['asset', 'liability'].includes(accountTypes.get(creditAccountId) || '')) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
       if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
     }
+    const loanProblem = await checkLoanDueDate(c.env.DB, type, record);
+    if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const now = Date.now();
     const nextRevision = expectedRevision + 1;
     const data = JSON.stringify(record);
@@ -1123,6 +1174,61 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), recordType: row.record_type, donorName: row.donor_name || '', sourceName: row.source_name || '', offsetName: row.offset_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
+  // Loans still to be paid back, for the Dashboard box.
+  app.get('/v3/loans-payable', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read');
+    if (denied) return denied;
+    const accountRows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.type')='liability' AND json_extract(data,'$.subType')='loan'").all();
+    const loanAccounts = (accountRows.results as any[]).map(row => { const data = parseSetting(row.data, {}); return { id: String(row.id), name: String(data.name || 'Loan'), currency: data.currency === 'USD' ? 'USD' : 'CAD', data, revision: Number(row.revision) }; });
+    if (!loanAccounts.length) return c.json({ success: true, items: [], accounts: [] });
+    const ids = JSON.stringify(loanAccounts.map(account => account.id));
+    const inLoans = (path: string) => `json_extract(data,'${path}') IN (SELECT value FROM json_each(?))`;
+    const [rateRow, recordRows] = await Promise.all([
+      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='exchangeRate' AND is_deleted=0 LIMIT 1").first(),
+      c.env.DB.prepare(`SELECT id,type,data,revision FROM sync_records WHERE is_deleted=0 AND (
+        (type='bills' AND json_extract(data,'$.status')='paid' AND (${inLoans('$.sourceAccountId')} OR ${inLoans('$.creditAccountId')} OR ${inLoans('$.category')}))
+        OR (type='accountTransfers' AND (${inLoans('$.fromAccountId')} OR ${inLoans('$.toAccountId')}))
+        OR (type='transactions' AND json_extract(data,'$.type')='approved' AND (${inLoans('$.sourceAccountId')} OR ${inLoans('$.offsetAccountId')}))
+      )`).bind(ids, ids, ids, ids, ids, ids, ids).all()
+    ]);
+    const rawRate = rateRow ? Number(parseSetting((rateRow as any).data, 1.35)) : 1.35;
+    const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
+    const byId = new Map(loanAccounts.map(account => [account.id, account]));
+    const borrowed = new Map<string, LoanEvent[]>(); const repaid = new Map<string, number>();
+    const borrow = (accountId: string, event: LoanEvent) => { if (byId.has(accountId) && event.amount > 0) borrowed.set(accountId, [...(borrowed.get(accountId) || []), event]); };
+    const repay = (accountId: string, amount: number) => { if (byId.has(accountId) && amount) repaid.set(accountId, (repaid.get(accountId) || 0) + amount); };
+    for (const account of loanAccounts) {
+      const opening = Number(account.data.startingBalance || 0);
+      if (opening > 0) borrow(account.id, { recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Opening balance', amount: opening, dueDate: isoDate(account.data.loanDueDate) });
+      else if (opening < 0) repay(account.id, -opening);
+    }
+    for (const row of recordRows.results as any[]) {
+      const data = parseSetting(row.data, {}); const type = String(row.type); const revision = Number(row.revision); const recordId = String(row.id);
+      const amountFor = (accountId: string) => {
+        const accountCurrency = byId.get(accountId)?.currency || 'CAD'; const amount = Number(data.amount || 0);
+        if (type === 'bills') return amount * (accountCurrency === 'CAD' && data.currency === 'USD' ? rate : 1);
+        if (type === 'transactions') return accountCurrency === 'CAD' && data.currency === 'USD' ? Number(data.amountCAD ?? data.amount ?? 0) : amount;
+        return amount;
+      };
+      const dueDate = isoDate(data.loanDueDate);
+      if (type === 'bills') {
+        const date = String(data.paidDate || data.dueDate || '');
+        if (data.sourceAccountId) borrow(String(data.sourceAccountId), { recordType: 'bills', recordId, revision, date, description: String(data.vendor || 'Expense'), amount: amountFor(String(data.sourceAccountId)), dueDate });
+        if (data.creditAccountId) repay(String(data.creditAccountId), amountFor(String(data.creditAccountId)));
+        if (data.category) repay(String(data.category), amountFor(String(data.category)));
+      } else if (type === 'accountTransfers') {
+        const date = String(data.date || '');
+        if (data.fromAccountId) borrow(String(data.fromAccountId), { recordType: 'accountTransfers', recordId, revision, date, description: String(data.notes || 'Transfer'), amount: amountFor(String(data.fromAccountId)), dueDate });
+        if (data.toAccountId) repay(String(data.toAccountId), amountFor(String(data.toAccountId)));
+      } else {
+        const date = String(data.date || '');
+        if (data.offsetAccountId) borrow(String(data.offsetAccountId), { recordType: 'transactions', recordId, revision, date, description: String(data.notes || 'Payment'), amount: amountFor(String(data.offsetAccountId)), dueDate });
+        if (data.sourceAccountId) repay(String(data.sourceAccountId), amountFor(String(data.sourceAccountId)));
+      }
+    }
+    return c.json({ success: true, ...calculateLoansPayable(loanAccounts, borrowed, repaid) }, 200, { 'Cache-Control': 'no-store' });
+  });
+
   app.get('/v3/tasks', async (c: any) => {
     const denied = requirePermission(c, 'system.manage');
     if (denied) return denied;
@@ -1276,7 +1382,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (action === 'payment') { const source: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first(); if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid paid-from account.' }, 409); }
     const entityData = JSON.parse(String((entity as any).data)); const id = crypto.randomUUID(); const now = Date.now(); const categoryId = String((category as any).id); const operationId = `${mutationId}-bill`;
     const bill: any = { id, vendor: `Payroll: ${entityData.name}`, employeeId: entityId, payrollEntityType: entityType, amount, currency: 'CAD', dueDate: date, status: action === 'payment' ? 'paid' : 'pending', category: categoryId, internalCategory: 'Payroll', isPayroll: true, earningType: String(body.earningType || 'Salary').slice(0,100), t4aEligible: Boolean(body.t4aEligible), memo: String(body.memo || '').trim().slice(0,2000) };
-    if (action === 'payment') { bill.sourceAccountId = sourceAccountId; bill.offsetAccountId = categoryId; bill.paidDate = date; }
+    if (action === 'payment') { bill.sourceAccountId = sourceAccountId; bill.offsetAccountId = categoryId; bill.paidDate = date; if (body.loanDueDate) bill.loanDueDate = body.loanDueDate; }
+    const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', bill);
+    if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const billData = JSON.stringify(bill); const statements: any[] = [
       c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bills',?,?,1,0,?)").bind(id, billData, now, operationId),
       c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bills',1,'insert',?,?,?,?)").bind(id, billData, now, mutationId, operationId),
@@ -1314,7 +1422,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if(!expenseRow)return c.json({success:false,error:'Add a Fundraising Commission expense account before paying a fundraiser.'},409);
     const fundraiser=parseSetting((fundraiserRow as any).data,{});const id=crypto.randomUUID();const billId=crypto.randomUUID();const now=Date.now();
     const payout={id,fundraiserId,sourceAccountId,amount,date,memo,linkedBillId:billId};
-    const bill={id:billId,vendor:`Fundraiser: ${fundraiser.name||'Unknown'}`,fundraiserId,amount,currency:'CAD',dueDate:date,paidDate:date,status:'paid',sourceAccountId,offsetAccountId:String((expenseRow as any).id),category:String((expenseRow as any).id),isPayroll:true,isFundraiserPayout:true,earningType:'Commission payout',memo:memo||'Fundraiser commission payout'};
+    const bill:any={id:billId,vendor:`Fundraiser: ${fundraiser.name||'Unknown'}`,fundraiserId,amount,currency:'CAD',dueDate:date,paidDate:date,status:'paid',sourceAccountId,offsetAccountId:String((expenseRow as any).id),category:String((expenseRow as any).id),isPayroll:true,isFundraiserPayout:true,earningType:'Commission payout',memo:memo||'Fundraiser commission payout',...(body.loanDueDate?{loanDueDate:body.loanDueDate}:{})};
+    const loanProblem=await checkLoanDueDate(c.env.DB,'bills',bill);if(loanProblem)return c.json({success:false,error:loanProblem},400);
     const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const response={success:true,item:{...payout,revision:1,updatedAt:now},bill:{...bill,revision:1,updatedAt:now}};
     const records:[string,string,any][]=[[id,'fundraiserPayouts',payout],[billId,'bills',bill]];const statements:any[]=[];
     for(const [recordId,type,value] of records){const data=JSON.stringify(value);const operationId=`${mutationId}-${type}`;statements.push(c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?,?,1,0,?)').bind(recordId,type,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(recordId,type,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(recordId,type,data,userId,userEmail,now,mutationId,operationId,'Recorded fundraiser commission payout'));}
@@ -2686,6 +2795,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (body.printStatus === 'queued' || body.printStatus === 'printed') record.printStatus = body.printStatus;
     if (body.method) record.method = String(body.method).trim().slice(0, 100);
     if (status === 'paid') { record.paidDate = String(body.paidDate || new Date().toISOString().slice(0, 10)); record.offsetAccountId = category; }
+    if (body.loanDueDate) record.loanDueDate = body.loanDueDate;
+    const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', record);
+    if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const data = JSON.stringify(record);
     const operationId = `${mutationId}-insert`;
     const response = { success: true, item: { ...record, revision: 1, updatedAt: now } };
@@ -2730,7 +2842,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid asset or liability account.' }, 409);
     if (creditAccountId && (!credit || !['asset','liability'].includes(JSON.parse(String(credit.data)).type))) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
     if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
-    const next = { ...existing, status: 'paid', paidDate: new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category, creditAccountId: creditAccountId || null };
+    const next: any = { ...existing, status: 'paid', paidDate: new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category, creditAccountId: creditAccountId || null, loanDueDate: body.loanDueDate || existing.loanDueDate };
+    const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', next);
+    if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const now = Date.now();
     const nextRevision = expectedRevision + 1;
     const data = JSON.stringify(next);
@@ -3157,7 +3271,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const operationId = `${mutationId}-bill-insert`;
       const categoryData = JSON.parse(String(categoryRow.data));
       const internalCategory = String(body.internalCategory || body.taxCategory || categoryData.name || '').trim().slice(0, 200);
-      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(creditAccountId?{creditAccountId}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId };
+      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(creditAccountId?{creditAccountId}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId, ...(validLoanDueDate(body.loanDueDate)&&isLoanAccountData(accountData)?{loanDueDate:validLoanDueDate(body.loanDueDate)}:{}) };
       const data = JSON.stringify(record);
       resultItem = { ...record, revision: 1, updatedAt: now };
       statements.push(
