@@ -77,7 +77,7 @@ export const LoansPayableBox: React.FC = () => {
   const noDate = items.filter(item => !item.dueDate).length;
 
   return (
-    <section className="card loans-box" style={{ marginTop: 22, padding: 0, overflow: 'hidden' }}>
+    <section className="card loans-box" style={{ padding: 0, overflow: 'hidden' }}>
       <div className="loans-box-header">
         <div>
           <h2 style={{ margin: 0, color: 'var(--navy)', fontSize: 19, display: 'flex', alignItems: 'center', gap: 8 }}><Landmark size={20} /> Loans to Pay Back</h2>
@@ -87,7 +87,7 @@ export const LoansPayableBox: React.FC = () => {
             {noDate > 0 && <span style={{ color: 'var(--red)', fontWeight: 800 }}> · {noDate} without a date</span>}
           </div>
         </div>
-        <a href="/chart-of-accounts" className="btn btn-secondary btn-sm">Open Accounts</a>
+        
       </div>
       {error && <div style={{ padding: '12px 22px', color: 'var(--red)', fontWeight: 700 }}>{error}</div>}
       {loading ? <div style={{ padding: 34, textAlign: 'center', color: 'var(--text-muted)' }}>Loading loans…</div>
@@ -96,27 +96,24 @@ export const LoansPayableBox: React.FC = () => {
           {accounts.length ? 'All loans are paid back.' : 'No loan accounts yet. To add one, open an account, choose Liability, and set the kind to “Loan”.'}
         </div>
         : <div className="loans-box-scroll"><table className="loans-table">
-          <thead><tr><th>Pay back by</th><th>Loan account</th><th>What it was for</th><th style={{ textAlign: 'right' }}>Amount</th><th style={{ textAlign: 'right' }}>Still owed</th><th></th></tr></thead>
+          <thead><tr><th>Loan account</th><th style={{ textAlign: 'right' }}>Amount</th><th>Due date</th></tr></thead>
           <tbody>{items.map(item => {
             const key = keyOf(item);
             const days = item.dueDate ? daysUntil(item.dueDate) : null;
             const tone = days === null || days < 0 ? 'is-late' : days <= 7 ? 'is-soon' : '';
             return <tr key={key}>
+              <td style={{ fontWeight: 700 }}>{item.accountName}</td>
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 800 }}>{money(item.remaining, item.currency)}</td>
               <td>{editing === key
-                ? <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <input type="date" value={newDate} onChange={event => setNewDate(event.target.value)} autoFocus style={{ width: 150 }} />
+                ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input type="date" value={newDate} onChange={event => setNewDate(event.target.value)} autoFocus style={{ width: 145 }} />
                   <button className="btn btn-primary btn-sm" disabled={saving || !newDate} onClick={() => void saveDate(item)}>{saving ? 'Saving…' : 'Save'}</button>
                   <button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => { setEditing(''); setNewDate(''); }}>Cancel</button>
                 </div>
-                : <span className={`loan-due ${tone}`}>
-                  {item.dueDate ? niceDate(item.dueDate) : 'No date yet'}
-                  <small>{days === null ? 'Please set a date' : days < 0 ? `${-days} day${days === -1 ? '' : 's'} late` : days === 0 ? 'Due today' : `in ${days} day${days === 1 ? '' : 's'}`}</small>
-                </span>}</td>
-              <td style={{ fontWeight: 700 }}>{item.accountName}</td>
-              <td>{item.description}{item.date && <small style={{ display: 'block', color: 'var(--text-muted)' }}>{niceDate(item.date)}</small>}</td>
-              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{money(item.amount, item.currency)}</td>
-              <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 800 }}>{money(item.remaining, item.currency)}{item.paid > 0 && <small style={{ display: 'block', color: 'var(--green)', fontWeight: 700 }}>{money(item.paid, item.currency)} paid</small>}</td>
-              <td style={{ textAlign: 'right' }}>{editing !== key && <button className="btn btn-secondary btn-sm" onClick={() => { setEditing(key); setNewDate(item.dueDate || ''); }}>{item.dueDate ? 'Change date' : 'Set date'}</button>}</td>
+                : <button type="button" className={`loan-due loan-due-button ${tone}`} title="Click to change the date" onClick={() => { setEditing(key); setNewDate(item.dueDate || ''); }}>
+                  {item.dueDate ? niceDate(item.dueDate) : 'Set a date'}
+                  <small>{days === null ? 'No date yet' : days < 0 ? `${-days} day${days === -1 ? '' : 's'} late` : days === 0 ? 'Due today' : `in ${days} day${days === 1 ? '' : 's'}`}</small>
+                </button>}</td>
             </tr>;
           })}</tbody>
         </table></div>}

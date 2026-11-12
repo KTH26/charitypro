@@ -7,8 +7,10 @@ export const CloudRecurringPaymentForm: React.FC<{
   donor: Donor;
   onCancel: () => void;
   onCreated: (schedule: Record<string, any>) => void;
-}> = ({ donor, onCancel, onCreated }) => {
-  const [amount, setAmount] = useState('');
+  defaultAmount?: number;
+  defaultPledgeId?: string;
+}> = ({ donor, onCancel, onCreated, defaultAmount, defaultPledgeId }) => {
+  const [amount, setAmount] = useState(defaultAmount ? String(defaultAmount) : '');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [frequency, setFrequency] = useState('monthly');
   const [method, setMethod] = useState('credit_card');
@@ -16,7 +18,7 @@ export const CloudRecurringPaymentForm: React.FC<{
   const [endDate, setEndDate] = useState('');
   const [cards, setCards] = useState<Choice[]>([]); const [paymentMethodIds,setPaymentMethodIds]=useState<string[]>([]);
   const [accounts,setAccounts]=useState<Choice[]>([]);const[sourceAccountId,setSourceAccountId]=useState('');const[offsetAccountId,setOffsetAccountId]=useState('');
-  const [pledges,setPledges]=useState<any[]>([]);const[pledgeId,setPledgeId]=useState('');const[retryDays,setRetryDays]=useState('2');const[maxAttempts,setMaxAttempts]=useState('3');
+  const [pledges,setPledges]=useState<any[]>([]);const[pledgeId,setPledgeId]=useState(defaultPledgeId||'');const[retryDays,setRetryDays]=useState('2');const[maxAttempts,setMaxAttempts]=useState('3');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const requestId = useRef('');

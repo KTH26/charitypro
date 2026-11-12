@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { CreditCardDaysFields, creditCardDaysProblem } from './CreditCardDaysFields';
 
 const kinds: Record<string, { value: string; label: string }[]> = {
   asset: [{ value: 'checking', label: 'Bank – chequing' }, { value: 'savings', label: 'Bank – savings' }, { value: 'general', label: 'Cash or other asset' }],
@@ -8,22 +9,26 @@ const kinds: Record<string, { value: string; label: string }[]> = {
 
 /** Form to add a new account to the Chart of Accounts. */
 export const CloudAddAccountModal: React.FC<{ onClose: () => void; onSaved: (account: any) => void }> = ({ onClose, onSaved }) => {
-  const [form, setForm] = useState({ name: '', type: 'asset', subType: 'checking', currency: 'CAD', startingBalance: '0', loanDueDate: '' });
+  const [form, setForm] = useState({ name: '', type: 'asset', subType: 'checking', currency: 'CAD', startingBalance: '0', loanDueDate: '', statementDay: '', paymentDueDay: '' });
   const [saving, setSaving] = useState(false); const [error, setError] = useState(''); const requestId = useRef('');
   const set = (field: string, value: string) => setForm(current => ({ ...current, [field]: value }));
   const changeType = (type: string) => setForm(current => ({ ...current, type, subType: kinds[type]?.[0]?.value || '' }));
   const isLoan = form.type === 'liability' && form.subType === 'loan';
+  const isCard = form.type === 'liability' && form.subType === 'credit_card';
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     const startingBalance = Number(form.startingBalance || 0);
     if (!form.name.trim()) { setError('Enter the account name.'); return; }
     if (!Number.isFinite(startingBalance)) { setError('Enter a valid starting balance.'); return; }
+    const cardProblem = isCard ? creditCardDaysProblem(form.statementDay, form.paymentDueDay) : '';
+    if (cardProblem) { setError(cardProblem); return; }
     setSaving(true); setError('');
     const key = requestId.current || crypto.randomUUID(); requestId.current = key;
     try {
       const data: any = { name: form.name.trim(), type: form.type, currency: form.currency, startingBalance };
       if (form.subType) data.subType = form.subType;
       if (isLoan && startingBalance > 0 && form.loanDueDate) data.loanDueDate = form.loanDueDate;
+      if (isCard) { data.statementDay = Number(form.statementDay); data.paymentDueDay = Number(form.paymentDueDay); }
       const response = await fetch('/api/v3/records/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ data }) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to add the account.');
@@ -44,6 +49,7 @@ export const CloudAddAccountModal: React.FC<{ onClose: () => void; onSaved: (acc
         <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={form.currency} onChange={event => set('currency', event.target.value)}><option>CAD</option><option>USD</option></select></label>
         <label className="form-group" style={{ margin: 0 }}><span>Starting balance</span><input type="number" step="0.01" value={form.startingBalance} onChange={event => set('startingBalance', event.target.value)} /><small style={{ color: 'var(--text-muted)' }}>{form.type === 'liability' ? 'How much is owed today.' : 'How much is in it today.'}</small></label>
         {isLoan && Number(form.startingBalance) > 0 && <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Starting balance — pay back by</span><input type="date" value={form.loanDueDate} onChange={event => set('loanDueDate', event.target.value)} /><small style={{ color: 'var(--text-muted)' }}>Optional. You can also set it later from the Dashboard.</small></label>}
+        {isCard && <CreditCardDaysFields statementDay={form.statementDay} paymentDueDay={form.paymentDueDay} onChange={set} />}
       </div>
     </div>
     <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Add Account'}</button></div>

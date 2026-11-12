@@ -124,8 +124,11 @@ export const OnlinePaymentForm: React.FC<{
       const responseText = await response.text();
       let data: any; try { data = JSON.parse(responseText); } catch { throw new Error(response.ok ? 'The server returned an unreadable response.' : `The payment server failed (${response.status}). Please try again.`); }
       if (!response.ok || !data.success) {
-        pendingRequestId.current = '';
-        throw new Error(data.error || 'The payment could not be saved.');
+        // If Sola may have charged the card (no clear answer, or still processing), keep the same request key:
+        // pressing Save again then only shows the same result and can never charge the card a second time.
+        const unclear = Boolean(data.reviewRequired || data.processing);
+        if (!unclear) pendingRequestId.current = '';
+        throw new Error(unclear ? `${data.error || 'The card result is not clear.'} Check the payment in Sola before trying again. To start over, close this form and open it again.` : (data.error || 'The payment could not be saved.'));
       }
       pendingRequestId.current = '';
       onCreated(status, data.item);

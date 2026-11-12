@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { LoansPayableBox } from '../components/LoansPayableBox';
+import { CreditCardsDueBox } from '../components/CreditCardsDueBox';
+import { PickupsBox } from '../components/PickupsBox';
 
 type Summary = { donors: number; payments: number; expenses: number; assets: number; declined: number; reminders:number; overdue:number; dueToday:number };
 
@@ -38,6 +40,7 @@ export const OnlineDashboard: React.FC = () => {
     <div className="dashboard-stats">
       {cards.map((card, index) => <a key={card.label} href={card.href} className={`dashboard-stat ${card.danger ? 'is-alert' : ''}`}><span className="dashboard-stat-index">{String(index + 1).padStart(2, '0')}</span><span className="dashboard-stat-label">{card.label}</span><strong>{card.value}</strong><span className="dashboard-stat-link">View details →</span></a>)}
     </div>
-    <LoansPayableBox />
+    <div className="dashboard-pay-grid"><LoansPayableBox /><CreditCardsDueBox /></div>
+    <PickupsBox />
   </div></main>;
 };

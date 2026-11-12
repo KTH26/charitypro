@@ -5,6 +5,7 @@ import { OnlineAccounts } from './pages/OnlineAccounts';
 import { OnlineBank } from './pages/OnlineBank';
 import { OnlineDashboard } from './pages/OnlineDashboard';
 import { OnlineDonors } from './pages/OnlineDonors';
+import { OnlineTracker } from './pages/OnlineTracker';
 import { OnlineExpenses } from './pages/OnlineExpenses';
 import { OnlinePayments } from './pages/OnlinePayments';
 import { OnlinePendingPayments } from './pages/OnlinePendingPayments';
@@ -43,6 +44,7 @@ function App() {
         <Route path="/payments" element={cloudPage(<OnlinePayments />)} />
         <Route path="/pending-payments" element={cloudPage(<OnlinePendingPayments />)} />
         <Route path="/donors" element={cloudPage(<OnlineDonors />)} />
+        <Route path="/tracker" element={cloudPage(<OnlineTracker />)} />
         <Route path="/expenses" element={cloudPage(<OnlineExpenses />)} />
         <Route path="/chart-of-accounts" element={cloudPage(<OnlineAccounts />)} />
         <Route path="/bank-feed" element={cloudPage(<OnlineBank />)} />

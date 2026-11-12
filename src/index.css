@@ -1118,8 +1118,37 @@ tbody tr:hover td { background: #f8faf9; }
 .loan-due.is-late, .loan-due.is-late small { color: var(--red); }
 .loan-due.is-soon, .loan-due.is-soon small { color: var(--yellow); }
 .loans-table .btn { white-space: nowrap; }
+.loan-due-button { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; font: inherit; font-weight: 800; }
+.loan-due-button:hover { text-decoration: underline; }
+.dashboard-pay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 18px; margin-top: 22px; align-items: start; }
+.dashboard-pay-grid .loans-table th, .dashboard-pay-grid .loans-table td { padding-left: 14px; padding-right: 14px; }
+.dashboard-pay-grid > .card { min-width: 0; }
+.card-due-paid { color: var(--green); font-weight: 800; }
 
 /* ---- Add account / transfer forms ---- */
 .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .page-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 @media (max-width: 640px) { .form-grid-2 { grid-template-columns: 1fr; } .form-grid-2 > * { grid-column: auto !important; } }
+
+/* ---- Call tracker ---- */
+.call-outcomes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 700px) { .call-outcomes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.call-outcome { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; padding: 10px 12px; border-radius: 10px; border: 2px solid var(--border); background: var(--bg-card); color: var(--text-primary); cursor: pointer; font: inherit; }
+.call-outcome small { color: var(--text-muted); font-size: 11.5px; }
+.call-outcome:hover { border-color: var(--navy-light); }
+.call-outcome.is-selected { border-color: var(--navy-light); background: var(--blue-bg); }
+.call-step-box { background: var(--bg-input); border-radius: 12px; padding: 14px; }
+.call-donor-results { display: grid; gap: 4px; margin-top: 6px; max-height: 220px; overflow-y: auto; }
+.call-donor-results button { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); color: var(--text-primary); cursor: pointer; font: inherit; text-align: left; }
+.call-donor-results button:hover { background: var(--blue-bg); }
+.call-donor-results small { color: var(--text-muted); }
+.call-saved-note { display: flex; gap: 8px; align-items: center; color: var(--green); font-weight: 800; }
+.call-start-button { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; padding: 10px 18px; }
+.call-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 800; background: var(--bg-input); color: var(--text-secondary); white-space: nowrap; }
+.call-badge-pledged, .call-badge-paid { background: var(--green-bg); color: var(--green); }
+.call-badge-call-back, .call-badge-pick-up { background: var(--yellow-bg); color: var(--yellow); }
+.call-badge-declined { background: var(--red-bg, var(--bg-input)); color: var(--red); }
+.call-detail-row { display: grid; grid-template-columns: 130px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.call-detail-row > span { color: var(--text-muted); font-weight: 700; }
+.call-notes { white-space: pre-wrap; background: var(--bg-input); border-radius: 10px; padding: 12px 14px; line-height: 1.5; }
+.link-button { background: none; border: 0; padding: 0; color: var(--navy-light); font: inherit; font-weight: 800; cursor: pointer; text-decoration: underline; }

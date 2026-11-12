@@ -53,6 +53,12 @@ const checkAccountOrTransfer = async (db: any, type: string, record: any) => {
     if (!record.name) return 'Enter the account name.';
     if (!['asset', 'liability', 'equity', 'revenue', 'expense'].includes(String(record.type || ''))) return 'Choose a valid account type.';
     if (record.startingBalance !== undefined && !Number.isFinite(Number(record.startingBalance))) return 'Enter a valid starting balance.';
+    for (const field of ['statementDay', 'paymentDueDay']) {
+      if (record[field] === undefined || record[field] === '' || record[field] === null) { delete record[field]; continue; }
+      const day = Number(record[field]);
+      if (!Number.isInteger(day) || day < 1 || day > 31) return 'The statement day and payment due day must be a day of the month (1 to 31).';
+      record[field] = day;
+    }
     return '';
   }
   if (type !== 'accountTransfers') return '';
@@ -90,6 +96,95 @@ export const calculateLoansPayable = (loanAccounts: { id: string; name: string; 
   items.sort((a, b) => (a.dueDate ? 1 : 0) - (b.dueDate ? 1 : 0) || (a.dueDate || '').localeCompare(b.dueDate || '') || (a.date || '').localeCompare(b.date || ''));
   return { items, accounts };
 };
+
+type LiabilityAccount = { id: string; name: string; currency: string; data: any; revision: number };
+type LiabilityPayment = { date: string; amount: number };
+/**
+ * Reads every movement in and out of the given liability accounts (loans or credit cards).
+ * charges = money that came OUT of the account (adds to what is owed).
+ * payments = money paid INTO the account (reduces what is owed).
+ * Signs follow the /v3/accounts balance query.
+ */
+const loadLiabilityMovements = async (db: any, accounts: LiabilityAccount[]) => {
+  const charges = new Map<string, LoanEvent[]>(); const payments = new Map<string, LiabilityPayment[]>();
+  if (!accounts.length) return { charges, payments };
+  const ids = JSON.stringify(accounts.map(account => account.id));
+  const inSet = (path: string) => `json_extract(data,'${path}') IN (SELECT value FROM json_each(?))`;
+  const [rateRow, recordRows] = await Promise.all([
+    db.prepare("SELECT data FROM sync_records WHERE type='exchangeRate' AND is_deleted=0 LIMIT 1").first(),
+    db.prepare(`SELECT id,type,data,revision FROM sync_records WHERE is_deleted=0 AND (
+      (type='bills' AND json_extract(data,'$.status')='paid' AND (${inSet('$.sourceAccountId')} OR ${inSet('$.creditAccountId')} OR ${inSet('$.category')}))
+      OR (type='accountTransfers' AND (${inSet('$.fromAccountId')} OR ${inSet('$.toAccountId')}))
+      OR (type='transactions' AND json_extract(data,'$.type')='approved' AND (${inSet('$.sourceAccountId')} OR ${inSet('$.offsetAccountId')}))
+    )`).bind(ids, ids, ids, ids, ids, ids, ids).all()
+  ]);
+  const rawRate = rateRow ? Number(parseSetting((rateRow as any).data, 1.35)) : 1.35;
+  const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
+  const byId = new Map(accounts.map(account => [account.id, account]));
+  const charge = (accountId: string, event: LoanEvent) => { if (byId.has(accountId) && event.amount > 0) charges.set(accountId, [...(charges.get(accountId) || []), event]); };
+  const pay = (accountId: string, date: string, amount: number) => { if (byId.has(accountId) && amount) payments.set(accountId, [...(payments.get(accountId) || []), { date, amount }]); };
+  for (const row of recordRows.results as any[]) {
+    const data = parseSetting(row.data, {}); const type = String(row.type); const revision = Number(row.revision); const recordId = String(row.id);
+    const amountFor = (accountId: string) => {
+      const accountCurrency = byId.get(accountId)?.currency || 'CAD'; const amount = Number(data.amount || 0);
+      if (type === 'bills') return amount * (accountCurrency === 'CAD' && data.currency === 'USD' ? rate : 1);
+      if (type === 'transactions') return accountCurrency === 'CAD' && data.currency === 'USD' ? Number(data.amountCAD ?? data.amount ?? 0) : amount;
+      return amount;
+    };
+    const dueDate = isoDate(data.loanDueDate);
+    if (type === 'bills') {
+      const date = String(data.paidDate || data.dueDate || '');
+      if (data.sourceAccountId) charge(String(data.sourceAccountId), { recordType: 'bills', recordId, revision, date, description: String(data.vendor || 'Expense'), amount: amountFor(String(data.sourceAccountId)), dueDate });
+      if (data.creditAccountId) pay(String(data.creditAccountId), date, amountFor(String(data.creditAccountId)));
+      if (data.category) pay(String(data.category), date, amountFor(String(data.category)));
+    } else if (type === 'accountTransfers') {
+      const date = String(data.date || '');
+      if (data.fromAccountId) charge(String(data.fromAccountId), { recordType: 'accountTransfers', recordId, revision, date, description: String(data.notes || 'Transfer'), amount: amountFor(String(data.fromAccountId)), dueDate });
+      if (data.toAccountId) pay(String(data.toAccountId), date, amountFor(String(data.toAccountId)));
+    } else {
+      const date = String(data.date || '');
+      if (data.offsetAccountId) charge(String(data.offsetAccountId), { recordType: 'transactions', recordId, revision, date, description: String(data.notes || 'Payment'), amount: amountFor(String(data.offsetAccountId)), dueDate });
+      if (data.sourceAccountId) pay(String(data.sourceAccountId), date, amountFor(String(data.sourceAccountId)));
+    }
+  }
+  return { charges, payments };
+};
+
+// ---- Credit cards ----------------------------------------------------------
+// A credit card account (liability, subType "credit_card") has a statement day
+// and a payment due day. Everything charged after last month's statement date,
+// up to this month's statement date, is due on the next payment due date.
+const validDay = (value: unknown) => { const day = Number(value); return Number.isInteger(day) && day >= 1 && day <= 31 ? day : 0; };
+const dayInMonth = (year: number, monthIndex: number, day: number) => {
+  const last = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, monthIndex, Math.min(day, last))).toISOString().slice(0, 10);
+};
+const addDays = (date: string, days: number) => { const value = new Date(`${date}T00:00:00Z`); value.setUTCDate(value.getUTCDate() + days); return value.toISOString().slice(0, 10); };
+/** The next payment due date on or after `today`, and the statement period that belongs to it. */
+export const creditCardCycle = (statementDay: number, dueDay: number, today: string) => {
+  const base = new Date(`${today}T00:00:00Z`); let dueDate = '';
+  for (let k = 0; k < 3 && !dueDate; k += 1) { const candidate = dayInMonth(base.getUTCFullYear(), base.getUTCMonth() + k, dueDay); if (candidate >= today) dueDate = candidate; }
+  const due = new Date(`${dueDate}T00:00:00Z`);
+  let statementDate = dayInMonth(due.getUTCFullYear(), due.getUTCMonth(), statementDay);
+  if (statementDate >= dueDate) statementDate = dayInMonth(due.getUTCFullYear(), due.getUTCMonth() - 1, statementDay);
+  const statement = new Date(`${statementDate}T00:00:00Z`);
+  const previousStatement = dayInMonth(statement.getUTCFullYear(), statement.getUTCMonth() - 1, statementDay);
+  return { dueDate, statementDate, periodStart: addDays(previousStatement, 1) };
+};
+/**
+ * Amount due on the next due date = everything charged up to the statement date
+ * (plus the opening balance), minus everything already paid into the card.
+ */
+export const calculateCreditCardDue = (cards: { id: string; name: string; currency: string; startingBalance: number; statementDay: number; dueDay: number }[], charges: Map<string, { date: string; amount: number }[]>, payments: Map<string, LiabilityPayment[]>, today: string) => cards.map(card => {
+  const paid = (payments.get(card.id) || []).filter(item => !item.date || item.date <= today).reduce((sum, item) => sum + item.amount, 0);
+  const allCharges = charges.get(card.id) || [];
+  const balance = Math.round((card.startingBalance + allCharges.reduce((sum, item) => sum + item.amount, 0) - (payments.get(card.id) || []).reduce((sum, item) => sum + item.amount, 0)) * 100) / 100;
+  if (!card.statementDay || !card.dueDay) return { id: card.id, name: card.name, currency: card.currency, needsSetup: true, dueDate: '', statementDate: '', periodStart: '', amountDue: 0, periodCharges: 0, balance };
+  const cycle = creditCardCycle(card.statementDay, card.dueDay, today);
+  const chargedThroughStatement = card.startingBalance + allCharges.filter(item => !item.date || item.date <= cycle.statementDate).reduce((sum, item) => sum + item.amount, 0);
+  const periodCharges = allCharges.filter(item => item.date && item.date >= cycle.periodStart && item.date <= cycle.statementDate).reduce((sum, item) => sum + item.amount, 0);
+  return { id: card.id, name: card.name, currency: card.currency, needsSetup: false, ...cycle, amountDue: Math.max(0, Math.round((chargedThroughStatement - paid) * 100) / 100), periodCharges: Math.round(periodCharges * 100) / 100, balance };
+});
 const normalizeExternalDate = (value: unknown) => {
   const raw = String(value || '').trim();
   const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -1207,52 +1302,26 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const accountRows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.type')='liability' AND json_extract(data,'$.subType')='loan'").all();
     const loanAccounts = (accountRows.results as any[]).map(row => { const data = parseSetting(row.data, {}); return { id: String(row.id), name: String(data.name || 'Loan'), currency: data.currency === 'USD' ? 'USD' : 'CAD', data, revision: Number(row.revision) }; });
     if (!loanAccounts.length) return c.json({ success: true, items: [], accounts: [] });
-    const ids = JSON.stringify(loanAccounts.map(account => account.id));
-    const inLoans = (path: string) => `json_extract(data,'${path}') IN (SELECT value FROM json_each(?))`;
-    const [rateRow, recordRows] = await Promise.all([
-      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='exchangeRate' AND is_deleted=0 LIMIT 1").first(),
-      c.env.DB.prepare(`SELECT id,type,data,revision FROM sync_records WHERE is_deleted=0 AND (
-        (type='bills' AND json_extract(data,'$.status')='paid' AND (${inLoans('$.sourceAccountId')} OR ${inLoans('$.creditAccountId')} OR ${inLoans('$.category')}))
-        OR (type='accountTransfers' AND (${inLoans('$.fromAccountId')} OR ${inLoans('$.toAccountId')}))
-        OR (type='transactions' AND json_extract(data,'$.type')='approved' AND (${inLoans('$.sourceAccountId')} OR ${inLoans('$.offsetAccountId')}))
-      )`).bind(ids, ids, ids, ids, ids, ids, ids).all()
-    ]);
-    const rawRate = rateRow ? Number(parseSetting((rateRow as any).data, 1.35)) : 1.35;
-    const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
-    const byId = new Map(loanAccounts.map(account => [account.id, account]));
-    const borrowed = new Map<string, LoanEvent[]>(); const repaid = new Map<string, number>();
-    const borrow = (accountId: string, event: LoanEvent) => { if (byId.has(accountId) && event.amount > 0) borrowed.set(accountId, [...(borrowed.get(accountId) || []), event]); };
-    const repay = (accountId: string, amount: number) => { if (byId.has(accountId) && amount) repaid.set(accountId, (repaid.get(accountId) || 0) + amount); };
+    const { charges: borrowed, payments } = await loadLiabilityMovements(c.env.DB, loanAccounts);
+    const repaid = new Map<string, number>();
+    for (const [accountId, list] of payments) repaid.set(accountId, list.reduce((sum, item) => sum + item.amount, 0));
     for (const account of loanAccounts) {
       const opening = Number(account.data.startingBalance || 0);
-      if (opening > 0) borrow(account.id, { recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Opening balance', amount: opening, dueDate: isoDate(account.data.loanDueDate) });
-      else if (opening < 0) repay(account.id, -opening);
-    }
-    for (const row of recordRows.results as any[]) {
-      const data = parseSetting(row.data, {}); const type = String(row.type); const revision = Number(row.revision); const recordId = String(row.id);
-      const amountFor = (accountId: string) => {
-        const accountCurrency = byId.get(accountId)?.currency || 'CAD'; const amount = Number(data.amount || 0);
-        if (type === 'bills') return amount * (accountCurrency === 'CAD' && data.currency === 'USD' ? rate : 1);
-        if (type === 'transactions') return accountCurrency === 'CAD' && data.currency === 'USD' ? Number(data.amountCAD ?? data.amount ?? 0) : amount;
-        return amount;
-      };
-      const dueDate = isoDate(data.loanDueDate);
-      if (type === 'bills') {
-        const date = String(data.paidDate || data.dueDate || '');
-        if (data.sourceAccountId) borrow(String(data.sourceAccountId), { recordType: 'bills', recordId, revision, date, description: String(data.vendor || 'Expense'), amount: amountFor(String(data.sourceAccountId)), dueDate });
-        if (data.creditAccountId) repay(String(data.creditAccountId), amountFor(String(data.creditAccountId)));
-        if (data.category) repay(String(data.category), amountFor(String(data.category)));
-      } else if (type === 'accountTransfers') {
-        const date = String(data.date || '');
-        if (data.fromAccountId) borrow(String(data.fromAccountId), { recordType: 'accountTransfers', recordId, revision, date, description: String(data.notes || 'Transfer'), amount: amountFor(String(data.fromAccountId)), dueDate });
-        if (data.toAccountId) repay(String(data.toAccountId), amountFor(String(data.toAccountId)));
-      } else {
-        const date = String(data.date || '');
-        if (data.offsetAccountId) borrow(String(data.offsetAccountId), { recordType: 'transactions', recordId, revision, date, description: String(data.notes || 'Payment'), amount: amountFor(String(data.offsetAccountId)), dueDate });
-        if (data.sourceAccountId) repay(String(data.sourceAccountId), amountFor(String(data.sourceAccountId)));
-      }
+      if (opening > 0) borrowed.set(account.id, [...(borrowed.get(account.id) || []), { recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Opening balance', amount: opening, dueDate: isoDate(account.data.loanDueDate) }]);
+      else if (opening < 0) repaid.set(account.id, (repaid.get(account.id) || 0) - opening);
     }
     return c.json({ success: true, ...calculateLoansPayable(loanAccounts, borrowed, repaid) }, 200, { 'Cache-Control': 'no-store' });
+  });
+
+  app.get('/v3/credit-cards-due', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read');
+    if (denied) return denied;
+    const accountRows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.type')='liability' AND json_extract(data,'$.subType')='credit_card'").all();
+    const cards = (accountRows.results as any[]).map(row => { const data = parseSetting(row.data, {}); return { id: String(row.id), name: String(data.name || 'Credit card'), currency: data.currency === 'USD' ? 'USD' : 'CAD', data, revision: Number(row.revision), startingBalance: Number(data.startingBalance || 0) || 0, statementDay: validDay(data.statementDay), dueDay: validDay(data.paymentDueDay) }; });
+    const { charges, payments } = await loadLiabilityMovements(c.env.DB, cards);
+    const today = isoDate(c.req.query('today')) || new Date().toISOString().slice(0, 10);
+    const items = calculateCreditCardDue(cards, charges, payments, today).sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || a.name.localeCompare(b.name));
+    return c.json({ success: true, items, today }, 200, { 'Cache-Control': 'no-store' });
   });
 
   app.get('/v3/tasks', async (c: any) => {
@@ -1457,16 +1526,56 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     try{await c.env.DB.batch(statements);return c.json(response,201);}catch{const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json)));return c.json({success:false,error:'The payout was not recorded. You can safely try again.'},409);}
   });
 
+  // ---- Call tracker (donor contacts) ----------------------------------------
+  // Every call is a donorContacts record, so it shows on the Tracker page AND in the donor pop-up.
+  // "Call back" creates a reminder (task) for the fundraiser; "Pick up" adds the donor to the pickup list.
   app.post('/v3/donor-contacts', async (c:any) => {
     const denied=requirePermission(c,'donors.update');if(denied)return denied;const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||body.requestId||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);
     const mutationId=`v3-donor-contact-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
-    const donorId=String(body.donorId||'');const fundraiserId=String(body.fundraiserId||'');const campaignId=String(body.campaignId||'');const pledgeId=String(body.pledgeId||'');const date=isoDate(body.date);const notes=String(body.notes||'').trim().slice(0,4000);const outcome=String(body.outcome||'contacted').trim().slice(0,100);const followUpDate=body.followUpDate?isoDate(body.followUpDate):'';
-    if(!donorId||!date||!notes|| (body.followUpDate&&!followUpDate))return c.json({success:false,error:'Donor, contact date, notes, and a valid follow-up date are required.'},400);
+    const donorId=String(body.donorId||'');const fundraiserId=String(body.fundraiserId||'');const campaignId=String(body.campaignId||'');const pledgeId=String(body.pledgeId||'');const paymentId=String(body.paymentId||'').slice(0,200);const recurringId=String(body.recurringId||'').slice(0,200);const date=isoDate(body.date);const notes=String(body.notes||'').trim().slice(0,4000);const outcome=String(body.outcome||'Contacted').trim().slice(0,100);const followUpDate=body.followUpDate?isoDate(body.followUpDate):'';
+    const isPickup=outcome==='Pick up';const pickupDate=body.pickupDate?isoDate(body.pickupDate):'';const pickupAmount=body.pickupAmount===undefined||body.pickupAmount===''||body.pickupAmount===null?0:Number(body.pickupAmount);const pickupAddress=String(body.pickupAddress||'').trim().slice(0,500);
+    const notesOptional=['No answer','Left message'].includes(outcome);
+    if(!donorId||!date)return c.json({success:false,error:'Choose the donor and the date of the call.'},400);
+    if(!notes&&!notesOptional)return c.json({success:false,error:'Write what the donor said.'},400);
+    if(body.followUpDate&&!followUpDate)return c.json({success:false,error:'Choose a valid call-back date.'},400);
+    if(outcome==='Call back'&&!followUpDate)return c.json({success:false,error:'Choose the date to call back.'},400);
+    if(isPickup&&((body.pickupDate&&!pickupDate)||!Number.isFinite(pickupAmount)||pickupAmount<0))return c.json({success:false,error:'Enter a valid pickup date and amount.'},400);
     const refs=await c.env.DB.prepare("SELECT type,id,data FROM sync_records WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='fundraisers' AND id=?) OR (type='campaigns' AND id=?) OR (type='pledges' AND id=?))").bind(donorId,fundraiserId,campaignId,pledgeId).all();const found=new Set((refs.results as any[]).map(row=>`${row.type}:${row.id}`));
     if(!found.has(`donors:${donorId}`)||fundraiserId&&!found.has(`fundraisers:${fundraiserId}`)||campaignId&&!found.has(`campaigns:${campaignId}`)||pledgeId&&!found.has(`pledges:${pledgeId}`))return c.json({success:false,error:'A selected donor, fundraiser, campaign, or pledge no longer exists.'},409);
-    const donor=parseSetting((refs.results as any[]).find(row=>row.type==='donors')?.data,{});const id=crypto.randomUUID();const now=Date.now();const contact={id,donorId,fundraiserId,campaignId,pledgeId,date,outcome,notes,followUpDate,createdAt:new Date(now).toISOString()};const taskId=`donor-contact-follow-up-${id}`;const task=followUpDate?{id:taskId,donorId,title:`Follow up with ${donor.name||'donor'}`,notes,dueDate:followUpDate,priority:'high',type:'follow_up',completed:false,linkedContactId:id,linkedPledgeId:pledgeId,createdAt:new Date(now).toISOString().slice(0,10)}:null;const response={success:true,item:{...contact,revision:1,updatedAt:now},task};const statements:any[]=[];
-    for(const [recordId,type,value] of [[id,'donorContacts',contact],...(task?[[taskId,'tasks',task]]:[])] as any[]){const data=JSON.stringify(value);const operationId=`${mutationId}-${type}`;statements.push(c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?,?,1,0,?)').bind(recordId,type,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(recordId,type,data,now,mutationId,operationId));}
-    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));try{await c.env.DB.batch(statements);return c.json(response,201);}catch{return c.json({success:false,error:'The contact record was not saved. You can safely try again.'},409);}
+    const donor=parseSetting((refs.results as any[]).find(row=>row.type==='donors')?.data,{});const fundraiser=parseSetting((refs.results as any[]).find(row=>row.type==='fundraisers')?.data,{});const id=crypto.randomUUID();const now=Date.now();
+    const userId=String(c.get('userId')||'');const userEmail=String(c.get('userEmail')||'');
+    const contact:any={id,donorId,fundraiserId,campaignId,pledgeId,date,outcome,notes,followUpDate,createdAt:new Date(now).toISOString(),createdBy:userEmail};
+    if(paymentId)contact.paymentId=paymentId;if(recurringId)contact.recurringId=recurringId;
+    if(isPickup)Object.assign(contact,{pickupStatus:'open',pickupDate,pickupAmount,pickupAddress});
+    const taskId=`donor-contact-follow-up-${id}`;const who=fundraiser.name?` (${fundraiser.name})`:'';
+    const task=followUpDate?{id:taskId,donorId,fundraiserId,title:`Call back ${donor.name||'donor'}${who}`,notes,dueDate:followUpDate,priority:'high',type:'follow_up',completed:false,linkedContactId:id,linkedPledgeId:pledgeId,createdAt:new Date(now).toISOString().slice(0,10)}:null;
+    const response={success:true,item:{...contact,revision:1,updatedAt:now},task};const statements:any[]=[];
+    for(const [recordId,type,value] of [[id,'donorContacts',contact],...(task?[[taskId,'tasks',task]]:[])] as any[]){const data=JSON.stringify(value);const operationId=`${mutationId}-${type}`;statements.push(c.env.DB.prepare('INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,?,?,?,1,0,?)').bind(recordId,type,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,?,1,'insert',?,?,?,?)").bind(recordId,type,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(recordId,type,data,userId,userEmail,now,mutationId,operationId,'Recorded donor call'));}
+    statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));try{await c.env.DB.batch(statements);return c.json(response,201);}catch{const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json)));return c.json({success:false,error:'The call was not saved. You can safely try again.'},409);}
+  });
+
+  const contactListSelect="SELECT c.id,c.data,c.revision,c.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.phone') AS donor_phone,json_extract(d.data,'$.address') AS donor_address,json_extract(d.data,'$.city') AS donor_city,json_extract(f.data,'$.name') AS fundraiser_name,json_extract(g.data,'$.name') AS campaign_name FROM sync_records c LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(c.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records f ON f.type='fundraisers' AND f.id=json_extract(c.data,'$.fundraiserId') AND f.is_deleted=0 LEFT JOIN sync_records g ON g.type='campaigns' AND g.id=json_extract(c.data,'$.campaignId') AND g.is_deleted=0";
+  const contactRow=(row:any)=>({...parseRecord(row),donorName:String(row.donor_name||'Unknown donor'),donorPhone:String(row.donor_phone||''),donorAddress:[row.donor_address,row.donor_city].filter(Boolean).join(', '),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')});
+
+  // All calls, newest first, for the Tracker page.
+  app.get('/v3/donor-contacts', async (c:any) => {
+    const denied=requirePermission(c,'donors.read');if(denied)return denied;
+    const limit=boundedLimit(c.req.query('limit'));const page=boundedPage(c.req.query('page'));const offset=(page-1)*limit;const search=String(c.req.query('search')||'').trim().toLowerCase();const outcome=String(c.req.query('outcome')||'').trim();const fundraiserId=String(c.req.query('fundraiserId')||'').trim();const campaignId=String(c.req.query('campaignId')||'').trim();const from=isoDate(c.req.query('from'));const to=isoDate(c.req.query('to'));
+    const conditions=["c.type='donorContacts'",'c.is_deleted=0'];const bindings:any[]=[];
+    if(search){conditions.push("(lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(c.data,'$.notes'),'')) LIKE ?)");bindings.push(`%${search}%`,`%${search}%`);}
+    if(outcome){conditions.push("json_extract(c.data,'$.outcome')=?");bindings.push(outcome);}if(fundraiserId){conditions.push("json_extract(c.data,'$.fundraiserId')=?");bindings.push(fundraiserId);}if(campaignId){conditions.push("json_extract(c.data,'$.campaignId')=?");bindings.push(campaignId);}
+    if(from){conditions.push("json_extract(c.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(c.data,'$.date')<=?");bindings.push(to);}
+    const where=conditions.join(' AND ');const joins="LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(c.data,'$.donorId') AND d.is_deleted=0";
+    const [rows,count]=await c.env.DB.batch([c.env.DB.prepare(`${contactListSelect} WHERE ${where} ORDER BY json_extract(c.data,'$.date') DESC,c.updated_at DESC,c.id LIMIT ? OFFSET ?`).bind(...bindings,limit,offset),c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records c ${joins} WHERE ${where}`).bind(...bindings)]);
+    const total=Number((count.results[0] as any)?.count||0);
+    return c.json({success:true,items:(rows.results as any[]).map(contactRow),page,limit,total,totalPages:Math.ceil(total/limit)},200,{'Cache-Control':'no-store'});
+  });
+
+  // Donors who still have money to be picked up, for the Dashboard box.
+  app.get('/v3/pickups', async (c:any) => {
+    const denied=requirePermission(c,'donors.read');if(denied)return denied;
+    const rows=await c.env.DB.prepare(`${contactListSelect} WHERE c.type='donorContacts' AND c.is_deleted=0 AND json_extract(c.data,'$.pickupStatus')='open' ORDER BY COALESCE(NULLIF(json_extract(c.data,'$.pickupDate'),''),'9999-12-31'),json_extract(c.data,'$.date') LIMIT 200`).all();
+    return c.json({success:true,items:(rows.results as any[]).map(contactRow)},200,{'Cache-Control':'no-store'});
   });
 
   app.get('/v3/contact-reports',async(c:any)=>{const denied=requirePermission(c,'reports.read');if(denied)return denied;const year=String(c.req.query('year')||new Date().getUTCFullYear());const month=String(c.req.query('month')||'');const from=month&&/^\d{4}-\d{2}$/.test(month)?`${month}-01`:`${year}-01-01`;const to=month&&/^\d{4}-\d{2}$/.test(month)?`${month}-31`:`${year}-12-31`;const today=new Date().toISOString().slice(0,10);const [summary,contacts,notContacted]=await c.env.DB.batch([c.env.DB.prepare("SELECT COUNT(*) count,COUNT(DISTINCT json_extract(data,'$.donorId')) donors,COALESCE(SUM(CASE WHEN json_extract(data,'$.followUpDate')=? THEN 1 ELSE 0 END),0) due_today,COALESCE(SUM(CASE WHEN json_extract(data,'$.followUpDate')<? THEN 1 ELSE 0 END),0) overdue FROM sync_records WHERE type='donorContacts' AND is_deleted=0 AND json_extract(data,'$.date') BETWEEN ? AND ?").bind(today,today,from,to),c.env.DB.prepare("SELECT c.id,c.data,c.revision,c.updated_at,json_extract(d.data,'$.name') donor_name,json_extract(f.data,'$.name') fundraiser_name,json_extract(g.data,'$.name') campaign_name FROM sync_records c LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(c.data,'$.donorId') LEFT JOIN sync_records f ON f.type='fundraisers' AND f.id=json_extract(c.data,'$.fundraiserId') LEFT JOIN sync_records g ON g.type='campaigns' AND g.id=json_extract(c.data,'$.campaignId') WHERE c.type='donorContacts' AND c.is_deleted=0 AND json_extract(c.data,'$.date') BETWEEN ? AND ? ORDER BY json_extract(c.data,'$.date') DESC LIMIT 100").bind(from,to),c.env.DB.prepare("SELECT d.id,d.data,d.revision,d.updated_at FROM sync_records d WHERE d.type='donors' AND d.is_deleted=0 AND NOT EXISTS(SELECT 1 FROM sync_records c WHERE c.type='donorContacts' AND c.is_deleted=0 AND json_extract(c.data,'$.donorId')=d.id AND json_extract(c.data,'$.date') BETWEEN ? AND ?) ORDER BY lower(json_extract(d.data,'$.name')) LIMIT 100").bind(from,to)]);return c.json({success:true,period:{from,to},summary:summary.results[0]||{},contacts:contacts.results.map((row:any)=>({...parseRecord(row),donorName:String(row.donor_name||''),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')})),notContacted:notContacted.results.map(parseRecord)});});
@@ -1979,9 +2088,75 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
   app.post('/v3/automation/daily-sola',async(c:any)=>{const today=new Date().toISOString().slice(0,10);const start=new Date(`${today}T00:00:00Z`);start.setUTCDate(start.getUTCDate()-7);const startDate=start.toISOString().slice(0,10);try{const sync=await syncSolaRange(c,startDate,today,'daily');const reconciliation=await reconcileSolaRange(c,startDate,today,Boolean(sync.complete));const now=Date.now();const status={lastAttemptAt:now,trigger:'daily',success:reconciliation.errors.length===0,sync,reconciliation};await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_automation_status',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify(status),now).run();return c.json({success:status.success,sync,reconciliation});}catch(reason:any){const now=Date.now();const failure={lastAttemptAt:now,trigger:'daily',success:false,error:String(reason.message||'network error')};await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_automation_status',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify(failure),now).run();return c.json({success:false,error:`Daily Sola sync failed: ${failure.error}`},Number(reason.status||502));}});
 
+  // ---- Recurring card charges ------------------------------------------------
+  // Runs once a day (GitHub workflow). Safety rules:
+  //  * Schedules that Sola runs itself (solaScheduleId) are never charged here, so a donor is never charged twice.
+  //  * A declined card is only retried on its retry date (retryDays), not on every run.
+  //  * Paused, deleted or expired cards are skipped; the next card in the list is used.
+  //  * If months were missed (the runner did not run), only the latest month is charged and a task lists the missed dates.
+  //  * If Sola cannot be reached, or the result cannot be saved, a high-priority task asks staff to check Sola. The same
+  //    occurrence is never charged again automatically.
   app.post('/v3/automation/process-recurring',async(c:any)=>{
-    const today=new Date().toISOString().slice(0,10);const key=await getSolaKey(c);if(!key)return c.json({success:false,error:'Sola is not configured on the server.'},409);const due=await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND COALESCE(json_extract(data,'$.active'),0)=1 AND json_extract(data,'$.method')='credit_card' AND (COALESCE(json_extract(data,'$.paymentMethodId'),'')<>'' OR COALESCE(json_extract(data,'$.paymentMethodIds'),'[]')<>'[]') AND (json_extract(data,'$.nextDate')<=? OR json_extract(data,'$.retryState.nextRetryDate')<=?) ORDER BY COALESCE(json_extract(data,'$.retryState.nextRetryDate'),json_extract(data,'$.nextDate')),id LIMIT 50").bind(today,today).all();const summary={due:due.results.length,approved:0,declined:0,skipped:0,exhausted:0,errors:[] as string[]};
-    for(const row of due.results as any[]){const schedule=parseSetting(row.data,{});const state=schedule.retryState?.occurrence===schedule.nextDate?schedule.retryState:{occurrence:schedule.nextDate,cardIndex:0,attempt:1};const cards=Array.isArray(schedule.paymentMethodIds)?schedule.paymentMethodIds.map(String):schedule.paymentMethodId?[String(schedule.paymentMethodId)]:[];const cardId=cards[Number(state.cardIndex||0)];const occurrence=String(state.occurrence||schedule.nextDate||'');const mutationId=`recurring-charge-${row.id}-${occurrence}-${state.cardIndex||0}-${state.attempt||1}`;if(await c.env.DB.prepare('SELECT mutation_id FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first()){summary.skipped++;continue;}try{await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify({success:false,processing:true,scheduleId:row.id}),Date.now()).run();}catch{summary.skipped++;continue;}const token:any=cardId?await c.env.DB.prepare('SELECT value FROM server_secrets WHERE key=?').bind(`PAYMENT_METHOD_TOKEN:${cardId}`).first():null;let gateway:any={xResult:'D',xError:cardId?'Saved card token is unavailable.':'No saved card is assigned.'};if(token?.value){try{const response=await fetch('https://x1.cardknox.com/gatewayjson',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xKey:key,xVersion:'4.5.9',xSoftwareName:'CharityApp',xSoftwareVersion:'1.0',xCommand:'cc:sale',xAmount:Number(schedule.amount||0).toFixed(2),xCurrency:schedule.currency||'CAD',xToken:String(token.value),xInvoice:mutationId})});gateway=await response.json();if(!response.ok)throw new Error(`Sola returned ${response.status}.`);}catch(reason:any){await c.env.DB.prepare('UPDATE processed_mutations SET result_json=?,server_time=? WHERE mutation_id=?').bind(JSON.stringify({success:false,processing:false,reviewRequired:true,error:String(reason.message||'Sola network error')}),Date.now(),mutationId).run();summary.errors.push(`${row.id}: Sola status requires review`);continue;}}const approved=String(gateway.xResult||'').toUpperCase()==='A';const now=Date.now();const transactionId=crypto.randomUUID();const transaction={id:transactionId,donorId:schedule.donorId,amount:Number(schedule.amount||0),amountCAD:Number(schedule.amountCAD??schedule.amount??0),currency:schedule.currency||'CAD',date:today,type:approved?'approved':'declined',method:'credit_card',sourceAccountId:schedule.sourceAccountId,offsetAccountId:schedule.offsetAccountId,depositStatus:'direct',scheduleId:row.id,scheduledDate:occurrence,paymentMethodId:cardId,solaRef:String(gateway.xRefNum||''),gatewayResult:String(gateway.xResult||''),...(schedule.pledgeId?{pledgeId:schedule.pledgeId}:{}),...(!approved?{declineReason:String(gateway.xError||gateway.xErrorMessage||'Declined')}:{})};let nextSchedule:any;let exhausted=false;if(approved){nextSchedule={...schedule,nextDate:addUtc(occurrence,String(schedule.frequency||'monthly'))};delete nextSchedule.retryState;}else{const retryDays=Math.max(1,Math.min(30,Number(schedule.retryDays||2)));const maxAttempts=Math.max(1,Math.min(10,Number(schedule.maxAttempts||3)));let cardIndex=Number(state.cardIndex||0);let attempt=Number(state.attempt||1)+1;if(attempt>maxAttempts){cardIndex++;attempt=1;}if(cardIndex>=cards.length){exhausted=true;nextSchedule={...schedule,nextDate:addUtc(occurrence,String(schedule.frequency||'monthly')),lastFailedOccurrence:occurrence,lastFailureReason:transaction.declineReason};delete nextSchedule.retryState;}else{const retryDate=new Date(`${today}T00:00:00Z`);retryDate.setUTCDate(retryDate.getUTCDate()+retryDays);nextSchedule={...schedule,retryState:{occurrence,cardIndex,attempt,nextRetryDate:retryDate.toISOString().slice(0,10),lastFailureReason:transaction.declineReason}};}}const transactionData=JSON.stringify(transaction);const scheduleData=JSON.stringify(nextSchedule);const scheduleRevision=Number(row.revision)+1;const transactionOperation=`${mutationId}-transaction`;const scheduleOperation=`${mutationId}-schedule`;const final={success:approved,approved,scheduleId:row.id,transactionId,exhausted};const statements:any[]=[c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(transactionId,transactionData,now,transactionOperation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(transactionId,transactionData,now,mutationId,transactionOperation),c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='recurringPayments' AND id=? AND revision=? AND is_deleted=0").bind(scheduleData,scheduleRevision,now,scheduleOperation,row.id,row.revision),c.env.DB.prepare('UPDATE processed_mutations SET result_json=?,server_time=? WHERE mutation_id=?').bind(JSON.stringify(final),now,mutationId)];if(exhausted){const taskId=`declined-recurring-${row.id}-${occurrence}`;const taskData=JSON.stringify({id:taskId,donorId:schedule.donorId,title:'Recurring payment failed',notes:`All saved-card attempts failed for ${occurrence}. ${transaction.declineReason}`,dueDate:today,priority:'high',type:'declined_payment',completed:false,linkedScheduleId:row.id,linkedPaymentId:transactionId});statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?) ON CONFLICT(type,id) DO NOTHING").bind(taskId,taskData,now,`${mutationId}-task`));}try{await c.env.DB.batch(statements);if(approved)summary.approved++;else summary.declined++;if(exhausted)summary.exhausted++;}catch(reason:any){summary.errors.push(`${row.id}: ${String(reason.message||'database conflict')}`);}}
+    const today=new Date().toISOString().slice(0,10);const key=await getSolaKey(c);if(!key)return c.json({success:false,error:'Sola is not configured on the server.'},409);
+    const due=await c.env.DB.prepare(`SELECT id,data,revision FROM sync_records WHERE type='recurringPayments' AND is_deleted=0
+      AND COALESCE(json_extract(data,'$.active'),0)=1 AND json_extract(data,'$.method')='credit_card'
+      AND COALESCE(json_extract(data,'$.solaScheduleId'),'')=''
+      AND (COALESCE(json_extract(data,'$.paymentMethodId'),'')<>'' OR COALESCE(json_extract(data,'$.paymentMethodIds'),'[]')<>'[]')
+      AND (CASE WHEN json_extract(data,'$.retryState.occurrence')=json_extract(data,'$.nextDate') THEN json_extract(data,'$.retryState.nextRetryDate')<=? ELSE json_extract(data,'$.nextDate')<=? END)
+      AND (COALESCE(json_extract(data,'$.endDate'),'')='' OR json_extract(data,'$.nextDate')<=json_extract(data,'$.endDate'))
+      ORDER BY json_extract(data,'$.nextDate'),id LIMIT 50`).bind(today,today).all();
+    const rateRow:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='exchangeRate' AND is_deleted=0 LIMIT 1").first();const rawRate=rateRow?Number(parseSetting(rateRow.data,1.35)):1.35;const usdRate=Number.isFinite(rawRate)&&rawRate>0?rawRate:1.35;
+    const summary={due:due.results.length,approved:0,declined:0,skipped:0,exhausted:0,errors:[] as string[]};
+    const reviewTask=(scheduleId:string,donorId:string,occurrence:string,title:string,notes:string)=>{const taskId=`recurring-review-${scheduleId}-${occurrence}`;const now=Date.now();return c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?) ON CONFLICT(type,id) DO NOTHING").bind(taskId,JSON.stringify({id:taskId,donorId,title,notes,dueDate:today,priority:'high',type:'declined_payment',completed:false,linkedScheduleId:scheduleId}),now,`${taskId}-insert`);};
+    for(const row of due.results as any[]){
+      const schedule=parseSetting(row.data,{});const frequency=String(schedule.frequency||'monthly');
+      const inRetry=schedule.retryState?.occurrence===schedule.nextDate;
+      let occurrence=String(schedule.nextDate||'');const missed:string[]=[];
+      // Catch-up: if the runner missed periods, charge only the most recent one.
+      if(!inRetry){let guard=0;while(addUtc(occurrence,frequency)<=today&&guard<120&&(!schedule.endDate||addUtc(occurrence,frequency)<=schedule.endDate)){missed.push(occurrence);occurrence=addUtc(occurrence,frequency);guard++;}}
+      const state=inRetry?schedule.retryState:{occurrence,cardIndex:0,attempt:1};
+      const cards:string[]=Array.isArray(schedule.paymentMethodIds)?schedule.paymentMethodIds.map(String):schedule.paymentMethodId?[String(schedule.paymentMethodId)]:[];
+      // Skip cards that are paused, deleted, or expired.
+      const cardRows=await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(cards)).all();
+      const cardData=new Map((cardRows.results as any[]).map(card=>[String(card.id),parseSetting(card.data,{})]));
+      const [year,month]=today.split('-').map(Number);
+      const usable=(id:string)=>{const card:any=cardData.get(id);if(!card||card.status!=='active'||String(card.donorId||'')!==String(schedule.donorId||''))return false;const ey=Number(card.expiryYear||0),em=Number(card.expiryMonth||0);return !ey||!em||ey>year||(ey===year&&em>=month);};
+      let cardIndex=Number(state.cardIndex||0);let attempt=Number(state.attempt||1);
+      while(cardIndex<cards.length&&!usable(cards[cardIndex])){cardIndex++;attempt=1;}
+      const cardId=cards[cardIndex];
+      const mutationId=`recurring-charge-${row.id}-${occurrence}-${cardIndex}-${attempt}`;
+      const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if(prior){const result=parseSetting(prior.result_json,{});if(result.reviewRequired||result.processing){summary.errors.push(`${row.id}: the charge for ${occurrence} needs to be checked in Sola`);}else summary.skipped++;continue;}
+      try{await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify({success:false,processing:true,scheduleId:row.id}),Date.now()).run();}catch{summary.skipped++;continue;}
+      const token:any=cardId?await c.env.DB.prepare('SELECT value FROM server_secrets WHERE key=?').bind(`PAYMENT_METHOD_TOKEN:${cardId}`).first():null;
+      let gateway:any={xResult:'D',xError:cardId?'Saved card token is unavailable.':'No active, unexpired saved card is assigned.'};let charged=false;
+      if(token?.value){try{charged=true;const response=await fetch('https://x1.cardknox.com/gatewayjson',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xKey:key,xVersion:'4.5.9',xSoftwareName:'CharityApp',xSoftwareVersion:'1.0',xCommand:'cc:sale',xAmount:Number(schedule.amount||0).toFixed(2),xCurrency:schedule.currency||'CAD',xToken:String(token.value),xInvoice:mutationId})});gateway=await response.json();if(!response.ok)throw new Error(`Sola returned ${response.status}.`);}
+        catch(reason:any){const failure={success:false,processing:false,reviewRequired:true,scheduleId:row.id,occurrence,error:String(reason.message||'Sola network error')};await c.env.DB.batch([c.env.DB.prepare('UPDATE processed_mutations SET result_json=?,server_time=? WHERE mutation_id=?').bind(JSON.stringify(failure),Date.now(),mutationId),reviewTask(row.id,String(schedule.donorId||''),occurrence,'Check Sola: recurring charge result unknown',`CharityPro could not get an answer from Sola for the ${occurrence} payment of ${Number(schedule.amount||0).toFixed(2)} ${schedule.currency||'CAD'}. Check in Sola whether it was charged before doing anything. It will not be charged again automatically.`)]);summary.errors.push(`${row.id}: Sola status requires review`);continue;}}
+      const approved=String(gateway.xResult||'').toUpperCase()==='A';const now=Date.now();const transactionId=crypto.randomUUID();
+      const currency=schedule.currency==='USD'?'USD':'CAD';const amount=Number(schedule.amount||0);const amountCAD=currency==='USD'?(Number(schedule.amountCAD)>0?Number(schedule.amountCAD):Math.round(amount*usdRate*100)/100):amount;
+      const transaction={id:transactionId,donorId:schedule.donorId,amount,amountCAD,currency,...(currency==='USD'?{exchangeRate:amountCAD/amount,exchangeRateSource:'settings'}:{}),date:today,type:approved?'approved':'declined',method:'credit_card',sourceAccountId:schedule.sourceAccountId,offsetAccountId:schedule.offsetAccountId,depositStatus:'direct',scheduleId:row.id,scheduledDate:occurrence,paymentMethodId:cardId||'',solaRef:String(gateway.xRefNum||''),gatewayResult:String(gateway.xResult||''),...(schedule.pledgeId?{pledgeId:schedule.pledgeId}:{}),...(!approved?{declineReason:String(gateway.xError||gateway.xErrorMessage||'Declined')}:{})};
+      // What changes on the schedule (applied on top of the latest saved version below).
+      let changes:any;let exhausted=false;
+      if(approved){changes={nextDate:addUtc(occurrence,frequency),retryState:undefined,...(missed.length?{lastMissedOccurrences:missed}:{})};}
+      else{const retryDays=Math.max(1,Math.min(30,Number(schedule.retryDays||2)));const maxAttempts=Math.max(1,Math.min(10,Number(schedule.maxAttempts||3)));let nextCard=cardIndex;let nextAttempt=attempt+1;if(nextAttempt>maxAttempts||!charged){nextCard++;nextAttempt=1;}while(nextCard<cards.length&&!usable(cards[nextCard])){nextCard++;nextAttempt=1;}
+        if(nextCard>=cards.length){exhausted=true;changes={nextDate:addUtc(occurrence,frequency),retryState:undefined,lastFailedOccurrence:occurrence,lastFailureReason:transaction.declineReason};}
+        else{const retryDate=new Date(`${today}T00:00:00Z`);retryDate.setUTCDate(retryDate.getUTCDate()+(charged?retryDays:0));changes={nextDate:occurrence,retryState:{occurrence,cardIndex:nextCard,attempt:nextAttempt,nextRetryDate:retryDate.toISOString().slice(0,10),lastFailureReason:transaction.declineReason}};}}
+      // Only record a declined row when a real charge was attempted.
+      const final={success:approved,approved,scheduleId:row.id,transactionId:charged?transactionId:'',exhausted,occurrence};
+      const statements:any[]=[c.env.DB.prepare('UPDATE processed_mutations SET result_json=?,server_time=? WHERE mutation_id=?').bind(JSON.stringify(final),now,mutationId)];
+      if(charged){const transactionData=JSON.stringify(transaction);const transactionOperation=`${mutationId}-transaction`;statements.unshift(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(transactionId,transactionData,now,transactionOperation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(transactionId,transactionData,now,mutationId,transactionOperation));}
+      if(exhausted)statements.push(reviewTask(row.id,String(schedule.donorId||''),occurrence,'Recurring payment failed',`All saved-card attempts failed for ${occurrence}. ${transaction.declineReason}`));
+      if(missed.length)statements.push(reviewTask(row.id,String(schedule.donorId||''),`missed-${occurrence}`,'Recurring payments were missed',`These payments were not charged because the daily run did not happen: ${missed.join(', ')}. Only ${occurrence} was charged. Charge the missed ones by hand if needed.`));
+      try{await c.env.DB.batch(statements);if(approved)summary.approved++;else summary.declined++;if(exhausted)summary.exhausted++;}
+      catch(reason:any){
+        // The charge happened but could not be saved: never charge it again automatically; ask staff to check.
+        try{await c.env.DB.batch([c.env.DB.prepare('UPDATE processed_mutations SET result_json=?,server_time=? WHERE mutation_id=?').bind(JSON.stringify({success:false,reviewRequired:true,approved,scheduleId:row.id,occurrence,solaRef:String(gateway.xRefNum||''),error:'Charged in Sola but not saved in CharityPro'}),Date.now(),mutationId),reviewTask(row.id,String(schedule.donorId||''),occurrence,'Recurring payment not saved',`Sola answered "${approved?'approved':'declined'}" (ref ${String(gateway.xRefNum||'none')}) for ${occurrence}, but CharityPro could not save it. Enter it by hand.`)]);}catch{/* keep going */}
+        summary.errors.push(`${row.id}: ${String(reason.message||'database conflict')}`);continue;}
+      // Move the schedule forward on top of its latest saved version (someone may have edited it meanwhile).
+      for(let tries=0;tries<3;tries++){const current:any=await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='recurringPayments' AND id=? AND is_deleted=0").bind(row.id).first();if(!current)break;const latest=parseSetting(current.data,{});const next:any={...latest,...changes};if(changes.retryState===undefined)delete next.retryState;const nextData=JSON.stringify(next);const revision=Number(current.revision)+1;const operationId=`${mutationId}-schedule-${tries}`;
+        const result:any=await c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='recurringPayments' AND id=? AND revision=? AND is_deleted=0").bind(nextData,revision,Date.now(),operationId,row.id,current.revision).run();
+        if(Number(result?.meta?.changes??result?.changes??0)>0){await c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',?,'update',?,?,?,?)").bind(row.id,revision,nextData,Date.now(),mutationId,operationId).run();break;}}
+    }
     return c.json({success:summary.errors.length===0,summary});
   });
 
@@ -2509,7 +2684,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const record = { id,donorId,amount,amountCAD:amount*exchangeRate,date,type:approved?'approved':'declined',method:'credit_card',currency,...(currency==='USD'?{exchangeRate,exchangeRateSource:String(body.exchangeRateSource||'agreed'),exchangeRateDate:String(body.exchangeRateDate||date)}:{}),sourceAccountId,offsetAccountId,depositStatus:'direct',paymentMethodId,solaRef:String(gateway.xRefNum||''),gatewayResult:String(gateway.xResult||''),...(pledgeAllocations.length?{pledgeAllocations}:{}),...(approved?{}:{declineReason:String(gateway.xError||gateway.xErrorMessage||'Declined')}),notes:String(body.notes||'').slice(0,2000) };
     const data=JSON.stringify(record);const operationId=`${mutationId}-transaction`;const result={success:approved,approved,httpStatus:approved?201:402,item:{...record,revision:1,updatedAt:now},allocations:pledgeAllocations,error:approved?undefined:record.declineReason};
     try { const statements:any[]=[c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(id,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,userId,userEmail,now,mutationId,operationId,approved?'Charged saved Sola payment method':'Recorded declined saved-card attempt')];for(const allocation of pledgeAllocations){const allocationData=JSON.stringify(allocation);const allocationOperation=`${mutationId}-allocation-${allocation.id}`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentAllocations',?,?,1,0,?)").bind(allocation.id,allocationData,now,allocationOperation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentAllocations',1,'insert',?,?,?,?)").bind(allocation.id,allocationData,now,mutationId,allocationOperation),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentAllocations','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(allocation.id,allocationData,userId,userEmail,now,mutationId,allocationOperation,'Allocated saved-card payment to pledge'));}statements.push(c.env.DB.prepare('UPDATE processed_mutations SET result_json=?,server_time=? WHERE mutation_id=?').bind(JSON.stringify(result),now,mutationId));await c.env.DB.batch(statements);return c.json(result,approved?201:402); }
-    catch { return c.json(processing,409); }
+    catch {
+      // Sola answered but CharityPro could not save it. Never charge this again automatically: remember the answer and ask staff to enter it.
+      const review = { success: false, processing: false, reviewRequired: true, httpStatus: 502, approved, solaRef: String(gateway.xRefNum || ''), error: approved ? `The card WAS charged in Sola (ref ${String(gateway.xRefNum || 'none')}) but CharityPro could not save it. Do not charge again. A task was created to enter it by hand.` : 'Sola declined the card, but CharityPro could not save the decline.' };
+      const taskId = `charge-review-${requestId}`.slice(0, 200);
+      try { await c.env.DB.batch([c.env.DB.prepare('UPDATE processed_mutations SET result_json=?,server_time=? WHERE mutation_id=?').bind(JSON.stringify(review), Date.now(), mutationId), ...(approved ? [c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?) ON CONFLICT(type,id) DO NOTHING").bind(taskId, JSON.stringify({ id: taskId, donorId, title: 'Card charged but not saved', notes: `Sola approved ${amount.toFixed(2)} ${currency} (ref ${String(gateway.xRefNum || 'none')}) on ${date}, but it was not saved in CharityPro. Enter this payment by hand.`, dueDate: new Date().toISOString().slice(0, 10), priority: 'high', type: 'declined_payment', completed: false }), Date.now(), `${taskId}-insert`)] : [])]); } catch { /* the answer is still in the response below */ }
+      return c.json(review, 502);
+    }
   });
 
   app.post('/v3/donors/:id/payment-methods',async(c:any)=>{const denied=requirePermission(c,'transactions.approve');if(denied)return denied;const donorId=String(c.req.param('id')||'');const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const mutationId=`v3-payment-method-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));const donor:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();if(!donor)return c.json({success:false,error:'Donor not found.'},404);const token=String(body.token||'').trim();const last4=String(body.last4||'').trim();const brand=String(body.brand||'Card').trim().slice(0,50);const expiryMonth=Number(body.expiryMonth);const expiryYear=Number(body.expiryYear);if(token.length<8||token.length>500||!/^[0-9]{4}$/.test(last4)||!Number.isInteger(expiryMonth)||expiryMonth<1||expiryMonth>12||!Number.isInteger(expiryYear)||expiryYear<new Date().getUTCFullYear()||expiryYear>new Date().getUTCFullYear()+25)return c.json({success:false,error:'A valid Sola token, last four digits, and expiry are required.'},400);const existing=await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY COALESCE(json_extract(data,'$.priority'),999),id").bind(donorId).all();const id=crypto.randomUUID();const now=Date.now();const priority=(existing.results as any[]).reduce((maximum,row)=>Math.max(maximum,Number(parseSetting(row.data,{}).priority||0)),0)+1;const isDefault=Boolean(body.isDefault)||existing.results.length===0;const record={id,donorId,kind:'card',brand,last4,expiryMonth,expiryYear,cardholderName:String(body.cardholderName||'').trim().slice(0,200),priority,isDefault,status:'active',tokenProvider:'sola',createdAt:new Date(now).toISOString()};const data=JSON.stringify(record);const operationId=`${mutationId}-method`;const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const response={success:true,item:{...record,revision:1,updatedAt:now}};const statements:any[]=[c.env.DB.prepare('CREATE TABLE IF NOT EXISTS server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)'),c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentMethods',?,?,1,0,?)").bind(id,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentMethods',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentMethods','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,userId,userEmail,now,mutationId,operationId,'Saved tokenized Sola payment method'),c.env.DB.prepare("INSERT INTO server_secrets(key,value,updated_at) VALUES(?,?,?)").bind(`PAYMENT_METHOD_TOKEN:${id}`,token,now)];if(isDefault)for(const row of existing.results as any[]){const old=parseSetting(row.data,{});if(!old.isDefault)continue;const next={...old,isDefault:false};const nextData=JSON.stringify(next);const revision=Number(row.revision)+1;const operation=`${mutationId}-unset-${row.id}`;statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='paymentMethods' AND id=? AND revision=? AND is_deleted=0").bind(nextData,revision,now,operation,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentMethods',?,'update',?,?,?,?)").bind(row.id,revision,nextData,now,mutationId,operation));}statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));try{await c.env.DB.batch(statements);return c.json(response,201);}catch(reason:any){return c.json({success:false,error:`Unable to save payment method: ${reason.message||'database error'}`},409);}});
