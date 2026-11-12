@@ -1118,3 +1118,8 @@ tbody tr:hover td { background: #f8faf9; }
 .loan-due.is-late, .loan-due.is-late small { color: var(--red); }
 .loan-due.is-soon, .loan-due.is-soon small { color: var(--yellow); }
 .loans-table .btn { white-space: nowrap; }
+
+/* ---- Add account / transfer forms ---- */
+.form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.page-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 640px) { .form-grid-2 { grid-template-columns: 1fr; } .form-grid-2 > * { grid-column: auto !important; } }

@@ -111,6 +111,28 @@ describe('loans payable', () => {
     expect(after.body.items[0].dueDate).toBe('2026-05-15');
   });
 
+  it('adds a new account and refuses one without a name', async () => {
+    const { call } = setup();
+    expect((await call('POST', '/v3/records/accounts', { data: { name: '  ', type: 'asset', currency: 'CAD' } })).status).toBe(400);
+    const saved = await call('POST', '/v3/records/accounts', { data: { name: 'Loan from Shimon', type: 'liability', subType: 'loan', currency: 'CAD', startingBalance: 500, loanDueDate: '2027-01-01' } });
+    expect(saved.status).toBe(201);
+    const loans = await call('GET', '/v3/loans-payable');
+    expect(loans.body.items).toEqual([expect.objectContaining({ recordType: 'accounts', accountName: 'Loan from Shimon', remaining: 500, dueDate: '2027-01-01' })]);
+  });
+
+  it('saves a new transfer that pays back a loan, and refuses bad transfers', async () => {
+    const { call, expense } = setup();
+    await expense('loan-a', 300, '2026-01-10', '2026-03-01');
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'bmo', amount: 10, date: '2026-02-01' } })).status).toBe(400);
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'loan-a', amount: 0, date: '2026-02-01' } })).status).toBe(400);
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'supplies', amount: 10, date: '2026-02-01' } })).status).toBe(400);
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'loan-a', toAccountId: 'bmo', amount: 10, date: '2026-02-01' } })).body.error).toBe(LOAN_DUE_DATE_ERROR);
+    const saved = await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'loan-a', amount: 100, date: '2026-02-01' } });
+    expect(saved.status).toBe(201);
+    const loans = await call('GET', '/v3/loans-payable');
+    expect(loans.body.items[0]).toMatchObject({ remaining: 200, paid: 100 });
+  });
+
   it('requires a pay-back date on a transfer out of a loan account', async () => {
     const { db, call } = setup();
     seed(db, 'accountTransfers', 't1', { fromAccountId: 'bmo', toAccountId: 'visa', amount: 10, date: '2026-01-01' });

@@ -46,6 +46,28 @@ const checkLoanDueDate = async (db: any, type: string, record: any) => {
   return '';
 };
 
+/** Basic checks for new or edited accounts and account transfers. Returns an error message, or ''. */
+const checkAccountOrTransfer = async (db: any, type: string, record: any) => {
+  if (type === 'accounts') {
+    record.name = String(record.name || '').trim();
+    if (!record.name) return 'Enter the account name.';
+    if (!['asset', 'liability', 'equity', 'revenue', 'expense'].includes(String(record.type || ''))) return 'Choose a valid account type.';
+    if (record.startingBalance !== undefined && !Number.isFinite(Number(record.startingBalance))) return 'Enter a valid starting balance.';
+    return '';
+  }
+  if (type !== 'accountTransfers') return '';
+  const fromId = String(record.fromAccountId || ''); const toId = String(record.toAccountId || '');
+  if (!fromId || !toId || fromId === toId) return 'Choose two different accounts.';
+  if (!(Number(record.amount) > 0)) return 'Enter an amount above zero.';
+  if (!isoDate(record.date)) return 'Choose the date of the transfer.';
+  const rows = await db.prepare("SELECT id,data FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (?,?)").bind(fromId, toId).all();
+  const found = new Map((rows.results as any[]).map(row => [String(row.id), parseSetting(row.data, {})]));
+  if (!found.has(fromId) || !found.has(toId)) return 'One of the chosen accounts no longer exists.';
+  if (![fromId, toId].every(id => ['asset', 'liability', 'equity'].includes(String(found.get(id)?.type || '')))) return 'Transfers can only be between bank, cash, loan, credit card, or equity accounts.';
+  record.amount = Number(record.amount);
+  return '';
+};
+
 type LoanEvent = { recordType: string; recordId: string; revision: number; date: string; description: string; amount: number; dueDate: string };
 /**
  * Works out what is still owed on each loan. Money paid back into a loan account
@@ -580,6 +602,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       }
       if (record.sourceAccountId || record.offsetAccountId) { const accounts=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (?,?)").bind(String(record.sourceAccountId||''),String(record.offsetAccountId||'')).all();const found=new Set(accounts.results.map((row:any)=>String(row.id)));if(!found.has(String(record.sourceAccountId||''))||!found.has(String(record.offsetAccountId||'')))return c.json({success:false,error:'Choose valid receiving and revenue accounts.'},409); }
     }
+    const recordProblem = await checkAccountOrTransfer(c.env.DB, type, record);
+    if (recordProblem) return c.json({ success: false, error: recordProblem }, 400);
     const loanProblem = await checkLoanDueDate(c.env.DB, type, record);
     if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const now = Date.now();
@@ -680,6 +704,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (creditAccountId && !['asset', 'liability'].includes(accountTypes.get(creditAccountId) || '')) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
       if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
     }
+    const recordProblem = await checkAccountOrTransfer(c.env.DB, type, record);
+    if (recordProblem) return c.json({ success: false, error: recordProblem }, 400);
     const loanProblem = await checkLoanDueDate(c.env.DB, type, record);
     if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const now = Date.now();

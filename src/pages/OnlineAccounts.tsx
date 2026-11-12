@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudAccountDetailsModal } from '../components/CloudAccountDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { CloudAddAccountModal } from '../components/CloudAddAccountModal';
+import { CloudNewTransferModal } from '../components/CloudNewTransferModal';
+import { ArrowLeftRight, Plus } from 'lucide-react';
 
 type Account = { id: string; revision: number; name: string; type: string; subType?: string; currency: string; balance: number; actualBalance?:number; fundraiserReserved?:number; availableBalance?:number; startingBalance?: number };
 
@@ -15,6 +18,9 @@ export const OnlineAccounts: React.FC = () => {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [sort, setSort] = useState('type');
   const [direction, setDirection] = useState<SortDirection>('asc');
+  const [showAdd, setShowAdd] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [notice, setNotice] = useState('');
   const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'balance' ? 'desc' : 'asc')); setSort(column); setPage(1); };
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
@@ -43,9 +49,11 @@ export const OnlineAccounts: React.FC = () => {
   return (
     <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
-          <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Chart of Accounts</h1><div style={{ color: 'var(--text-muted)' }}>Balances calculated directly from cloud payments, bills, and transfers. Updates automatically every 3 seconds.</div></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
+          <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Chart of Accounts</h1><div style={{ color: 'var(--text-muted)' }}>Balances calculated directly from cloud payments, bills, and transfers. Updates automatically.</div></div>
+          <div className="page-actions"><button className="btn btn-secondary" onClick={() => setShowTransfer(true)}><ArrowLeftRight size={16} /> New Transfer</button><button className="btn btn-primary" onClick={() => setShowAdd(true)}><Plus size={16} /> New Account</button></div>
         </div>
+        {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 700, marginBottom: 16 }}>{notice}</div>}
         <section className="card" style={{ padding: 16, marginBottom: 18 }}><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search accounts" /></section>
         {error && <div className="card" style={{ padding: 16, color: 'var(--red)' }}>{error}</div>}
         {loading ? <div className="card" style={{ padding: 40, textAlign: 'center' }}>Calculating cloud balances…</div> : (
@@ -63,6 +71,8 @@ export const OnlineAccounts: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14 }}><span>Page {page} of {totalPages} · 50 accounts maximum per page</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
       </div>
       {selectedAccount && <CloudAccountDetailsModal account={selectedAccount} onClose={() => setSelectedAccount(null)} onUpdated={account => { setSelectedAccount(account); setAccounts(current => current.map(item => item.id === account.id ? account : item)); }} onDeleted={accountId=>{setSelectedAccount(null);setAccounts(current=>current.filter(item=>item.id!==accountId));void load(true);}} />}
+      {showAdd && <CloudAddAccountModal onClose={() => setShowAdd(false)} onSaved={account => { setShowAdd(false); setNotice(`Account "${account.name}" was added.`); void load(true); }} />}
+      {showTransfer && <CloudNewTransferModal onClose={() => setShowTransfer(false)} onSaved={() => { setShowTransfer(false); setNotice('Transfer saved. Balances were updated.'); void load(true); }} />}
     </main>
   );
 };
