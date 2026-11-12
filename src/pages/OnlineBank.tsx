@@ -3,6 +3,7 @@ import { startLiveRefresh } from '../utils/liveUpdates';
 import { usePlaidLink } from "react-plaid-link";
 import { OnlinePaymentForm } from "../components/OnlinePaymentForm";
 import { CloudTransactionModal } from "../components/CloudTransactionModal";
+import { LoanDueDateField, isLoanAccount } from "../components/LoanDueDateField";
 
 type BankAccount = {
   id: string;
@@ -17,6 +18,7 @@ type CloudAccount = {
   name: string;
   currency: string;
   type: string;
+  subType?: string;
 };
 type BankTransaction = {
   id: string;
@@ -104,7 +106,9 @@ export const OnlineBank: React.FC = () => {
     endDate: "",
   });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [depositAction, setDepositAction] = useState<"payments" | "refund" | "transfer">("payments");
+  const [depositAction, setDepositAction] = useState<"payments" | "refund" | "transfer" | "transfer_in">("payments");
+  const [transferInSourceId, setTransferInSourceId] = useState("");
+  const [transferInLoanDueDate, setTransferInLoanDueDate] = useState("");
   const [refundCandidates, setRefundCandidates] = useState<RefundCandidate[]>([]);
   const [refundBillId, setRefundBillId] = useState("");
   const [incomingTransferCandidates,setIncomingTransferCandidates]=useState<IncomingTransferCandidate[]>([]);
@@ -220,9 +224,13 @@ export const OnlineBank: React.FC = () => {
     if (selectedBank) void loadFeed();
   }, [selectedBank, feedPage, loadFeed]);
   useEffect(() => {
-    fetchApiJson<any>("/api/v3/accounts?limit=100")
-      .then(({ data }) => {
-        if (data.success) setAllAccounts(data.items);
+    // Load real accounts and categories separately, so a long category list can't push real accounts off the list.
+    Promise.all([
+      fetchApiJson<any>("/api/v3/accounts?limit=100&types=asset,liability,equity&sort=name"),
+      fetchApiJson<any>("/api/v3/accounts?limit=100&types=expense,revenue&sort=name"),
+    ])
+      .then(([real, categories]) => {
+        setAllAccounts([...(real.data.success ? real.data.items : []), ...(categories.data.success ? categories.data.items : [])]);
       })
       .catch(() => undefined);
   }, []);
@@ -253,6 +261,8 @@ export const OnlineBank: React.FC = () => {
     setRefundBillId("");
     setIncomingTransferCandidates([]);
     setIncomingTransferId("");
+    setTransferInSourceId("");
+    setTransferInLoanDueDate("");
     setSelectedIds([]);
     setCandidates([]);
     setError("");
@@ -333,6 +343,35 @@ export const OnlineBank: React.FC = () => {
     await matchDepositPayments(selectedIds);
   };
   const confirmIncomingTransfer=async()=>{if(!matching||!incomingTransferId)return;const candidate=incomingTransferCandidates.find(item=>item.id===incomingTransferId);if(!candidate)return;setSaving(true);setError("");const requestId=matchRequestIds.current[matching.id]||crypto.randomUUID();matchRequestIds.current[matching.id]=requestId;try{const endpoint=candidate.candidateKind==='bankFeed'?'/api/v3/bank/match-bank-feed-transfer-pair':'/api/v3/bank/match-incoming-transfer';const payload=candidate.candidateKind==='bankFeed'?{requestId,accountId:selectedBank,bankTransactionId:matching.id,bankDate:matching.date,amount:matching.amount,sourceAccountId:candidate.sourceAccountId,sourceBankTransactionId:candidate.sourceBankTransactionId}:{requestId,accountId:selectedBank,bankTransactionId:matching.id,amount:matching.amount,transferId:candidate.id,revision:candidate.revision};const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':requestId},body:JSON.stringify(payload)});const data=await response.json();if(!response.ok||!data.success){delete matchRequestIds.current[matching.id];throw new Error(data.error||'Unable to match this credit-card payment.');}const matchedId=matching.id;delete matchRequestIds.current[matchedId];removeMatchedFromVisibleFeed(matchedId);setMatching(null);setIncomingTransferCandidates([]);setIncomingTransferId('');setNotice('Credit-card deposit linked to the payment from the bank account.');await Promise.all([loadState(true),loadFeed(true)]);}catch(reason:any){setError(reason.message||'Unable to match this credit-card payment.');}finally{setSaving(false);}};
+  // Record a deposit as money moved in from another account (loan, other bank, etc.).
+  const confirmTransferIn = async () => {
+    if (!matching || !transferInSourceId) return;
+    const source = allAccounts.find((account) => account.id === transferInSourceId);
+    if (isLoanAccount(source) && !transferInLoanDueDate) { setError("This money comes from a loan account. Choose the date it has to be paid back."); return; }
+    setSaving(true);
+    setError("");
+    const requestId = matchRequestIds.current[matching.id] || crypto.randomUUID();
+    matchRequestIds.current[matching.id] = requestId;
+    try {
+      const response = await fetch("/api/v3/bank/match-outgoing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestId },
+        body: JSON.stringify({ requestId, action: "transfer_in", accountId: selectedBank, bankTransactionId: matching.id, bankDate: matching.date, description: matching.description, amount: Math.abs(matching.amount), sourceAccountId: transferInSourceId, ...(isLoanAccount(source) ? { loanDueDate: transferInLoanDueDate } : {}) }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) { delete matchRequestIds.current[matching.id]; throw new Error(data.error || "Unable to record this transfer."); }
+      const matchedId = matching.id;
+      delete matchRequestIds.current[matchedId];
+      removeMatchedFromVisibleFeed(matchedId);
+      setMatching(null);
+      setNotice(`Deposit recorded as a transfer from ${source?.name || "the other account"}.`);
+      await Promise.all([loadState(true), loadFeed(true)]);
+    } catch (reason: any) {
+      setError(reason.message || "Unable to record this transfer. You can safely try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
   const confirmRefund = async () => {
     if (!matching || !refundBillId) return;
     const bill = refundCandidates.find((item) => item.id === refundBillId);
@@ -488,7 +527,8 @@ export const OnlineBank: React.FC = () => {
   const visibleFeed = useMemo(() => feed, [feed]);
   const selectedAccount = accounts.find((account) => account.id === selectedBank);
   const expenseAccounts = allAccounts.filter((account) => account.type === "expense");
-  const transferAccounts = allAccounts.filter((account) => account.id !== selectedBank);
+  // Transfers only go between real accounts (bank, cash, loans, credit cards), never categories.
+  const transferAccounts = allAccounts.filter((account) => account.id !== selectedBank && ["asset", "liability", "equity"].includes(account.type));
 
   return (
     <main
@@ -624,7 +664,7 @@ export const OnlineBank: React.FC = () => {
                 <select
                   value={depositAction}
                   onChange={(event) => {
-                    const action = event.target.value as "payments" | "refund" | "transfer";
+                    const action = event.target.value as "payments" | "refund" | "transfer" | "transfer_in";
                     setDepositAction(action);
                     setError("");
                     if (action === "refund") void loadRefundCandidates(matching);
@@ -633,6 +673,7 @@ export const OnlineBank: React.FC = () => {
                 >
                   <option value="payments">Donor payments</option>
                   <option value="refund">Refund from an expense</option>
+                  <option value="transfer_in">Transfer from another account (loan, other bank)</option>
                   <option value="transfer">Credit-card payment from a bank account</option>
                 </select>
               </label>
@@ -801,6 +842,30 @@ export const OnlineBank: React.FC = () => {
                   </div>
                 </div>
               )}
+              {depositAction === "transfer_in" && (() => {
+                const source = transferAccounts.find((account) => account.id === transferInSourceId);
+                const groups: [string, string][] = [["liability", "Loans & credit cards"], ["asset", "Bank & cash"], ["equity", "Equity"]];
+                return (
+                  <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span>Money came from *</span>
+                      <select value={transferInSourceId} onChange={(event) => setTransferInSourceId(event.target.value)}>
+                        <option value="">Choose the account it came from</option>
+                        {groups.map(([type, label]) => {
+                          const list = transferAccounts.filter((account) => account.type === type);
+                          return list.length ? <optgroup key={type} label={label}>{list.map((account) => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</optgroup> : null;
+                        })}
+                      </select>
+                    </label>
+                    <LoanDueDateField account={source} value={transferInLoanDueDate} onChange={setTransferInLoanDueDate} />
+                    <div style={{ color: "var(--text-muted)", fontSize: 13 }}>This saves a transfer of ${Math.abs(matching.amount).toFixed(2)} from that account into {selectedAccount?.name || "this bank"}. No donation or expense is created.</div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                      <button className="btn btn-secondary" onClick={() => setMatching(null)}>Cancel</button>
+                      <button className="btn btn-primary" disabled={!transferInSourceId || saving} onClick={() => void confirmTransferIn()}>{saving ? "Saving..." : "Save as Transfer"}</button>
+                    </div>
+                  </div>
+                );
+              })()}
               {depositAction === "transfer"&&<div style={{display:'grid',gap:16,marginTop:16}}><label className="form-group" style={{margin:0}}><span>Payment made from bank account *</span><select value={incomingTransferId} onChange={event=>setIncomingTransferId(event.target.value)}><option value="">Select matching bank payment from any account</option>{incomingTransferCandidates.map(item=><option key={item.id} value={item.id}>{item.sourceName} — ${Number(item.amount).toFixed(2)} — {item.date}{(item.notes||item.description)?` — ${item.notes||item.description}`:''}{item.candidateKind==='bankFeed'?' — Unmatched bank transaction':''}</option>)}</select></label>{!incomingTransferCandidates.length&&<div style={{color:'var(--text-muted)'}}>No unmatched outgoing payment with this exact amount was found in any saved bank feed, and no existing transfer to this card was found.</div>}<div style={{display:'flex',justifyContent:'flex-end',gap:10}}><button className="btn btn-secondary" onClick={()=>setMatching(null)}>Cancel</button><button className="btn btn-primary" disabled={!incomingTransferId||saving} onClick={()=>void confirmIncomingTransfer()}>{saving?'Matching securely...':'Match Credit-Card Payment'}</button></div></div>}
             </section>
           </div>

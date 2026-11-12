@@ -384,6 +384,29 @@ describe('server-driven bank deposit matching', () => {
     expect(transferData.bankTransactionId).toBe('bank-transfer-1');
   });
 
+  it('records a bank deposit as a transfer in from a loan account, and refuses categories', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'bank-1', { id: 'bank-1', name: 'Bank', type: 'asset', currency: 'CAD', plaidConnected: true });
+    seedRecord(db, 'accounts', 'loan-1', { id: 'loan-1', name: 'Gemach Loan', type: 'liability', subType: 'loan', currency: 'CAD' });
+    seedRecord(db, 'accounts', 'rent', { id: 'rent', name: 'Rent', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'matchedBankTransactions', 'matchedBankTransactions', [], 1);
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    const send = (key: string, extra: any) => app.request('/v3/bank/match-outgoing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ requestId: key, action: 'transfer_in', accountId: 'bank-1', bankTransactionId: 'deposit-1', bankDate: '2026-11-10', description: 'Deposit', amount: 5000, ...extra }) }, { DB: db } as any);
+    expect((await send('in-cat', { sourceAccountId: 'rent' })).status).toBe(409);
+    expect((await send('in-noloandate', { sourceAccountId: 'loan-1' })).status).toBe(400);
+    const ok = await send('in-ok', { sourceAccountId: 'loan-1', loanDueDate: '2027-03-01' });
+    expect(ok.status).toBe(200);
+    const transfer = JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='accountTransfers'").get() as any).data));
+    expect(transfer).toMatchObject({ fromAccountId: 'loan-1', toAccountId: 'bank-1', amount: 5000, loanDueDate: '2027-03-01', bankTransactionId: 'deposit-1' });
+    const matched = JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions'").get() as any).data));
+    expect(matched).toContain('deposit-1');
+    // An outgoing transfer can't go to a category either.
+    const toCategory = await app.request('/v3/bank/match-outgoing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'out-cat' }, body: JSON.stringify({ requestId: 'out-cat', action: 'transfer', accountId: 'bank-1', bankTransactionId: 'out-1', bankDate: '2026-11-10', description: 'x', amount: 10, targetAccountId: 'rent' }) }, { DB: db } as any);
+    expect(toCategory.status).toBe(409);
+  });
+
   it('links a credit-card deposit to the existing payment from a bank account',async()=>{
     const db=new MockD1();databases.push(db);seedRecord(db,'accounts','bank-pay',{id:'bank-pay',name:'Operating Bank',type:'asset',currency:'CAD',plaidConnected:true});seedRecord(db,'accounts','card-pay',{id:'card-pay',name:'Credit Card',type:'liability',currency:'CAD',plaidConnected:true});seedRecord(db,'matchedBankTransactions','matchedBankTransactions',['bank-outgoing-payment'],1);seedRecord(db,'accountTransfers','card-payment-transfer',{id:'card-payment-transfer',fromAccountId:'bank-pay',toAccountId:'old-card-record',amount:125,date:'2026-07-20',notes:'Card payment',bankTransactionId:'bank-outgoing-payment'},2);
     const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);

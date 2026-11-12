@@ -3422,11 +3422,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.post('/v3/bank/match-outgoing', async (c: any) => {
     const body = await c.req.json();
     const action = String(body.action || '');
-    const denied = requirePermission(c, action === 'transfer' ? 'transactions.approve' : 'bills.mark_paid');
+    const denied = requirePermission(c, action === 'transfer' || action === 'transfer_in' ? 'transactions.approve' : 'bills.mark_paid');
     if (denied) return denied;
     const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
     if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
-    if (!['expense','existing_bill','transfer'].includes(action)) return c.json({ success: false, error: 'Choose a valid outgoing match action.' }, 400);
+    if (!['expense','existing_bill','transfer','transfer_in'].includes(action)) return c.json({ success: false, error: 'Choose a valid bank match action.' }, 400);
     const mutationId = `v3-bank-outgoing-${requestId}`;
     const prior = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
     if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
@@ -3526,6 +3526,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const targetAccountId = String(body.targetAccountId || '').trim();
       const target: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(targetAccountId).first();
       if (!target || targetAccountId === accountId) return c.json({ success: false, error: 'Choose a different destination account.' }, 409);
+      // Transfers only go between real accounts, never to an income or expense category.
+      if (!['asset','liability','equity'].includes(String(JSON.parse(String(target.data)).type || ''))) return c.json({ success: false, error: 'A transfer must go to a bank, cash, loan, or credit card account, not a category.' }, 409);
       const id = crypto.randomUUID();
       const operationId = `${mutationId}-transfer-insert`;
       const record = { id, fromAccountId: accountId, toAccountId: targetAccountId, amount, date: bankDate, notes: description, bankTransactionId };
@@ -3535,6 +3537,27 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         c.env.DB.prepare(`INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'accountTransfers',?,?,1,0,?)`).bind(id, data, now, operationId),
         c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'accountTransfers',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
         c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'accountTransfers','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created from server-driven outgoing bank transfer match')
+      );
+    } else if (action === 'transfer_in') {
+      // Money came INTO this bank from another account, for example a loan or another bank account.
+      const sourceAccountId = String(body.sourceAccountId || '').trim();
+      const source: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first();
+      if (!source || sourceAccountId === accountId) return c.json({ success: false, error: 'Choose the account the money came from.' }, 409);
+      const sourceData = JSON.parse(String(source.data));
+      if (!['asset','liability','equity'].includes(String(sourceData.type || ''))) return c.json({ success: false, error: 'A transfer must come from a bank, cash, loan, or credit card account, not a category.' }, 409);
+      if ((sourceData.currency || 'CAD') !== (accountData.currency || 'CAD')) return c.json({ success: false, error: 'Both accounts must use the same currency.' }, 409);
+      const loanDueDate = validLoanDueDate(body.loanDueDate);
+      if (isLoanAccountData(sourceData) && !loanDueDate) return c.json({ success: false, error: 'This money comes from a loan account. Choose the date it has to be paid back.' }, 400);
+      const id = crypto.randomUUID();
+      const operationId = `${mutationId}-transfer-insert`;
+      const notes = String(body.notes || '').trim().slice(0, 2000) || description;
+      const record = { id, fromAccountId: sourceAccountId, toAccountId: accountId, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', date: bankDate, notes, bankTransactionId, ...(isLoanAccountData(sourceData) && loanDueDate ? { loanDueDate } : {}) };
+      const data = JSON.stringify(record);
+      resultItem = { ...record, revision: 1, updatedAt: now };
+      statements.push(
+        c.env.DB.prepare(`INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'accountTransfers',?,?,1,0,?)`).bind(id, data, now, operationId),
+        c.env.DB.prepare(`INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'accountTransfers',1,'insert',?,?,?,?)`).bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare(`INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'accountTransfers','insert',NULL,1,NULL,?,?,?,?,?,?,?)`).bind(id, data, userId, userEmail, now, mutationId, operationId, 'Created from bank deposit matched as a transfer in')
       );
     } else {
       const billId = String(body.billId || '').trim();
