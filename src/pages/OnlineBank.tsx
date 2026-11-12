@@ -295,7 +295,7 @@ export const OnlineBank: React.FC = () => {
   const totalsMatch = matching ? Math.abs(selectedTotal - matching.amount) < 0.005 : false;
   const removeMatchedFromVisibleFeed = (bankTransactionId: string) => setFeed((current) => current.filter((transaction) => transaction.id !== bankTransactionId));
   const changeFeedStatus = async (transaction: BankTransaction, action: "dismiss" | "restore" | "delete") => {
-    if (action === "delete" && !window.confirm(`Delete this bank transaction forever?\n\n${transaction.date} · ${transaction.description} · ${Math.abs(transaction.amount).toFixed(2)}\n\nIt will not come back, even if the bank sends it again. Nothing in your accounting changes.`)) return;
+    if (action === "delete" && !window.confirm(`Delete this bank transaction forever?\n\n${transaction.date} · ${transaction.description} · $${Math.abs(transaction.amount).toFixed(2)}\n\nIt will not come back, even if the bank sends it again. Nothing in your accounting changes.`)) return;
     setSaving(true); setError(""); setNotice("");
     try {
       const requestId = crypto.randomUUID();
@@ -862,7 +862,7 @@ export const OnlineBank: React.FC = () => {
                       {shown.map((bill) => (
                         <label key={bill.id} className={"refund-pick-row" + (selectedIds.has(bill.id) ? " selected" : "")}>
                           <input type="checkbox" checked={selectedIds.has(bill.id)} onChange={() => toggle(bill)} />
-                          <span className="refund-pick-main"><strong>{bill.vendor || "Expense"}</strong><small>{bill.paidDate || bill.dueDate} · {bill.categoryName}{bill.memo ? " · " + bill.memo : ""}</small></span>
+                          <span className="refund-pick-main"><strong>{bill.vendor || "Expense"}</strong><small>{bill.dueDate || bill.paidDate} · {bill.categoryName}{bill.memo ? " · " + bill.memo : ""}</small></span>
                           <span className="refund-pick-amount">{bill.currency || "CAD"} {money(Math.abs(Number(bill.amount)))}{Math.abs(bill.refundableAmount - Math.abs(Number(bill.amount))) >= 0.005 && <small>{money(bill.refundableAmount)} left to refund</small>}</span>
                         </label>
                       ))}

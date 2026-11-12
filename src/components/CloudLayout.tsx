@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   BarChart3, Building, Calendar, CalendarClock, CheckSquare, FileText,
   HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Megaphone, Printer,
-  Menu, Settings, ShieldCheck, Store, Users, Wallet, X, PhoneCall } from 'lucide-react';
+  Menu, Settings, ShieldCheck, Store, Users, Wallet, X, PhoneCall, UserCheck } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
 import { startLiveRefresh, subscribeLiveStatus, type LiveStatus } from '../utils/liveUpdates';
 
@@ -17,7 +17,8 @@ const categories: NavCategory[] = [
   ] },
   { label: 'CONTACTS', items: [
     { path: '/donors', label: 'Donors', icon: Users, ready: true },
-    { path: '/tracker', label: 'Call Tracker', icon: PhoneCall, ready: true }
+    { path: '/tracker', label: 'Call Tracker', icon: PhoneCall, ready: true },
+    { path: '/fundraisers', label: 'Fundraisers', icon: UserCheck, ready: true }
   ] },
   { label: 'DONATIONS', items: [
     { path: '/campaigns', label: 'Campaigns', icon: Megaphone, ready: true },

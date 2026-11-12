@@ -48,6 +48,26 @@ const checkLoanDueDate = async (db: any, type: string, record: any) => {
 
 /** Basic checks for new or edited accounts and account transfers. Returns an error message, or ''. */
 const checkAccountOrTransfer = async (db: any, type: string, record: any) => {
+  if (type === 'fundraisers') {
+    record.name = String(record.name || '').trim();
+    if (!record.name) return 'Enter the fundraiser name.';
+    const percentage = Number(record.percentage ?? 0);
+    if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) return 'Commission % must be between 0 and 100.';
+    record.percentage = percentage;
+    return '';
+  }
+  if (type === 'fundraisingGroups') {
+    record.name = String(record.name || '').trim();
+    if (!record.name) return 'Enter the team name.';
+    const allocations = Array.isArray(record.allocations) ? record.allocations : [];
+    if (!allocations.length) return 'Add at least one fundraiser to the team.';
+    const ids = allocations.map((item: any) => String(item?.fundraiserId || ''));
+    if (ids.some((id: string) => !id) || new Set(ids).size !== ids.length) return 'Each fundraiser can be in the team only once.';
+    const shares = allocations.map((item: any) => Number(item?.percentage));
+    if (shares.some((share: number) => !Number.isFinite(share) || share <= 0 || share > 100) || shares.reduce((sum: number, share: number) => sum + share, 0) > 100.001) return 'Team shares must be above 0% and add up to at most 100%.';
+    record.allocations = ids.map((fundraiserId: string, index: number) => ({ fundraiserId, percentage: shares[index] }));
+    return '';
+  }
   if (type === 'accounts') {
     record.name = String(record.name || '').trim();
     if (!record.name) return 'Enter the account name.';
@@ -134,7 +154,7 @@ const loadLiabilityMovements = async (db: any, accounts: LiabilityAccount[]) => 
     };
     const dueDate = isoDate(data.loanDueDate);
     if (type === 'bills') {
-      const date = String(data.paidDate || data.dueDate || '');
+      const date = String(data.dueDate || data.paidDate || '');
       if (data.sourceAccountId) charge(String(data.sourceAccountId), { recordType: 'bills', recordId, revision, date, description: String(data.vendor || 'Expense'), amount: amountFor(String(data.sourceAccountId)), dueDate });
       if (data.creditAccountId) pay(String(data.creditAccountId), date, amountFor(String(data.creditAccountId)));
       if (data.category) pay(String(data.category), date, amountFor(String(data.category)));
@@ -1355,7 +1375,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (account) { conditions.push("(json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.offsetAccountId')=? OR json_extract(r.data,'$.fromAccountId')=? OR json_extract(r.data,'$.toAccountId')=? OR json_extract(r.data,'$.category')=?)"); bindings.push(account, account, account, account, account); }
     if (status) { conditions.push("(json_extract(r.data,'$.type')=? OR json_extract(r.data,'$.status')=?)"); bindings.push(status, status); }
     if (method) { conditions.push("json_extract(r.data,'$.method')=?"); bindings.push(method); }
-    const dateExpression = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.paidDate'),json_extract(r.data,'$.dueDate'),'')";
+    const dateExpression = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.dueDate'),json_extract(r.data,'$.paidDate'),'')";
     if (from) { conditions.push(`${dateExpression}>=?`); bindings.push(from); } if (to) { conditions.push(`${dateExpression}<=?`); bindings.push(to); }
     const where = conditions.join(' AND ');
     const joins = `LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0
@@ -1526,7 +1546,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const name = String(JSON.parse(String(entity.data)).name || ''); const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit;
     const where = "type='bills' AND is_deleted=0 AND (COALESCE(json_extract(data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(data,'$.isPayrollExpense'),0)=1) AND (json_extract(data,'$.employeeId')=? OR json_extract(data,'$.fundraiserId')=? OR lower(json_extract(data,'$.vendor'))=lower(?))";
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE ${where} ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT ? OFFSET ?`).bind(id,id, `Payroll: ${name}`, limit, offset),
+      c.env.DB.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE ${where} ORDER BY COALESCE(json_extract(data,'$.dueDate'),json_extract(data,'$.paidDate')) DESC,id DESC LIMIT ? OFFSET ?`).bind(id,id, `Payroll: ${name}`, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE ${where}`).bind(id,id, `Payroll: ${name}`)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
@@ -1629,8 +1649,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now));try{await c.env.DB.batch(statements);return c.json(response,201);}catch{const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json)));return c.json({success:false,error:'The call was not saved. You can safely try again.'},409);}
   });
 
-  const contactListSelect="SELECT c.id,c.data,c.revision,c.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.phone') AS donor_phone,json_extract(d.data,'$.address') AS donor_address,json_extract(d.data,'$.city') AS donor_city,json_extract(f.data,'$.name') AS fundraiser_name,json_extract(g.data,'$.name') AS campaign_name FROM sync_records c LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(c.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records f ON f.type='fundraisers' AND f.id=json_extract(c.data,'$.fundraiserId') AND f.is_deleted=0 LEFT JOIN sync_records g ON g.type='campaigns' AND g.id=json_extract(c.data,'$.campaignId') AND g.is_deleted=0";
-  const contactRow=(row:any)=>({...parseRecord(row),donorName:String(row.donor_name||'Unknown donor'),donorPhone:String(row.donor_phone||''),donorAddress:[row.donor_address,row.donor_city].filter(Boolean).join(', '),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')});
+  const contactListSelect="SELECT c.id,c.data,c.revision,c.updated_at,json_extract(d.data,'$.name') AS donor_name,trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),'')||' '||COALESCE(json_extract(d.data,'$.postTitle'),'')) AS donor_yiddish,json_extract(d.data,'$.phone') AS donor_phone,json_extract(d.data,'$.address') AS donor_address,json_extract(d.data,'$.city') AS donor_city,json_extract(f.data,'$.name') AS fundraiser_name,json_extract(g.data,'$.name') AS campaign_name FROM sync_records c LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(c.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records f ON f.type='fundraisers' AND f.id=json_extract(c.data,'$.fundraiserId') AND f.is_deleted=0 LEFT JOIN sync_records g ON g.type='campaigns' AND g.id=json_extract(c.data,'$.campaignId') AND g.is_deleted=0";
+  const contactRow=(row:any)=>({...parseRecord(row),donorName:String(row.donor_name||'Unknown donor'),donorYiddishName:String(row.donor_yiddish||'').replace(/ +/g,' ').trim(),donorPhone:String(row.donor_phone||''),donorAddress:[row.donor_address,row.donor_city].filter(Boolean).join(', '),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')});
 
   // All calls, newest first, for the Tracker page.
   app.get('/v3/donor-contacts', async (c:any) => {
@@ -1719,7 +1739,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const descendantJson=JSON.stringify(descendants.results.map((row:any)=>String(row.id)));
       const [transactions, bills] = await c.env.DB.batch([
         c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND json_extract(data,'$.projectId') IN (SELECT value FROM json_each(?)) ORDER BY json_extract(data,'$.date') DESC,id DESC LIMIT 500").bind(descendantJson),
-        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.projectId') IN (SELECT value FROM json_each(?)) ORDER BY COALESCE(json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,id DESC LIMIT 500").bind(descendantJson)
+        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.projectId') IN (SELECT value FROM json_each(?)) ORDER BY COALESCE(json_extract(data,'$.dueDate'),json_extract(data,'$.paidDate')) DESC,id DESC LIMIT 500").bind(descendantJson)
       ]);
       const transactionItems=transactions.results.map((row:any)=>parseRecord(row));const billItems=bills.results.map((row:any)=>parseRecord(row));
       const income=transactionItems.reduce((sum:number,item:any)=>sum+Number(item.amountCAD??item.amount??0),0);const cost=billItems.reduce((sum:number,item:any)=>sum+Number(item.amount||0),0);
@@ -1755,7 +1775,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       FROM sync_records b JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(b.data,'$.category') AND a.is_deleted=0
       WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid'
         AND json_extract(a.data,'$.type')='expense'
-        AND COALESCE(json_extract(b.data,'$.paidDate'),json_extract(b.data,'$.dueDate')) BETWEEN ? AND ?
+        AND COALESCE(json_extract(b.data,'$.dueDate'),json_extract(b.data,'$.paidDate')) BETWEEN ? AND ?
       UNION ALL
       SELECT a.id AS account_id,json_extract(a.data,'$.name') AS account_name,'expense' AS section,
         COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0) AS amount
@@ -2539,8 +2559,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const page = boundedPage(c.req.query('page'));
     const offset = (page - 1) * limit;
     const search = (c.req.query('search') || '').trim().toLowerCase();
-    const condition = search ? `AND lower(d.data) LIKE ?` : '';
-    const searchBindings = search ? [`%${search}%`] : [];
+    // Every word must match somewhere (English or Yiddish name, phone, address...), so 'משה כהן' finds the donor.
+    const searchWords = search.split(/\s+/).filter(Boolean).slice(0, 8);
+    const condition = searchWords.map(() => 'AND lower(d.data) LIKE ?').join(' ');
+    const searchBindings = searchWords.map((word: string) => `%${word}%`);
     const order = requestedOrder(c, { name: "lower(json_extract(d.data,'$.name'))", phone: "lower(COALESCE(json_extract(d.data,'$.phone'),''))", email: "lower(COALESCE(json_extract(d.data,'$.email'),''))", address: "lower(COALESCE(json_extract(d.data,'$.address'),''))", total: 'total_given' }, "lower(json_extract(d.data,'$.name'))");
     const [listResult, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`
@@ -3326,7 +3348,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       FROM sync_records b LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
       WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid' AND COALESCE(json_extract(b.data,'$.refundOfBillId'),'')=''
         AND (lower(b.data) LIKE ? OR lower(COALESCE(json_extract(cat.data,'$.name'),'')) LIKE ?)
-      ORDER BY COALESCE(json_extract(b.data,'$.paidDate'),json_extract(b.data,'$.dueDate')) DESC,b.id DESC LIMIT 2000`).bind(firstWord, firstWord).all();
+      ORDER BY COALESCE(json_extract(b.data,'$.dueDate'),json_extract(b.data,'$.paidDate')) DESC,b.id DESC LIMIT 2000`).bind(firstWord, firstWord).all();
     const items: any[] = [];
     for (const row of rows.results as any[]) {
       const bill: any = { ...parseRecord(row), categoryName: row.category_name || 'Uncategorized' };
@@ -3885,7 +3907,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const words = String(c.req.query('search') || '').trim().toLowerCase().slice(0, 200).split(/\s+/).filter(Boolean).slice(0, 8);
     const from = /^\d{4}-\d{2}-\d{2}$/.test(String(c.req.query('from') || '')) ? String(c.req.query('from')) : '';
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(c.req.query('to') || '')) ? String(c.req.query('to')) : '';
-    const dateExpr = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.paidDate'),json_extract(r.data,'$.dueDate'))";
+    const dateExpr = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.dueDate'),json_extract(r.data,'$.paidDate'))";
     const otherAccountId = "CASE WHEN r.type='accountTransfers' THEN (CASE WHEN json_extract(r.data,'$.fromAccountId')=? THEN json_extract(r.data,'$.toAccountId') ELSE json_extract(r.data,'$.fromAccountId') END) WHEN r.type='bills' THEN (CASE WHEN json_extract(r.data,'$.sourceAccountId')=? THEN json_extract(r.data,'$.category') ELSE json_extract(r.data,'$.sourceAccountId') END) ELSE (CASE WHEN json_extract(r.data,'$.sourceAccountId')=? THEN json_extract(r.data,'$.offsetAccountId') ELSE json_extract(r.data,'$.sourceAccountId') END) END";
     const from_ = `FROM sync_records r
       LEFT JOIN sync_records d ON r.type='transactions' AND d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0

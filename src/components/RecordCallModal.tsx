@@ -3,8 +3,13 @@ import { CheckCircle2, X } from 'lucide-react';
 import { OnlinePaymentForm } from './OnlinePaymentForm';
 import { CloudRecurringPaymentForm } from './CloudRecurringPaymentForm';
 import { CloudPaymentMethods } from './CloudPaymentMethods';
+import { CloudDonorProfileModal } from './CloudDonorProfileModal';
+import { OnlineDonorForm, type OnlineDonor } from './OnlineDonorForm';
+import { donorNames } from '../utils/donorNames';
 
-type Donor = { id: string; name: string; email?: string; phone?: string; address?: string; city?: string };
+type Donor = { id: string; name: string; email?: string; phone?: string; address?: string; city?: string; preTitle?: string; hebFirstName?: string; hebLastName?: string; title?: string; postTitle?: string };
+type DonorBalance = { year: number; thisYear: number; total: number; pledgedThisYear: number };
+const money = (value: number) => '$' + Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 type Choice = { id: string; name: string; percentage?: number };
 
 /** What the donor answered. The first word is what shows in the call list. */
@@ -47,6 +52,9 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
   const [doneMessage, setDoneMessage] = useState('');
   const [saved, setSaved] = useState<{ contactId: string; revision: number; pledgeId: string; pledgeAmount: number } | null>(null);
   const [showCards, setShowCards] = useState(false);
+  const [balance, setBalance] = useState<DonorBalance | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
+  const [editingDonor, setEditingDonor] = useState<OnlineDonor | null>(null);
   const keys = useRef({ pledge: crypto.randomUUID(), contact: crypto.randomUUID() });
   const pledgeIdRef = useRef('');
   const set = (field: string, value: any) => setForm(current => ({ ...current, [field]: value }));
@@ -62,6 +70,21 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
     const timer = window.setTimeout(() => { fetch(`/api/v3/donors?limit=30&search=${encodeURIComponent(donorSearch)}`).then(response => response.json()).then(data => { if (data.success) setDonors(data.items || []); }).catch(() => undefined); }, 200);
     return () => window.clearTimeout(timer);
   }, [donorSearch, donor]);
+  // When a donor is chosen, show what he still owes on pledges: this year big, all years small.
+  useEffect(() => {
+    setBalance(null);
+    if (!donor) return;
+    const controller = new AbortController();
+    fetch(`/api/v3/donors/${encodeURIComponent(donor.id)}/profile`, { signal: controller.signal }).then(response => response.json()).then(data => {
+      if (!data.success) return;
+      const year = new Date().getFullYear();
+      const pledges: any[] = data.pledges || [];
+      const pledgeYear = (pledge: any) => Number(String(pledge.periodStart || pledge.date || '').slice(0, 4));
+      const thisYearPledges = pledges.filter(pledge => pledgeYear(pledge) === year);
+      setBalance({ year, thisYear: thisYearPledges.reduce((sum, pledge) => sum + Number(pledge.balance || 0), 0), pledgedThisYear: thisYearPledges.reduce((sum, pledge) => sum + Number(pledge.amountCAD ?? pledge.amount ?? 0), 0), total: Number(data.summary?.pledgeBalance || 0) });
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [donor?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (form.outcome === 'Pick up' && !form.pickupAddress && donor) set('pickupAddress', [donor.address, donor.city].filter(Boolean).join(', '));
   }, [form.outcome, donor]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -125,9 +148,13 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
       {step === 'call' && <div style={{ display: 'grid', gap: 16 }}>
         <div className="form-grid-2">
           <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Donor *</span>
-            {donor ? <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}><strong style={{ fontSize: 16 }}>{donor.name}</strong>{donor.phone && <a href={`tel:${donor.phone}`}>{donor.phone}</a>}{!initialDonor && !saved && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDonor(null)}>Change</button>}</div>
-              : <><input autoFocus value={donorSearch} onChange={event => setDonorSearch(event.target.value)} placeholder="Type a name or phone to search…" />
-                <div className="call-donor-results">{donors.slice(0, 8).map(item => <button type="button" key={item.id} onClick={() => { setDonor(item); setDonorSearch(''); }}><strong>{item.name}</strong>{item.phone && <small>{item.phone}</small>}</button>)}{donors.length === 0 && <small style={{ color: 'var(--text-muted)', padding: 8 }}>No donors found.</small>}</div></>}
+            {donor ? (() => { const names = donorNames(donor); return <div className="call-donor-card">
+              <div className="call-donor-card-names"><strong dir={names.rtl ? 'rtl' : undefined}>{names.main}</strong>{names.other && <small>{names.other}</small>}{donor.phone && <a href={`tel:${donor.phone}`}>{donor.phone}</a>}</div>
+              <div className="call-donor-card-balance">{balance ? <><span>Balance {balance.year}</span><strong className={balance.thisYear > 0.005 ? 'owes' : ''}>{money(balance.thisYear)}</strong><small>All years: {money(balance.total)}</small></> : <small>Loading balance…</small>}</div>
+              <div className="call-donor-card-actions"><button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowProfile(true)}>Open donor</button>{!initialDonor && !saved && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDonor(null)}>Change</button>}</div>
+            </div>; })()
+              : <><input autoFocus value={donorSearch} onChange={event => setDonorSearch(event.target.value)} placeholder="Type a Yiddish or English name, or a phone…" />
+                <div className="call-donor-results">{donors.slice(0, 8).map(item => { const names = donorNames(item); return <button type="button" key={item.id} onClick={() => { setDonor(item); setDonorSearch(''); }}><strong dir={names.rtl ? 'rtl' : undefined}>{names.main}</strong><small>{[names.other, item.phone].filter(Boolean).join(' · ')}</small></button>; })}{donors.length === 0 && <small style={{ color: 'var(--text-muted)', padding: 8 }}>No donors found.</small>}</div></>}
           </div>
           <label className="form-group" style={{ margin: 0 }}><span>Date of the call *</span><input type="date" value={form.date} onChange={event => set('date', event.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Fundraiser</span><select value={form.fundraiserId} onChange={event => set('fundraiserId', event.target.value)}><option value="">— Select —</option>{fundraisers.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -176,5 +203,7 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
         <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
       </div>}
     </div>
+    {showProfile && donor && <CloudDonorProfileModal donorId={donor.id} onClose={() => setShowProfile(false)} onEdit={item => { setShowProfile(false); setEditingDonor(item); }} />}
+    {editingDonor && <div className="modal-overlay" onClick={() => setEditingDonor(null)}><div onClick={event => event.stopPropagation()} style={{ width: 'min(900px,94vw)', maxHeight: '92vh', overflowY: 'auto' }}><OnlineDonorForm donor={editingDonor} onCancel={() => setEditingDonor(null)} onSaved={() => setEditingDonor(null)} onConflict={() => setEditingDonor(null)} /></div></div>}
   </div></div>;
 };

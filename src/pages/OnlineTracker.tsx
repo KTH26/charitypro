@@ -52,7 +52,7 @@ export const OnlineTracker: React.FC = () => {
         {loading && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center' }}>Loading calls…</td></tr>}
         {!loading && items.map(item => <tr key={item.id} onClick={() => setSelected(item)} style={{ cursor: 'pointer' }}>
           <td style={{ whiteSpace: 'nowrap' }}>{item.date}</td>
-          <td style={{ fontWeight: 700 }}>{item.donorName}</td>
+          <td style={{ fontWeight: 700 }}>{item.donorYiddishName ? <><div dir="rtl" style={{ textAlign: 'left' }}>{item.donorYiddishName}</div><small style={{ color: 'var(--text-muted)', fontWeight: 500 }}>{item.donorName}</small></> : item.donorName}</td>
           <td><span className={`call-badge call-badge-${item.outcome.toLowerCase().replace(/\s+/g, '-')}`}>{item.outcome}</span>{item.followUpDate && item.outcome === 'Call back' && <small style={{ display: 'block', color: 'var(--text-muted)' }}>on {item.followUpDate}</small>}{item.pickupStatus === 'open' && <small style={{ display: 'block', color: 'var(--yellow)', fontWeight: 700 }}>to pick up</small>}</td>
           <td style={{ color: 'var(--text-secondary)' }}>{shortText(item.notes || '')}</td>
           <td>{item.fundraiserName || '—'}</td>

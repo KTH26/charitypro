@@ -1186,3 +1186,22 @@ tbody tr:hover td { background: #f8faf9; }
 .feed-state-matched { color: var(--green); background: var(--bg-input); }
 .feed-state-unmatched { color: var(--navy); background: var(--bg-input); }
 .feed-state-dismissed { color: var(--text-muted); background: var(--bg-input); }
+
+/* Record a Call: chosen donor with balance */
+.call-donor-card { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-input); }
+.call-donor-card-names { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.call-donor-card-names strong { font-size: 18px; color: var(--navy); }
+.call-donor-card-names small, .call-donor-card-balance small { color: var(--text-muted); font-size: 12px; }
+.call-donor-card-balance { display: flex; flex-direction: column; align-items: flex-end; }
+.call-donor-card-balance span { font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+.call-donor-card-balance strong { font-size: 20px; color: var(--green); }
+.call-donor-card-balance strong.owes { color: var(--red); }
+.call-donor-card-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 640px) { .call-donor-card { grid-template-columns: 1fr; } .call-donor-card-balance { align-items: flex-start; } }
+
+/* Fundraisers page totals */
+.fundraiser-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.fundraiser-totals div { background: var(--bg-card, #fff); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; }
+.fundraiser-totals span { font-size: 12px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
+.fundraiser-totals strong { font-size: 22px; color: var(--navy); }
+.fundraiser-totals .owed strong { color: var(--red); }

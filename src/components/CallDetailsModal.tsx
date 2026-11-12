@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { CALL_OUTCOMES } from './RecordCallModal';
 
 export type CallRecord = {
-  id: string; revision: number; donorId: string; donorName: string; donorPhone?: string; donorAddress?: string;
+  id: string; revision: number; donorId: string; donorName: string; donorYiddishName?: string; donorPhone?: string; donorAddress?: string;
   date: string; outcome: string; notes: string; followUpDate?: string; fundraiserId?: string; fundraiserName?: string;
   campaignId?: string; campaignName?: string; pledgeId?: string; paymentId?: string; recurringId?: string;
   pickupStatus?: string; pickupDate?: string; pickupAmount?: number; pickupAddress?: string; createdBy?: string; createdAt?: string;
@@ -24,13 +24,13 @@ export const CallDetailsModal: React.FC<{ call: CallRecord; onClose: () => void;
       const response = await fetch(`/api/v3/records/donorContacts/${encodeURIComponent(call.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ revision: call.revision, data: { outcome, notes: notes.trim() } }) });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save.');
-      onSaved({ ...call, ...data.item, donorName: call.donorName, fundraiserName: call.fundraiserName, campaignName: call.campaignName });
+      onSaved({ ...call, ...data.item, donorName: call.donorName, donorYiddishName: call.donorYiddishName, fundraiserName: call.fundraiserName, campaignName: call.campaignName });
       setEditing(false);
     } catch (reason: any) { setError(reason.message || 'Unable to save.'); } finally { setSaving(false); }
   };
   const row = (label: string, value: React.ReactNode) => value ? <div className="call-detail-row"><span>{label}</span><div>{value}</div></div> : null;
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 680, width: '94%', maxHeight: '92vh', overflowY: 'auto' }}>
-    <div className="modal-header"><h2 style={{ margin: 0 }}>Call with {call.donorName}</h2><button type="button" className="modal-close" onClick={onClose}><X size={20} /></button></div>
+    <div className="modal-header"><h2 style={{ margin: 0 }}>Call with <span dir="auto">{call.donorYiddishName || call.donorName}</span></h2><button type="button" className="modal-close" onClick={onClose}><X size={20} /></button></div>
     <div className="modal-body">
       {error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
       <div style={{ display: 'grid', gap: 2, marginBottom: 16 }}>

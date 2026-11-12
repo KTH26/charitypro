@@ -190,14 +190,14 @@ describe('account transactions search', () => {
 });
 
 describe('expense dates and deleting accounts', () => {
-  it('a paid expense uses the date entered, and the paid date can be edited', async () => {
+  it('a paid expense uses the date entered, and changing the date moves it', async () => {
     const { call } = setup();
     const saved = await call('POST', '/v3/bills', { requestId: crypto.randomUUID(), vendor: 'Hydro', amount: 80, dueDate: '2026-09-02', status: 'paid', category: 'supplies', sourceAccountId: 'bmo' });
     expect(saved.status).toBe(201);
     expect(saved.body.item.paidDate).toBe('2026-09-02');
     let ledger = (await call('GET', '/v3/accounts/bmo/ledger')).body.items;
     expect(ledger[0].paidDate).toBe('2026-09-02');
-    const edited = await call('PUT', `/v3/records/bills/${saved.body.item.id}`, { revision: saved.body.item.revision, data: { paidDate: '2026-08-30' } });
+    const edited = await call('PUT', `/v3/records/bills/${saved.body.item.id}`, { revision: saved.body.item.revision, data: { dueDate: '2026-08-30' } });
     expect(edited.status).toBe(200);
     ledger = (await call('GET', '/v3/accounts/bmo/ledger?from=2026-08-30&to=2026-08-30')).body.items;
     expect(ledger).toHaveLength(1);
@@ -313,5 +313,51 @@ describe('bank sync start date', () => {
     expect(bankSyncStartDate('2026-11-12', '2026-11-08')).toBe('2026-11-05');
     expect(bankSyncStartDate('2026-11-12', '2026-10-30')).toBe('2026-10-30');
     expect(bankSyncStartDate('2026-01-03')).toBe('2025-12-27');
+  });
+});
+
+describe('the Date box is the date everywhere', () => {
+  it('an expense dated Sep 2, 2025 but marked paid on Jul 3, 2026 shows on Sep 2, 2025', async () => {
+    const { db, call } = setup();
+    seed(db, 'bills', 'lease', { vendor: 'Lease Car 14', amount: 1152.66, currency: 'CAD', dueDate: '2025-09-02', paidDate: '2026-07-03', status: 'paid', category: 'supplies', sourceAccountId: 'bmo' });
+    const inSep = (await call('GET', '/v3/accounts/bmo/ledger?from=2025-09-01&to=2025-09-30')).body.items;
+    expect(inSep.map((item: any) => item.id)).toEqual(['lease']);
+    expect((await call('GET', '/v3/accounts/bmo/ledger?from=2026-07-01&to=2026-07-31')).body.items).toHaveLength(0);
+  });
+});
+
+describe('call tracker Yiddish names and fundraisers', () => {
+  it('finds a donor by full Yiddish name and shows the Yiddish name on calls', async () => {
+    const { db, call } = setup();
+    db.database.prepare("UPDATE sync_records SET data=json_set(data,'$.hebFirstName','משה','$.hebLastName','כהן','$.preTitle','הרב') WHERE type='donors' AND id='d1'").run();
+    const found = await call('GET', '/v3/donors?search=' + encodeURIComponent('משה כהן'));
+    expect(found.body.items.map((item: any) => item.id)).toEqual(['d1']);
+    expect((await call('GET', '/v3/donors?search=' + encodeURIComponent('משה לוי'))).body.items).toHaveLength(0);
+    await call('POST', '/v3/donor-contacts', { donorId: 'd1', date: '2026-11-12', outcome: 'No answer', requestId: crypto.randomUUID() });
+    const list = await call('GET', '/v3/donor-contacts');
+    expect(list.body.items[0]).toMatchObject({ donorName: 'Moshe Cohen', donorYiddishName: 'הרב משה כהן' });
+  });
+
+  it('checks fundraiser and team details', async () => {
+    const { call } = setup();
+    expect((await call('POST', '/v3/records/fundraisers', { data: { name: '', percentage: 10 } })).status).toBe(400);
+    expect((await call('POST', '/v3/records/fundraisers', { data: { name: 'Shloime', percentage: 120 } })).status).toBe(400);
+    const ok = await call('POST', '/v3/records/fundraisers', { data: { name: 'Shloime', percentage: '7.5' } });
+    expect(ok.status).toBe(201);
+    expect(ok.body.item.percentage).toBe(7.5);
+    expect((await call('POST', '/v3/records/fundraisingGroups', { data: { name: 'Pair', allocations: [{ fundraiserId: 'f1', percentage: 60 }, { fundraiserId: ok.body.item.id, percentage: 50 }] } })).status).toBe(400);
+    expect((await call('POST', '/v3/records/fundraisingGroups', { data: { name: 'Pair', allocations: [{ fundraiserId: 'f1', percentage: 5 }, { fundraiserId: 'f1', percentage: 5 }] } })).status).toBe(400);
+    expect((await call('POST', '/v3/records/fundraisingGroups', { data: { name: 'Pair', allocations: [{ fundraiserId: 'f1', percentage: 5 }, { fundraiserId: ok.body.item.id, percentage: 5 }] } })).status).toBe(201);
+  });
+
+  it('paying a fundraiser lowers what we owe him', async () => {
+    const { db, call } = setup();
+    seed(db, 'pledges', 'pl1', { donorId: 'd1', amount: 1000, currency: 'CAD', date: '2026-11-01', fundraiserAllocations: [{ fundraiserId: 'f1', percentage: 10 }] });
+    seed(db, 'transactions', 't1', { type: 'approved', donorId: 'd1', amount: 1000, amountCAD: 1000, currency: 'CAD', date: '2026-11-02', pledgeId: 'pl1', sourceAccountId: 'bmo', offsetAccountId: 'supplies' });
+    const owed = async () => (await call('GET', '/v3/payroll/entities?type=fundraisers')).body.items.find((item: any) => item.id === 'f1').balanceOwed;
+    expect(await owed()).toBe(100);
+    expect((await call('POST', '/v3/fundraiser-payouts', { requestId: crypto.randomUUID(), fundraiserId: 'f1', amount: 40, date: '2026-11-10', sourceAccountId: 'bmo' })).status).toBe(201);
+    expect(await owed()).toBe(60);
+    expect((await call('POST', '/v3/fundraiser-payouts', { requestId: crypto.randomUUID(), fundraiserId: 'f1', amount: 70, date: '2026-11-11', sourceAccountId: 'bmo' })).status).toBe(409);
   });
 });
