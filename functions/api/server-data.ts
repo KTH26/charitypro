@@ -121,8 +121,9 @@ const loadLiabilityMovements = async (db: any, accounts: LiabilityAccount[]) => 
   const rawRate = rateRow ? Number(parseSetting((rateRow as any).data, 1.35)) : 1.35;
   const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
   const byId = new Map(accounts.map(account => [account.id, account]));
-  const charge = (accountId: string, event: LoanEvent) => { if (byId.has(accountId) && event.amount > 0) charges.set(accountId, [...(charges.get(accountId) || []), event]); };
   const pay = (accountId: string, date: string, amount: number) => { if (byId.has(accountId) && amount) payments.set(accountId, [...(payments.get(accountId) || []), { date, amount }]); };
+  // A negative charge (for example a refund put back on a credit card) lowers what is owed, like a payment.
+  const charge = (accountId: string, event: LoanEvent) => { if (!byId.has(accountId)) return; if (event.amount > 0) charges.set(accountId, [...(charges.get(accountId) || []), event]); else if (event.amount < 0) pay(accountId, event.date, -event.amount); };
   for (const row of recordRows.results as any[]) {
     const data = parseSetting(row.data, {}); const type = String(row.type); const revision = Number(row.revision); const recordId = String(row.id);
     const amountFor = (accountId: string) => {
@@ -3118,7 +3119,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (!current) return c.json({ success: false, error: 'Bank account not found.' }, 404);
     if (Number(current.revision) !== expectedRevision) return c.json({ success: false, error: 'This bank account changed. Reload and try again.', conflict: true }, 409);
     const old = parseSetting(current.data, {});
-    if (old.type !== 'asset' || !old.plaidConnected) return c.json({ success: false, error: 'This account is not an active bank-feed account.' }, 409);
+    if (!['asset','liability'].includes(String(old.type || '')) || !old.plaidConnected) return c.json({ success: false, error: 'This account is not an active bank-feed account.' }, 409);
     const now = Date.now(); const revision = expectedRevision + 1; const operationId = `${mutationId}-account`;
     const next = { ...old, plaidConnected: false, bankFeedRemoved: true, bankFeedRemovedAt: new Date(now).toISOString() };
     const data = JSON.stringify(next); const response = { success: true, accountId, removed: true };
@@ -3294,7 +3295,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const account: any = accountRow.results[0]; const match: any = matchRow.results[0];
     if (!account) return c.json({ success: false, error: 'Bank account not found.' }, 404);
     const accountData = parseSetting(account.data, {});
-    if (accountData.type !== 'asset' || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected asset account.' }, 409);
+    if (!['asset','liability'].includes(String(accountData.type || '')) || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected bank or credit card account.' }, 409);
     if (linkedRow.results[0]) return c.json({ success: false, error: 'This bank deposit is already matched.' }, 409);
     if (!match) return c.json({ success: false, error: 'Bank match history is unavailable.' }, 500);
     const matchedIds: string[] = Array.isArray(parseSetting(match.data, [])) ? parseSetting(match.data, []) : [];
@@ -3411,7 +3412,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const account: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId).first();
     if (!account) return c.json({ success: false, error: 'Bank account not found.' }, 404);
     const accountData = JSON.parse(String(account.data));
-    if (accountData.type !== 'asset' || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected asset account.' }, 409);
+    if (!['asset','liability'].includes(String(accountData.type || '')) || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected bank or credit card account.' }, 409);
     const alreadyLinked: any = await c.env.DB.prepare(`SELECT id,type FROM sync_records WHERE is_deleted=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')=? LIMIT 1`).bind(bankTransactionId).first();
     if (alreadyLinked) return c.json({ success: false, error: 'This bank deposit is already linked.' }, 409);
 
@@ -3532,7 +3533,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const account: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId).first();
     if (!account) return c.json({ success: false, error: 'Bank account not found.' }, 404);
     const accountData = JSON.parse(String(account.data));
-    if (accountData.type !== 'asset' || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected asset account.' }, 409);
+    if (!['asset','liability'].includes(String(accountData.type || '')) || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected bank or credit card account.' }, 409);
     const alreadyLinked: any = await c.env.DB.prepare(`SELECT id,type FROM sync_records WHERE is_deleted=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')=? LIMIT 1`).bind(bankTransactionId).first();
     if (alreadyLinked) return c.json({ success: false, error: 'This bank transaction is already linked.' }, 409);
     const matchRecord: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0").first();

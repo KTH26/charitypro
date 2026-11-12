@@ -214,3 +214,22 @@ describe('expense dates and deleting accounts', () => {
     expect(blocked.body.error).toContain('1 bill');
   });
 });
+
+describe('bank feed on a connected credit card', () => {
+  it('records a card charge as an expense, a refund, and a payment, and the card balance follows', async () => {
+    const { db, call } = setup();
+    seed(db, 'accounts', 'amexfeed', { name: 'Amex', type: 'liability', subType: 'credit_card', currency: 'CAD', plaidConnected: true, statementDay: 24, paymentDueDay: 15 });
+    db.database.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES('matchedBankTransactions','matchedBankTransactions','[]',1,1,0)").run();
+    const outgoing = (key: string, extra: any) => call('POST', '/v3/bank/match-outgoing', { requestId: key, accountId: 'amexfeed', bankDate: '2026-11-11', description: 'GOOGLE SERVICES', ...extra });
+    const expense = await outgoing('card-exp', { action: 'expense', bankTransactionId: 'amex-1', amount: 2, vendor: 'GOOGLE SERVICES', category: 'supplies', taxable: true });
+    expect(expense.status).toBe(200);
+    expect(expense.body.item).toMatchObject({ sourceAccountId: 'amexfeed', amount: 2, paidDate: '2026-11-11' });
+    const transferOut = await outgoing('card-cash', { action: 'transfer', bankTransactionId: 'amex-2', amount: 50, targetAccountId: 'bmo' });
+    expect(transferOut.status).toBe(200);
+    const refund = await call('POST', '/v3/bank/match-refund', { requestId: 'card-refund', accountId: 'amexfeed', bankTransactionId: 'amex-3', bankDate: '2026-11-12', description: 'GOOGLE REFUND', amount: 2, bills: [{ billId: expense.body.item.id, revision: 1 }] });
+    expect(refund.status).toBe(200);
+    // Charges 2 + 50, refund -2: the card owes 50.
+    const card = (await call('GET', '/v3/credit-cards-due?today=2026-11-26')).body.items.find((item: any) => item.id === 'amexfeed');
+    expect(card.balance).toBe(50);
+  });
+});
