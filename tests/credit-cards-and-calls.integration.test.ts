@@ -165,3 +165,52 @@ describe('call tracker', () => {
     expect(saved.body.item.pledgeId).toBe(pledge.body.item.id);
   });
 });
+
+describe('account transactions search', () => {
+  it('finds entries by vendor, donor name, other account, amount, and date range', async () => {
+    const { call, charge } = setup();
+    await charge(45.5, '2026-10-03');
+    await call('POST', '/v3/bills', { requestId: crypto.randomUUID(), vendor: 'Hydro Quebec', amount: 120, dueDate: '2026-10-10', paidDate: '2026-10-10', status: 'paid', category: 'supplies', sourceAccountId: 'bmo' });
+    await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'visa', amount: 300, date: '2026-10-15' } });
+    await call('POST', '/v3/records/transactions', { data: { type: 'approved', donorId: 'd1', amount: 180, currency: 'CAD', date: '2026-10-20', method: 'cash', sourceAccountId: 'bmo', offsetAccountId: 'supplies' } });
+    const ids = async (query: string) => (await call('GET', '/v3/accounts/bmo/ledger?limit=50' + query)).body;
+    expect((await ids('')).total).toBe(3);
+    expect((await ids('&search=hydro')).items.map((item: any) => item.vendor)).toEqual(['Hydro Quebec']);
+    const donor = await ids('&search=moshe');
+    expect(donor.items).toHaveLength(1);
+    expect(donor.items[0]).toMatchObject({ donorName: 'Moshe Cohen', amount: 180 });
+    const transfer = await ids('&search=visa');
+    expect(transfer.items).toHaveLength(1);
+    expect(transfer.items[0]).toMatchObject({ recordType: 'accountTransfers', otherAccountName: 'Visa Card' });
+    expect((await ids('&search=120')).items).toHaveLength(1);
+    expect((await ids('&from=2026-10-12&to=2026-10-31')).total).toBe(2);
+    expect((await ids('&search=nothing-like-this')).total).toBe(0);
+  });
+});
+
+describe('expense dates and deleting accounts', () => {
+  it('a paid expense uses the date entered, and the paid date can be edited', async () => {
+    const { call } = setup();
+    const saved = await call('POST', '/v3/bills', { requestId: crypto.randomUUID(), vendor: 'Hydro', amount: 80, dueDate: '2026-09-02', status: 'paid', category: 'supplies', sourceAccountId: 'bmo' });
+    expect(saved.status).toBe(201);
+    expect(saved.body.item.paidDate).toBe('2026-09-02');
+    let ledger = (await call('GET', '/v3/accounts/bmo/ledger')).body.items;
+    expect(ledger[0].paidDate).toBe('2026-09-02');
+    const edited = await call('PUT', `/v3/records/bills/${saved.body.item.id}`, { revision: saved.body.item.revision, data: { paidDate: '2026-08-30' } });
+    expect(edited.status).toBe(200);
+    ledger = (await call('GET', '/v3/accounts/bmo/ledger?from=2026-08-30&to=2026-08-30')).body.items;
+    expect(ledger).toHaveLength(1);
+  });
+
+  it('an unused credit card can be deleted and leaves the credit cards box; a used one cannot', async () => {
+    const { call, charge, db } = setup();
+    const revision = (id: string) => Number((db.database.prepare("SELECT revision FROM sync_records WHERE type='accounts' AND id=?").get(id) as any).revision);
+    expect((await call('DELETE', '/v3/records/accounts/amex', { revision: revision('amex') })).status).toBe(200);
+    const cards = (await call('GET', '/v3/credit-cards-due?today=2026-11-12')).body.items.map((item: any) => item.id);
+    expect(cards).not.toContain('amex');
+    await charge(25, '2026-11-01');
+    const blocked = await call('DELETE', '/v3/records/accounts/visa', { revision: revision('visa') });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error).toContain('1 bill');
+  });
+});

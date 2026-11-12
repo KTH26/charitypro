@@ -3001,7 +3001,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (body.checkNumber) record.checkNumber = String(body.checkNumber).trim().slice(0, 100);
     if (body.printStatus === 'queued' || body.printStatus === 'printed') record.printStatus = body.printStatus;
     if (body.method) record.method = String(body.method).trim().slice(0, 100);
-    if (status === 'paid') { record.paidDate = String(body.paidDate || new Date().toISOString().slice(0, 10)); record.offsetAccountId = category; }
+    if (status === 'paid') { record.paidDate = isoDate(body.paidDate) || isoDate(body.dueDate) || new Date().toISOString().slice(0, 10); record.offsetAccountId = category; }
     if (body.loanDueDate) record.loanDueDate = body.loanDueDate;
     const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', record);
     if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
@@ -3049,7 +3049,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid asset or liability account.' }, 409);
     if (creditAccountId && (!credit || !['asset','liability'].includes(JSON.parse(String(credit.data)).type))) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
     if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
-    const next: any = { ...existing, status: 'paid', paidDate: new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category, creditAccountId: creditAccountId || null, loanDueDate: body.loanDueDate || existing.loanDueDate };
+    const next: any = { ...existing, status: 'paid', paidDate: isoDate(body.paidDate) || new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category, creditAccountId: creditAccountId || null, loanDueDate: body.loanDueDate || existing.loanDueDate };
     const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', next);
     if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const now = Date.now();
@@ -3797,18 +3797,27 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const offset = (page - 1) * limit;
     const account: any = await c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(id).first();
     if (!account) return c.json({ success: false, error: 'Account not found.' }, 404);
-    const where = `is_deleted=0 AND (
-      (type='transactions' AND json_extract(data,'$.type')='approved' AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.offsetAccountId')=?) AND NOT (?='sys-undeposited-funds' AND json_extract(data,'$.depositStatus')='deposited')) OR
-      (type='bills' AND json_extract(data,'$.status')='paid' AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.creditAccountId')=? OR json_extract(data,'$.category')=?)) OR
-      (type='accountTransfers' AND (json_extract(data,'$.fromAccountId')=? OR json_extract(data,'$.toAccountId')=?))
-    )`;
-    const bindings = [id,id,id,id,id,id,id,id];
+    // Optional search (any words: description, vendor, memo, donor, other account, amount, date) and date range.
+    const words = String(c.req.query('search') || '').trim().toLowerCase().slice(0, 200).split(/\s+/).filter(Boolean).slice(0, 8);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(c.req.query('from') || '')) ? String(c.req.query('from')) : '';
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(c.req.query('to') || '')) ? String(c.req.query('to')) : '';
+    const dateExpr = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.paidDate'),json_extract(r.data,'$.dueDate'))";
+    const otherAccountId = "CASE WHEN r.type='accountTransfers' THEN (CASE WHEN json_extract(r.data,'$.fromAccountId')=? THEN json_extract(r.data,'$.toAccountId') ELSE json_extract(r.data,'$.fromAccountId') END) WHEN r.type='bills' THEN (CASE WHEN json_extract(r.data,'$.sourceAccountId')=? THEN json_extract(r.data,'$.category') ELSE json_extract(r.data,'$.sourceAccountId') END) ELSE (CASE WHEN json_extract(r.data,'$.sourceAccountId')=? THEN json_extract(r.data,'$.offsetAccountId') ELSE json_extract(r.data,'$.sourceAccountId') END) END";
+    const from_ = `FROM sync_records r
+      LEFT JOIN sync_records d ON r.type='transactions' AND d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0
+      LEFT JOIN sync_records o ON o.type='accounts' AND o.id=(${otherAccountId}) AND o.is_deleted=0`;
+    const where = `r.is_deleted=0 AND (
+      (r.type='transactions' AND json_extract(r.data,'$.type')='approved' AND (json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.offsetAccountId')=?) AND NOT (?='sys-undeposited-funds' AND json_extract(r.data,'$.depositStatus')='deposited')) OR
+      (r.type='bills' AND json_extract(r.data,'$.status')='paid' AND (json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.creditAccountId')=? OR json_extract(r.data,'$.category')=?)) OR
+      (r.type='accountTransfers' AND (json_extract(r.data,'$.fromAccountId')=? OR json_extract(r.data,'$.toAccountId')=?))
+    )${from ? ` AND ${dateExpr}>=?` : ''}${to ? ` AND ${dateExpr}<=?` : ''}${words.map(() => " AND (lower(r.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(o.data,'$.name'),'')) LIKE ?)").join('')}`;
+    const bindings: any[] = [id, id, id, id,id,id,id,id,id,id,id, ...(from ? [from] : []), ...(to ? [to] : []), ...words.flatMap(word => { const like = `%${word.replace(/[%_]/g, '')}%`; return [like, like, like]; })];
     const [rows, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT id,type,data,revision,updated_at FROM sync_records WHERE ${where} ORDER BY COALESCE(json_extract(data,'$.date'),json_extract(data,'$.paidDate'),json_extract(data,'$.dueDate')) DESC,updated_at DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records WHERE ${where}`).bind(...bindings)
+      c.env.DB.prepare(`SELECT r.id,r.type,r.data,r.revision,r.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(o.data,'$.name') AS other_account_name ${from_} WHERE ${where} ORDER BY ${dateExpr} DESC,r.updated_at DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count ${from_} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
-    return c.json({ success: true, account: parseRecord(account), items: rows.results.map((row: any) => ({ ...parseRecord(row), recordType: row.type })), page, limit, total, totalPages: Math.ceil(total / limit) });
+    return c.json({ success: true, account: parseRecord(account), items: rows.results.map((row: any) => ({ ...parseRecord(row), recordType: row.type, ...(row.donor_name ? { donorName: row.donor_name } : {}), ...(row.other_account_name ? { otherAccountName: row.other_account_name } : {}) })), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.post('/v3/payments/import-reviewed', async (c: any) => {

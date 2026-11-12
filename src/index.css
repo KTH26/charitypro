@@ -1173,3 +1173,9 @@ tbody tr:hover td { background: #f8faf9; }
 .refund-pick-total div { display: flex; flex-direction: column; }
 .refund-pick-total span { font-size: 12px; color: var(--text-muted); }
 .refund-pick-total strong { font-size: 16px; color: var(--navy); }
+
+/* Account pop-up: search the account's transactions */
+.account-ledger-filters { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-bottom: 14px; }
+.account-ledger-filters > input { flex: 1 1 260px; }
+.account-ledger-filters label { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: 12px; color: var(--text-muted); }
+.account-ledger-filters label input { width: 150px; }
