@@ -63,7 +63,7 @@ export const OnlineTracker: React.FC = () => {
     {totalPages > 1 && <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 14, alignItems: 'center' }}><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button className="btn btn-secondary btn-sm" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>Next</button></div>}
 
     {recording && <RecordCallModal onClose={() => setRecording(false)} onSaved={() => void load(true)} />}
-    {selected && <CallDetailsModal call={selected} onClose={() => setSelected(null)} onSaved={call => { setSelected(call); void load(true); }} onOpenDonor={donorId => { setSelected(null); setProfileId(donorId); }} />}
+    {selected && <CallDetailsModal call={selected} onClose={() => setSelected(null)} onSaved={call => { setSelected(call); void load(true); }} onDeleted={() => { setSelected(null); void load(true); }} onOpenDonor={donorId => { setSelected(null); setProfileId(donorId); }} />}
     {profileId && <CloudDonorProfileModal donorId={profileId} onClose={() => setProfileId(null)} onEdit={donor => { setProfileId(null); setEditingDonor(donor); }} />}
     {editingDonor && <div className="modal-overlay" onClick={() => setEditingDonor(null)}><div onClick={event => event.stopPropagation()} style={{ width: 'min(900px,94vw)', maxHeight: '92vh', overflowY: 'auto' }}><OnlineDonorForm donor={editingDonor} onCancel={() => setEditingDonor(null)} onSaved={() => { setEditingDonor(null); void load(true); }} onConflict={() => setEditingDonor(null)} /></div></div>}
   </div></main>;

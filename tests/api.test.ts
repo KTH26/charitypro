@@ -104,7 +104,7 @@ describe('Backend API & Security Rules', () => {
     const pledgesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePledges.tsx'), 'utf8');
     const schedulesSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineSchedules.tsx'), 'utf8');
     expect(pledgesSource).toContain('limit=50');
-    expect(pledgesSource).toContain("'/api/v3/records/pledges'");
+    expect(readFileSync(join(process.cwd(), 'src', 'components', 'PledgeFormModal.tsx'), 'utf8')).toContain("'/api/v3/records/pledges'");
     expect(schedulesSource).toContain('limit=50');
     expect(schedulesSource).toContain("'/api/v3/records/recurringPayments'");
     const donorProfileSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudDonorProfileModal.tsx'), 'utf8');

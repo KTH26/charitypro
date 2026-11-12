@@ -1,14 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudPledgeDetailsModal } from '../components/CloudPledgeDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
-import { FundraiserAllocationEditor, type FundraiserAllocationDraft } from '../components/FundraiserAllocationEditor';
+import { type FundraiserAllocationDraft } from '../components/FundraiserAllocationEditor';
+import { PledgeFormModal, type PledgeForEdit } from '../components/PledgeFormModal';
 
-type Pledge = { id: string; revision: number; donorId: string; donorName: string; donorHebrewName?: string; campaignId?: string; campaignName?: string; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string; followUpDate?: string; followUpNote?: string; fundraiserAllocations?: FundraiserAllocationDraft[]; paid: number; pending: number; scheduled: number; balance: number };
-type Donor = { id: string; name: string };
-type Campaign = { id: string; name: string; year: number; startDate: string; endDate: string; currency: 'CAD' | 'USD'; status: string };
-type PledgeForm = { id: string; revision: number; donorId: string; campaignId: string; amount: string; currency: 'CAD' | 'USD'; date: string; notes: string; followUpDate: string; followUpNote: string; fundraiserGroupId:string; fundraiserAllocations: FundraiserAllocationDraft[] };
-const blank = (): PledgeForm => ({ id: '', revision: 0, donorId: '', campaignId: '', amount: '', currency: 'CAD', date: new Date().toISOString().slice(0, 10), notes: '', followUpDate: '', followUpNote: '', fundraiserGroupId:'', fundraiserAllocations: [] });
+type Pledge = { id: string; revision: number; donorId: string; donorName: string; donorHebrewName?: string; campaignId?: string; campaignName?: string; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string; followUpDate?: string; followUpNote?: string; fundraiserGroupId?: string; fundraiserAllocations?: FundraiserAllocationDraft[]; paid: number; pending: number; scheduled: number; balance: number };
 
 export const OnlinePledges: React.FC = () => {
   const [items, setItems] = useState<Pledge[]>([]);
@@ -20,17 +17,11 @@ export const OnlinePledges: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState(blank());
-  const [donorSearch, setDonorSearch] = useState('');
-  const [donors, setDonors] = useState<Donor[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [fundraisers,setFundraisers]=useState<{id:string;name:string;percentage?:number}[]>([]);
-  const [fundraisingGroups,setFundraisingGroups]=useState<{id:string;name:string;allocations:FundraiserAllocationDraft[]}[]>([]);
+  // null = closed, 'new' = New Pledge, otherwise the pledge being edited.
+  const [editing, setEditing] = useState<'new' | PledgeForEdit | null>(null);
   const [selectedPledgeId, setSelectedPledgeId] = useState<string | null>(null);
   const [sort, setSort] = useState('date'); const [direction, setDirection] = useState<SortDirection>('desc');
   const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'date' || column === 'amount' ? 'desc' : 'asc')); setSort(column); setPage(1); };
-  const requestId = useRef('');
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -43,24 +34,7 @@ export const OnlinePledges: React.FC = () => {
     finally { if (!silent) setLoading(false); }
   }, [page, search, from, to, sort, direction]);
   useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
-  useEffect(() => { const timer = window.setTimeout(() => { fetch(`/api/v3/donors?limit=50&search=${encodeURIComponent(donorSearch)}`).then(response => response.json()).then(data => { if (data.success) setDonors(data.items); }).catch(() => undefined); }, 250); return () => window.clearTimeout(timer); }, [donorSearch]);
-  useEffect(() => { Promise.all([fetch('/api/v3/records/campaigns?limit=100'),fetch('/api/v3/records/fundraisers?limit=100'),fetch('/api/v3/records/fundraisingGroups?limit=100')]).then(async responses=>Promise.all(responses.map(response=>response.json()))).then(([campaignData,fundraiserData,groupData])=>{if(campaignData.success)setCampaigns(campaignData.items||[]);if(fundraiserData.success)setFundraisers(fundraiserData.items||[]);if(groupData.success)setFundraisingGroups(groupData.items||[]);}).catch(() => undefined); }, []);
 
-  const beginNew = () => { setForm(blank()); setDonorSearch(''); setEditing(true); setError(''); setNotice(''); requestId.current = ''; };
-  const beginEdit = (item: Pledge) => { setForm({ id: item.id, revision: item.revision, donorId: item.donorId, campaignId: item.campaignId || '', amount: String(item.amount), currency: item.currency, date: item.date, notes: item.notes || '', followUpDate: item.followUpDate || '', followUpNote: item.followUpNote || '', fundraiserGroupId:(item as any).fundraiserGroupId||'', fundraiserAllocations:item.fundraiserAllocations||[] }); setDonorSearch(item.donorName); setDonors(current => current.some(donor => donor.id === item.donorId) ? current : [{ id: item.donorId, name: item.donorName }, ...current]); setEditing(true); setError(''); setNotice(''); requestId.current = ''; };
-  const save = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const amount = Number(form.amount);
-    if (!form.donorId || !Number.isFinite(amount) || amount <= 0 || !form.date) { setError('Donor, positive amount, and date are required.'); return; }
-    const idempotencyKey = requestId.current || crypto.randomUUID(); requestId.current = idempotencyKey;
-    const data = { ...(form.id ? { id: form.id } : {}), donorId: form.donorId, amount, currency: form.currency, date: form.date, notes: form.notes.trim(), followUpDate:form.followUpDate,followUpNote:form.followUpNote.trim(),fundraiserGroupId:form.fundraiserGroupId,fundraiserAllocations:form.fundraiserAllocations };
-    try {
-      const response = await fetch(form.id ? `/api/v3/records/pledges/${encodeURIComponent(form.id)}` : '/api/v3/records/pledges', { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ revision: form.revision, data }) });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to save pledge.');
-      requestId.current = ''; setEditing(false); setNotice(form.id ? 'Pledge updated in the cloud.' : 'Pledge added to the cloud.'); await load(true);
-    } catch (e: any) { requestId.current = ''; setError(e.message || 'Unable to save pledge.'); }
-  };
   const remove = async (item: Pledge) => {
     if (!window.confirm(`Delete the ${item.currency} $${item.amount.toFixed(2)} pledge for ${item.donorName}?`)) return;
     try {
@@ -70,31 +44,16 @@ export const OnlinePledges: React.FC = () => {
       setNotice('Pledge deleted from the cloud.'); await load(true);
     } catch (e: any) { setError(e.message || 'Unable to delete pledge.'); }
   };
-  const saveFundraiserGroup=async()=>{const name=window.prompt('Name this fundraiser group');if(!name?.trim()||!form.fundraiserAllocations.length)return;try{const key=crypto.randomUUID();const response=await fetch('/api/v3/records/fundraisingGroups',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify({data:{name:name.trim(),allocations:form.fundraiserAllocations}})});const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to save group.');setFundraisingGroups(current=>[...current,data.item]);setForm(current=>({...current,fundraiserGroupId:data.item.id}));setNotice('Fundraiser group saved and selected.');}catch(reason:any){setError(reason.message||'Unable to save group.');}};
 
-  const dateMatchedCampaign = campaigns.filter(campaign => campaign.startDate <= form.date && campaign.endDate >= form.date).sort((left,right)=>right.startDate.localeCompare(left.startDate)||left.endDate.localeCompare(right.endDate))[0];
   return <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}><div style={{ maxWidth: 1400, margin: '0 auto' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20, marginBottom: 22 }}><div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Pledges ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Shared online pledges · 50 records per page</div></div><button className="btn btn-primary" onClick={beginNew}>New Pledge</button></div>
-    {editing && <div className="modal-overlay" onClick={() => setEditing(false)}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={save} style={{ maxWidth: 760, width: '92%' }}><div className="modal-header"><h2 style={{ margin: 0, color: 'var(--navy)' }}>{form.id ? 'Edit Pledge' : 'New Pledge'}</h2><button type="button" className="modal-close" onClick={() => setEditing(false)}>×</button></div><div className="modal-body"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
-      <label className="form-group" style={{ margin: 0 }}><span>Find donor</span><input value={donorSearch} onChange={event => setDonorSearch(event.target.value)} placeholder="Type a donor name" /></label>
-      <label className="form-group" style={{ margin: 0 }}><span>Donor *</span><select value={form.donorId} onChange={event => setForm(current => ({ ...current, donorId: event.target.value }))}><option value="">Select from up to 50 matches</option>{donors.map(donor => <option key={donor.id} value={donor.id}>{donor.name}</option>)}</select></label>
-      <div className="form-group" style={{ margin: 0 }}><span>Campaign — automatic by date</span><div style={{padding:'11px 12px',border:'1px solid var(--border)',borderRadius:10,background:'var(--bg-input)',fontWeight:800}}>{dateMatchedCampaign ? `${dateMatchedCampaign.name} (${dateMatchedCampaign.year})` : 'No campaign covers this date'}</div></div>
-      <label className="form-group" style={{ margin: 0 }}><span>Amount *</span><input type="number" min="0.01" step="0.01" value={form.amount} onChange={event => setForm(current => ({ ...current, amount: event.target.value }))} /></label>
-      <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={form.currency} onChange={event => setForm(current => ({ ...current, currency: event.target.value as 'CAD' | 'USD' }))}><option>CAD</option><option>USD</option></select></label>
-      <label className="form-group" style={{ margin: 0 }}><span>Date *</span><input type="date" value={form.date} onChange={event => setForm(current => ({ ...current, date: event.target.value }))} /></label>
-      <label className="form-group" style={{ margin: 0 }}><span>Get back to donor on</span><input type="date" value={form.followUpDate} onChange={event => setForm(current => ({ ...current, followUpDate: event.target.value }))} /></label>
-      {form.followUpDate&&<label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Reminder note</span><input value={form.followUpNote} onChange={event=>setForm(current=>({...current,followUpNote:event.target.value}))} placeholder="What should I discuss with this donor?"/></label>}
-      <label className="form-group" style={{margin:0,gridColumn:'1 / -1'}}><span>Saved fundraiser group</span><select value={form.fundraiserGroupId} onChange={event=>{const group=fundraisingGroups.find(item=>item.id===event.target.value);setForm(current=>({...current,fundraiserGroupId:event.target.value,fundraiserAllocations:group?.allocations||current.fundraiserAllocations}));}}><option value="">— Custom fundraiser split —</option>{fundraisingGroups.map(group=><option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-      <FundraiserAllocationEditor fundraisers={fundraisers} value={form.fundraiserAllocations} onChange={fundraiserAllocations=>setForm(current=>({...current,fundraiserGroupId:'',fundraiserAllocations}))}/>
-      {!!form.fundraiserAllocations.length&&<button type="button" className="btn btn-secondary btn-sm" style={{gridColumn:'1 / -1',justifySelf:'start'}} onClick={()=>void saveFundraiserGroup()}>Save this split as a reusable group</button>}
-      <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Notes</span><textarea value={form.notes} onChange={event => setForm(current => ({ ...current, notes: event.target.value }))} /></label>
-    </div></div><div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={() => setEditing(false)}>Cancel</button><button className="btn btn-primary">Save Pledge</button></div></form></div>}
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20, marginBottom: 22 }}><div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Pledges ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Shared online pledges · 50 records per page</div></div><button className="btn btn-primary" onClick={() => { setError(''); setNotice(''); setEditing('new'); }}>New Pledge</button></div>
+    {editing && <PledgeFormModal pledge={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={(_item, isNew) => { setEditing(null); setNotice(isNew ? 'Pledge added to the cloud.' : 'Pledge updated in the cloud.'); void load(true); }} />}
     {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}{error && <div className="card" style={{ padding: 14, color: 'var(--red)', fontWeight: 700, marginBottom: 16 }}>{error}</div>}
     <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <div className="filter-strip"><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Live search donor, notes, amount, currency or date" /><input type="date" value={from} onChange={event=>{setFrom(event.target.value);setPage(1);}} title="From date"/><input type="date" value={to} onChange={event=>{setTo(event.target.value);setPage(1);}} title="To date"/></div>
       {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading pledges...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>
         <SortableTh column="date" label="Date" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort}/><th>Yiddish name</th><th>Campaign</th><SortableTh column="amount" label="Pledge" sort={sort} direction={direction} onSort={changeSort} align="right"/><th style={{textAlign:'right'}}>Paid</th><th style={{textAlign:'right'}}>Scheduled</th><th style={{textAlign:'right'}}>Open balance</th><th />
-      </tr></thead><tbody>{items.map(item => <tr key={item.id} onClick={() => setSelectedPledgeId(item.id)} style={{ cursor: 'pointer' }}><td>{item.date}</td><td style={{ fontWeight: 800 }}>{item.donorName}</td><td dir="rtl" style={{fontWeight:700}}>{item.donorHebrewName||'—'}</td><td>{item.campaignName || 'Legacy / Unassigned'}</td><td style={{ textAlign: 'right', fontWeight: 800 }}>{item.currency} ${item.amount.toFixed(2)}</td><td style={{textAlign:'right'}}>${Number(item.paid||0).toFixed(2)}</td><td style={{textAlign:'right'}}>${Number(item.scheduled||0).toFixed(2)}</td><td style={{textAlign:'right',fontWeight:900,color:Number(item.balance||0)>0?'var(--red)':'var(--green)'}}>${Number(item.balance||0).toFixed(2)}</td><td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={event => { event.stopPropagation(); beginEdit(item); }}>Edit</button> <button className="btn btn-danger btn-sm" onClick={event => { event.stopPropagation(); void remove(item); }}>Delete</button></td></tr>)}{items.length === 0 && <tr><td colSpan={9} style={{ padding: 30, textAlign: 'center' }}>No matching pledges.</td></tr>}</tbody></table></div>}
+      </tr></thead><tbody>{items.map(item => <tr key={item.id} onClick={() => setSelectedPledgeId(item.id)} style={{ cursor: 'pointer' }}><td>{item.date}</td><td style={{ fontWeight: 800 }}>{item.donorName}</td><td dir="rtl" style={{fontWeight:700}}>{item.donorHebrewName||'—'}</td><td>{item.campaignName || 'Legacy / Unassigned'}</td><td style={{ textAlign: 'right', fontWeight: 800 }}>{item.currency} ${item.amount.toFixed(2)}</td><td style={{textAlign:'right'}}>${Number(item.paid||0).toFixed(2)}</td><td style={{textAlign:'right'}}>${Number(item.scheduled||0).toFixed(2)}</td><td style={{textAlign:'right',fontWeight:900,color:Number(item.balance||0)>0?'var(--red)':'var(--green)'}}>${Number(item.balance||0).toFixed(2)}</td><td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={event => { event.stopPropagation(); setError(''); setNotice(''); setEditing(item); }}>Edit</button> <button className="btn btn-danger btn-sm" onClick={event => { event.stopPropagation(); void remove(item); }}>Delete</button></td></tr>)}{items.length === 0 && <tr><td colSpan={9} style={{ padding: 30, textAlign: 'center' }}>No matching pledges.</td></tr>}</tbody></table></div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: 14, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
     </section>
     {selectedPledgeId && <CloudPledgeDetailsModal pledgeId={selectedPledgeId} onClose={() => setSelectedPledgeId(null)} />}

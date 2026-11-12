@@ -12,7 +12,7 @@ export type CallRecord = {
 const money = (value: number) => `$${Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** Shows everything about one call, and lets you fix the answer or the notes. */
-export const CallDetailsModal: React.FC<{ call: CallRecord; onClose: () => void; onSaved: (call: CallRecord) => void; onOpenDonor?: (donorId: string) => void }> = ({ call, onClose, onSaved, onOpenDonor }) => {
+export const CallDetailsModal: React.FC<{ call: CallRecord; onClose: () => void; onSaved: (call: CallRecord) => void; onOpenDonor?: (donorId: string) => void; onDeleted?: (call: CallRecord) => void }> = ({ call, onClose, onSaved, onOpenDonor, onDeleted }) => {
   const [editing, setEditing] = useState(false);
   const [outcome, setOutcome] = useState(call.outcome);
   const [notes, setNotes] = useState(call.notes || '');
@@ -27,6 +27,18 @@ export const CallDetailsModal: React.FC<{ call: CallRecord; onClose: () => void;
       onSaved({ ...call, ...data.item, donorName: call.donorName, donorYiddishName: call.donorYiddishName, fundraiserName: call.fundraiserName, campaignName: call.campaignName });
       setEditing(false);
     } catch (reason: any) { setError(reason.message || 'Unable to save.'); } finally { setSaving(false); }
+  };
+  // Delete the call. Its call-back reminder is removed too; a pledge or payment entered from the call stays.
+  const remove = async () => {
+    const linked = [call.pledgeId && 'pledge', call.paymentId && 'payment', call.recurringId && 'monthly payments'].filter(Boolean);
+    if (!window.confirm(`Delete this call from ${call.date}?${call.followUpDate ? '\n\nIts call-back reminder will be removed too.' : ''}${linked.length ? `\n\nThe ${linked.join(' and ')} entered from this call will NOT be deleted. Delete ${linked.length > 1 ? 'them' : 'it'} separately if needed.` : ''}`)) return;
+    setSaving(true); setError('');
+    try {
+      const response = await fetch(`/api/v3/records/donorContacts/${encodeURIComponent(call.id)}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ revision: call.revision }) });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Unable to delete this call.');
+      onDeleted?.(call); onClose();
+    } catch (reason: any) { setError(reason.message || 'Unable to delete this call.'); } finally { setSaving(false); }
   };
   const row = (label: string, value: React.ReactNode) => value ? <div className="call-detail-row"><span>{label}</span><div>{value}</div></div> : null;
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 680, width: '94%', maxHeight: '92vh', overflowY: 'auto' }}>
@@ -51,6 +63,6 @@ export const CallDetailsModal: React.FC<{ call: CallRecord; onClose: () => void;
         <label className="form-group" style={{ margin: 0 }}><span>Discussion and notes</span><textarea rows={8} value={notes} onChange={event => setNotes(event.target.value)} /></label>
       </div> : <div><div style={{ fontWeight: 800, color: 'var(--navy)', marginBottom: 6 }}>Discussion and notes</div><div className="call-notes">{call.notes || <span style={{ color: 'var(--text-muted)' }}>No notes.</span>}</div></div>}
     </div>
-    <div className="modal-footer">{editing ? <><button type="button" className="btn btn-secondary" disabled={saving} onClick={() => { setEditing(false); setOutcome(call.outcome); setNotes(call.notes || ''); }}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save'}</button></> : <><button type="button" className="btn btn-secondary" onClick={() => setEditing(true)}>Edit notes</button><button type="button" className="btn btn-primary" onClick={onClose}>Close</button></>}</div>
+    <div className="modal-footer">{editing ? <><button type="button" className="btn btn-secondary" disabled={saving} onClick={() => { setEditing(false); setOutcome(call.outcome); setNotes(call.notes || ''); }}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save'}</button></> : <>{onDeleted && <button type="button" className="btn btn-danger" disabled={saving} onClick={() => void remove()} style={{ marginRight: 'auto' }}>{saving ? 'Deleting…' : 'Delete call'}</button>}<button type="button" className="btn btn-secondary" onClick={() => setEditing(true)}>Edit notes</button><button type="button" className="btn btn-primary" onClick={onClose}>Close</button></>}</div>
   </div></div>;
 };

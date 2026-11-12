@@ -361,3 +361,15 @@ describe('call tracker Yiddish names and fundraisers', () => {
     expect((await call('POST', '/v3/fundraiser-payouts', { requestId: crypto.randomUUID(), fundraiserId: 'f1', amount: 70, date: '2026-11-11', sourceAccountId: 'bmo' })).status).toBe(409);
   });
 });
+
+describe('deleting a call', () => {
+  it('removes the call and its call-back reminder', async () => {
+    const { call } = setup();
+    const saved = await call('POST', '/v3/donor-contacts', { donorId: 'd1', date: '2026-11-12', fundraiserId: 'f1', outcome: 'Call back', notes: 'Busy', followUpDate: '2026-11-20', requestId: crypto.randomUUID() });
+    expect((await call('GET', '/v3/tasks?status=pending')).body.items.some((task: any) => task.dueDate === '2026-11-20')).toBe(true);
+    const removed = await call('DELETE', `/v3/records/donorContacts/${saved.body.item.id}`, { revision: saved.body.item.revision });
+    expect(removed.status).toBe(200);
+    expect((await call('GET', '/v3/donor-contacts')).body.items).toHaveLength(0);
+    expect((await call('GET', '/v3/tasks?status=pending')).body.items.some((task: any) => task.dueDate === '2026-11-20')).toBe(false);
+  });
+});

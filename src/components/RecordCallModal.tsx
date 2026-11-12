@@ -6,6 +6,7 @@ import { CloudPaymentMethods } from './CloudPaymentMethods';
 import { CloudDonorProfileModal } from './CloudDonorProfileModal';
 import { OnlineDonorForm, type OnlineDonor } from './OnlineDonorForm';
 import { donorNames } from '../utils/donorNames';
+import { PledgeFormModal } from './PledgeFormModal';
 
 type Donor = { id: string; name: string; email?: string; phone?: string; address?: string; city?: string; preTitle?: string; hebFirstName?: string; hebLastName?: string; title?: string; postTitle?: string };
 type DonorBalance = { year: number; thisYear: number; total: number; pledgedThisYear: number };
@@ -55,6 +56,7 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
   const [balance, setBalance] = useState<DonorBalance | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [editingDonor, setEditingDonor] = useState<OnlineDonor | null>(null);
+  const [showPledge, setShowPledge] = useState(false);
   const keys = useRef({ pledge: crypto.randomUUID(), contact: crypto.randomUUID() });
   const pledgeIdRef = useRef('');
   const set = (field: string, value: any) => setForm(current => ({ ...current, [field]: value }));
@@ -98,48 +100,70 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
     } catch { /* the payment itself is saved; the link is only a convenience */ }
   };
 
+  // Check the call details before anything is saved.
+  const callProblem = () => {
+    if (!donor) return 'Choose the donor.';
+    if (!form.date) return 'Choose the date of the call.';
+    if (!form.outcome) return 'Choose what the donor answered.';
+    if (form.outcome === 'Call back' && !form.followUpDate) return 'Choose the date to call back.';
+    if (!form.notes.trim() && !['No answer', 'Left message'].includes(form.outcome)) return 'Write what the donor said.';
+    return '';
+  };
+  // Save the call itself. For "Pledged" and "Paid" this runs only after the pledge / payment was saved,
+  // so a declined card never leaves a half-finished call behind.
+  const submitCall = async (links: { pledgeId?: string; pledgeAmount?: number; paymentId?: string; recurringId?: string } = {}) => {
+    if (!donor) return null;
+    const body: any = { donorId: donor.id, date: form.date, fundraiserId: form.fundraiserId, campaignId: form.campaignId, outcome: form.outcome, notes: form.notes.trim(), requestId: keys.current.contact };
+    if (links.pledgeId) body.pledgeId = links.pledgeId;
+    if (links.paymentId) body.paymentId = links.paymentId;
+    if (links.recurringId) body.recurringId = links.recurringId;
+    if (form.outcome === 'Call back') body.followUpDate = form.followUpDate;
+    if (form.outcome === 'Pick up') Object.assign(body, { pickupDate: form.pickupDate, pickupAmount: form.pickupAmount, pickupAddress: form.pickupAddress });
+    const result = await post('/api/v3/donor-contacts', keys.current.contact, body);
+    const record = { contactId: String(result.item.id), revision: Number(result.item.revision || 1), pledgeId: links.pledgeId || '', pledgeAmount: Number(links.pledgeAmount || 0) };
+    setSaved(record); onSaved();
+    return record;
+  };
   const saveCall = async () => {
     setError('');
-    if (!donor) { setError('Choose the donor.'); return; }
-    if (!form.date) { setError('Choose the date of the call.'); return; }
-    if (!form.outcome) { setError('Choose what the donor answered.'); return; }
-    const pledgeAmount = Number(form.pledgeAmount);
-    if (form.outcome === 'Pledged' && !(pledgeAmount > 0)) { setError('Enter the pledge amount.'); return; }
-    if (form.outcome === 'Call back' && !form.followUpDate) { setError('Choose the date to call back.'); return; }
-    if (!form.notes.trim() && !['No answer', 'Left message'].includes(form.outcome)) { setError('Write what the donor said.'); return; }
+    const problem = callProblem(); if (problem) { setError(problem); return; }
+    if (form.outcome === 'Pledged') {
+      // If the pledge was already saved but the call was not, just save the call (never a second pledge).
+      if (pledgeIdRef.current) { void afterPledgeSaved({ id: pledgeIdRef.current, amount: saved?.pledgeAmount }); return; }
+      setShowPledge(true); return;                                       // pledge window first
+    }
+    if (form.outcome === 'Paid') { setStep('payment'); return; }        // payment window first
     setSaving(true);
     try {
-      let pledgeId = pledgeIdRef.current;
-      if (form.outcome === 'Pledged' && !pledgeId) {
-        const data: any = { donorId: donor.id, amount: pledgeAmount, currency: form.pledgeCurrency, date: form.date, notes: form.notes.trim() };
-        if (form.campaignId) data.campaignId = form.campaignId;
-        const commission = Number(fundraisers.find(item => item.id === form.fundraiserId)?.percentage || 0);
-        if (form.fundraiserId && commission > 0 && commission <= 100) data.fundraiserAllocations = [{ fundraiserId: form.fundraiserId, percentage: commission }];
-        const result = await post('/api/v3/records/pledges', keys.current.pledge, { data });
-        pledgeId = String(result.item?.id || ''); pledgeIdRef.current = pledgeId;
-      }
-      const body: any = { donorId: donor.id, date: form.date, fundraiserId: form.fundraiserId, campaignId: form.campaignId, outcome: form.outcome, notes: form.notes.trim(), pledgeId, requestId: keys.current.contact };
-      if (form.outcome === 'Call back') body.followUpDate = form.followUpDate;
-      if (form.outcome === 'Pick up') Object.assign(body, { pickupDate: form.pickupDate, pickupAmount: form.pickupAmount, pickupAddress: form.pickupAddress });
-      const result = await post('/api/v3/donor-contacts', keys.current.contact, body);
-      setSaved({ contactId: String(result.item.id), revision: Number(result.item.revision || 1), pledgeId, pledgeAmount });
-      onSaved();
-      if (form.outcome === 'Paid') setStep('payment');
-      else if (form.outcome === 'Pledged' && form.setUpPayments) setStep('recurring');
-      else {
-        setDoneMessage(form.outcome === 'Pledged' ? 'Call and pledge saved.' : form.outcome === 'Call back' ? `Call saved. A reminder to call back was set for ${form.followUpDate}.` : form.outcome === 'Pick up' ? 'Call saved. The donor was added to the pickup list on the Dashboard.' : 'Call saved.');
-        setStep('done');
-      }
-    } catch (reason: any) {
-      setError(reason.message || 'Unable to save the call.');
-    } finally { setSaving(false); }
+      await submitCall();
+      setDoneMessage(form.outcome === 'Call back' ? `Call saved. A reminder to call back was set for ${form.followUpDate}.` : form.outcome === 'Pick up' ? 'Call saved. The donor was added to the pickup list on the Dashboard.' : 'Call saved.');
+      setStep('done');
+    } catch (reason: any) { setError(reason.message || 'Unable to save the call.'); }
+    finally { setSaving(false); }
+  };
+  const afterPledgeSaved = async (pledge: any) => {
+    setShowPledge(false); setSaving(true); setError('');
+    pledgeIdRef.current = String(pledge?.id || '');
+    try {
+      await submitCall({ pledgeId: pledgeIdRef.current, pledgeAmount: Number(pledge?.amount || 0) });
+      if (form.setUpPayments) setStep('recurring'); else { setDoneMessage('Call and pledge saved.'); setStep('done'); }
+    } catch (reason: any) { setError(`The pledge was saved, but the call was not: ${reason.message || 'please try again'}. Press the button again to save the call.`); }
+    finally { setSaving(false); }
+  };
+  const afterPaymentSaved = async (links: { paymentId?: string; recurringId?: string }, message: string) => {
+    try {
+      if (saved) { await linkToCall(links as Record<string, string>); }
+      else await submitCall(links);
+      setDoneMessage(message);
+    } catch (reason: any) { setDoneMessage(`${message.replace('Call and p', 'P')} But the call itself could not be saved (${reason.message || 'error'}). Please record the call again.`); }
+    setStep('done');
   };
 
   const outcomeButton = (item: typeof CALL_OUTCOMES[number]) => <button key={item.value} type="button" className={`call-outcome ${form.outcome === item.value ? 'is-selected' : ''}`} onClick={() => set('outcome', item.value)}>
     <strong>{item.label}</strong>{item.hint && <small>{item.hint}</small>}
   </button>;
 
-  const title = step === 'payment' ? `Payment from ${donor?.name}` : step === 'recurring' ? `Set up payments for ${donor?.name}` : 'Record a Call';
+  const title = step === 'payment' ? `Payment from ${donorNames(donor).main}` : step === 'recurring' ? `Set up payments for ${donor?.name}` : 'Record a Call';
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 900, width: '94%', maxHeight: '94vh', overflowY: 'auto' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>{title}</h2><button type="button" className="modal-close" onClick={onClose}><X size={20} /></button></div>
     <div className="modal-body">
@@ -163,12 +187,11 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
 
         <div><div style={{ fontWeight: 800, color: 'var(--navy)', marginBottom: 8 }}>What did he answer? *</div><div className="call-outcomes">{CALL_OUTCOMES.map(outcomeButton)}</div></div>
 
-        {form.outcome === 'Pledged' && <div className="call-step-box form-grid-2">
-          <label className="form-group" style={{ margin: 0 }}><span>Pledge amount *</span><input type="number" min="0" step="0.01" value={form.pledgeAmount} onChange={event => set('pledgeAmount', event.target.value)} /></label>
-          <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={form.pledgeCurrency} onChange={event => set('pledgeCurrency', event.target.value)}><option>CAD</option><option>USD</option></select></label>
-          <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700 }}><input type="checkbox" checked={form.setUpPayments} onChange={event => set('setUpPayments', event.target.checked)} /> Set up payments for this pledge now (card or other)</label>
+        {form.outcome === 'Pledged' && <div className="call-step-box" style={{ display: 'grid', gap: 8 }}>
+          <div style={{ color: 'var(--text-muted)' }}>The full pledge window opens next, with all the options of the Pledges page (amount, currency, date, fundraiser team, reminder). The call is saved after the pledge.</div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700 }}><input type="checkbox" checked={form.setUpPayments} onChange={event => set('setUpPayments', event.target.checked)} /> After the pledge, set up payments for it (card or other)</label>
         </div>}
-        {form.outcome === 'Paid' && <div className="call-step-box" style={{ color: 'var(--text-muted)' }}>After you save the call, the payment form opens right here. You can charge a card through Sola, add a new card, or enter a check, cash, etc.</div>}
+        {form.outcome === 'Paid' && <div className="call-step-box" style={{ color: 'var(--text-muted)' }}>Next, choose how he paid: card through Sola, check, cash, bank transfer… and the account. The call is saved only after the payment is saved, so if a card is declined you can try another way.</div>}
         {form.outcome === 'Call back' && <div className="call-step-box form-grid-2">
           <label className="form-group" style={{ margin: 0 }}><span>Call back on *</span><input type="date" value={form.followUpDate} onChange={event => set('followUpDate', event.target.value)} /></label>
           <div style={{ color: 'var(--text-muted)', fontSize: 13, alignSelf: 'end' }}>A reminder will show in the bell 🔔 and on the Tasks page on that day{form.fundraiserId ? ', with the fundraiser’s name' : ''}.</div>
@@ -180,20 +203,20 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
         </div>}
 
         <label className="form-group" style={{ margin: 0 }}><span>Discussion — exactly what he said {['No answer', 'Left message'].includes(form.outcome) ? '' : '*'}</span><textarea rows={5} value={form.notes} onChange={event => set('notes', event.target.value)} placeholder="Write the whole conversation and any notes" /></label>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={() => void saveCall()}>{saving ? 'Saving…' : form.outcome === 'Paid' ? 'Save Call & Enter Payment' : form.outcome === 'Pledged' && form.setUpPayments ? 'Save Call & Set Up Payments' : 'Save Call'}</button></div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={() => void saveCall()}>{saving ? 'Saving…' : form.outcome === 'Paid' ? 'Next: Enter Payment →' : form.outcome === 'Pledged' ? 'Next: Enter Pledge →' : 'Save Call'}</button></div>
       </div>}
 
       {step === 'payment' && donor && <div style={{ display: 'grid', gap: 14 }}>
-        <div className="call-saved-note"><CheckCircle2 size={18} /> The call is saved. Now enter how he paid.</div>
+        <div className="call-step-box" style={{ color: 'var(--text-muted)' }}>Enter how he paid. <strong>The call is saved after the payment is saved.</strong> If the card is declined, you can change the method and try again, or go back.</div>
         <div><button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowCards(value => !value)}>{showCards ? 'Hide cards' : '💳 Add a new card / see saved cards'}</button>{showCards && <div style={{ marginTop: 10 }}><CloudPaymentMethods donorId={donor.id} /><div style={{ color: 'var(--text-muted)', fontSize: 12.5, marginTop: 6 }}>After adding a card, click “Hide cards”. The new card will then show in the form below.</div></div>}</div>
-        <OnlinePaymentForm key={showCards ? 'cards-open' : 'cards-closed'} donor={{ id: donor.id, name: donor.name, email: donor.email }} onCancel={() => { setDoneMessage('Call saved. No payment was entered.'); setStep('done'); }} onCreated={(status, item) => { if (item?.id) void linkToCall({ paymentId: String(item.id) }); setDoneMessage(status === 'pending' ? 'Call saved and payment saved as pending.' : 'Call and payment saved.'); setStep('done'); onSaved(); }} />
+        <OnlinePaymentForm key={showCards ? 'cards-open' : 'cards-closed'} donor={{ id: donor.id, name: donor.name, email: donor.email }} onCancel={() => setStep('call')} onCreated={(status, item) => void afterPaymentSaved(item?.id ? { paymentId: String(item.id) } : {}, status === 'pending' ? 'Call saved and payment saved as pending.' : 'Call and payment saved.')} />
         <div style={{ textAlign: 'right' }}><button type="button" className="btn btn-ghost btn-sm" onClick={() => setStep('recurring')}>He wants monthly / recurring payments instead →</button></div>
       </div>}
 
       {step === 'recurring' && donor && <div style={{ display: 'grid', gap: 14 }}>
-        <div className="call-saved-note"><CheckCircle2 size={18} /> The call{saved?.pledgeId ? ' and pledge are' : ' is'} saved. Now set up the payments.</div>{saved?.pledgeAmount ? <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>The pledge is ${saved.pledgeAmount.toLocaleString('en-CA')}. Enter the amount of <strong>each</strong> payment (for example, the monthly amount).</div> : null}
+        {saved ? <div className="call-saved-note"><CheckCircle2 size={18} /> The call{saved.pledgeId ? ' and pledge are' : ' is'} saved. Now set up the payments.</div> : <div className="call-step-box" style={{ color: 'var(--text-muted)' }}>Set up the payments. <strong>The call is saved after the payments are set up.</strong></div>}{saved?.pledgeAmount ? <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>The pledge is ${saved.pledgeAmount.toLocaleString('en-CA')}. Enter the amount of <strong>each</strong> payment (for example, the monthly amount).</div> : null}
         <div><button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowCards(value => !value)}>{showCards ? 'Hide cards' : '💳 Add a new card / see saved cards'}</button>{showCards && <div style={{ marginTop: 10 }}><CloudPaymentMethods donorId={donor.id} /></div>}</div>
-        <CloudRecurringPaymentForm key={showCards ? 'cards-open' : 'cards-closed'} donor={{ id: donor.id, name: donor.name }} defaultPledgeId={saved?.pledgeId || undefined} onCancel={() => { setDoneMessage('Call saved. No payments were set up.'); setStep('done'); }} onCreated={schedule => { if (schedule?.id) void linkToCall({ recurringId: String(schedule.id) }); setDoneMessage('Call saved and payments set up.'); setStep('done'); onSaved(); }} />
+        <CloudRecurringPaymentForm key={showCards ? 'cards-open' : 'cards-closed'} donor={{ id: donor.id, name: donor.name }} defaultPledgeId={saved?.pledgeId || undefined} onCancel={() => { if (saved) { setDoneMessage('Call saved. No payments were set up.'); setStep('done'); } else setStep('payment'); }} onCreated={schedule => void afterPaymentSaved(schedule?.id ? { recurringId: String(schedule.id) } : {}, 'Call saved and payments set up.')} />
       </div>}
 
       {step === 'done' && <div style={{ textAlign: 'center', padding: 30 }}>
@@ -203,6 +226,7 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
         <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
       </div>}
     </div>
+    {showPledge && donor && <PledgeFormModal defaultDonor={{ id: donor.id, name: donorNames(donor).main }} defaults={{ date: form.date, notes: form.notes.trim(), fundraiserAllocations: (() => { const commission = Number(fundraisers.find(item => item.id === form.fundraiserId)?.percentage || 0); return form.fundraiserId && commission > 0 && commission <= 100 ? [{ fundraiserId: form.fundraiserId, percentage: commission }] : []; })() }} onClose={() => setShowPledge(false)} onSaved={item => void afterPledgeSaved(item)} />}
     {showProfile && donor && <CloudDonorProfileModal donorId={donor.id} onClose={() => setShowProfile(false)} onEdit={item => { setShowProfile(false); setEditingDonor(item); }} />}
     {editingDonor && <div className="modal-overlay" onClick={() => setEditingDonor(null)}><div onClick={event => event.stopPropagation()} style={{ width: 'min(900px,94vw)', maxHeight: '92vh', overflowY: 'auto' }}><OnlineDonorForm donor={editingDonor} onCancel={() => setEditingDonor(null)} onSaved={() => setEditingDonor(null)} onConflict={() => setEditingDonor(null)} /></div></div>}
   </div></div>;
