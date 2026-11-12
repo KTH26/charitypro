@@ -634,7 +634,7 @@ export const OnlineBank: React.FC = () => {
                 Remove Bank
               </button>
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Each bank keeps its own saved feed. Transactions load automatically when you open a bank tab. Sync only checks for newer transactions, starting from {startDate ? `your selected date (${startDate})` : lastSyncDate ? `the last successful sync (${lastSyncDate})` : "the last 30 days for this first sync"}.</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Each bank keeps its own saved feed. Transactions load automatically when you open a bank tab. Sync starts from {startDate ? `your selected date (${startDate})` : lastSyncDate ? `7 days before the last sync (${lastSyncDate}), and from any charge still pending, so charges that post later are updated` : "the last 30 days for this first sync"}. Nothing is added twice.</div>
           </section>
         )}
         {matching && (

@@ -199,6 +199,19 @@ export const calculateCreditCardDue = (cards: { id: string; name: string; curren
  *   otherwise the pending row is removed and the posted row is kept.
  * - Saving again never brings back a row the user deleted, and keeps "dismissed".
  */
+/**
+ * Where the next bank sync starts. It always goes back 7 days before the last sync, and further back
+ * to the oldest charge still marked pending, so charges that post late (or change) are picked up again.
+ */
+export const bankSyncStartDate = (lastSuccessfulDate: string, oldestPendingDate?: string | null) => {
+  const last = new Date(`${lastSuccessfulDate}T00:00:00Z`);
+  if (Number.isNaN(last.getTime())) return '';
+  last.setUTCDate(last.getUTCDate() - 7);
+  let start = last.toISOString().slice(0, 10);
+  const pending = isoDate(oldestPendingDate);
+  if (pending && pending < start) start = pending;
+  return start;
+};
 export const buildBankFeedSaveStatements = async (db: any, accountId: string, transactions: any[], now: number) => {
   const rowId = (transactionId: string) => `${accountId}:${transactionId}`;
   const ids = new Set<string>();

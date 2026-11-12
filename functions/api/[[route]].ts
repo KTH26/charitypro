@@ -4,7 +4,7 @@ import { requireAuth } from './middleware';
 import { getRequiredPermission, hasPermission } from './permissions';
 import { validatePayload } from './validation';
 import { isOperationAlreadyApplied } from './idempotency';
-import { registerServerDataRoutes, buildBankFeedSaveStatements } from './server-data';
+import { registerServerDataRoutes, buildBankFeedSaveStatements, bankSyncStartDate } from './server-data';
 
 const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string, ENABLE_DEBUG_ENDPOINTS?: string, CRON_SECRET?: string, SOLA_API_KEY?: string } }>().basePath('/api')
 
@@ -174,7 +174,11 @@ app.post('/plaid/transactions', async (c) => {
     } catch { /* A first-time connection has no saved sync cursor yet. */ }
     let startDateObj = new Date();
     startDateObj.setDate(startDateObj.getDate() - 30);
-    if (priorSync?.lastSuccessfulDate) startDateObj = new Date(`${priorSync.lastSuccessfulDate}T00:00:00Z`);
+    if (priorSync?.lastSuccessfulDate) {
+      const oldestPending: any = await c.env.DB.prepare("SELECT MIN(json_extract(data,'$.date')) AS date FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=? AND json_extract(data,'$.pending')=1").bind(accountId).first();
+      const start = bankSyncStartDate(String(priorSync.lastSuccessfulDate), oldestPending?.date);
+      if (start) startDateObj = new Date(`${start}T00:00:00Z`);
+    }
     if (clientStartDate) startDateObj = new Date(`${clientStartDate}T00:00:00Z`);
 
     let endDateObj = new Date();

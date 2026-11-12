@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { buildBankFeedSaveStatements, registerServerDataRoutes, creditCardCycle } from '../functions/api/server-data';
+import { bankSyncStartDate, buildBankFeedSaveStatements, registerServerDataRoutes, creditCardCycle } from '../functions/api/server-data';
 
 const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
 
@@ -304,5 +304,14 @@ describe('bank feed: pending charges, all tab, and delete forever', () => {
     await save(db, [{ transaction_id: 'a', date: '2026-10-01', name: 'A', amount: 5 }], 3); // the bank sends it again
     const after = await call('POST', '/v3/bank/records', { accountId: 'bmo', matchStatus: 'all' });
     expect(after.body.items.map((item: any) => item.id)).toEqual(['b']);
+  });
+});
+
+describe('bank sync start date', () => {
+  it('goes back 7 days before the last sync, or further to the oldest pending charge', () => {
+    expect(bankSyncStartDate('2026-11-12')).toBe('2026-11-05');
+    expect(bankSyncStartDate('2026-11-12', '2026-11-08')).toBe('2026-11-05');
+    expect(bankSyncStartDate('2026-11-12', '2026-10-30')).toBe('2026-10-30');
+    expect(bankSyncStartDate('2026-01-03')).toBe('2025-12-27');
   });
 });
