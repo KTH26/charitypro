@@ -4,6 +4,7 @@ import { usePlaidLink } from "react-plaid-link";
 import { OnlinePaymentForm } from "../components/OnlinePaymentForm";
 import { CloudTransactionModal } from "../components/CloudTransactionModal";
 import { LoanDueDateField, isLoanAccount } from "../components/LoanDueDateField";
+import { CloudAddAccountModal } from "../components/CloudAddAccountModal";
 
 type BankAccount = {
   id: string;
@@ -109,6 +110,8 @@ export const OnlineBank: React.FC = () => {
   const [depositAction, setDepositAction] = useState<"payments" | "refund" | "transfer" | "transfer_in">("payments");
   const [transferInSourceId, setTransferInSourceId] = useState("");
   const [transferInLoanDueDate, setTransferInLoanDueDate] = useState("");
+  // Add a new account right from the transfer choices; it is then selected in that list.
+  const [addAccountFor, setAddAccountFor] = useState<"" | "transfer_in" | "transfer_out">("");
   const [refundCandidates, setRefundCandidates] = useState<RefundCandidate[]>([]);
   const [refundBillId, setRefundBillId] = useState("");
   const [incomingTransferCandidates,setIncomingTransferCandidates]=useState<IncomingTransferCandidate[]>([]);
@@ -857,6 +860,7 @@ export const OnlineBank: React.FC = () => {
                         })}
                       </select>
                     </label>
+                    <button type="button" className="link-button" style={{ justifySelf: "start", marginTop: -8 }} onClick={() => setAddAccountFor("transfer_in")}>+ Add a new account</button>
                     <LoanDueDateField account={source} value={transferInLoanDueDate} onChange={setTransferInLoanDueDate} />
                     <div style={{ color: "var(--text-muted)", fontSize: 13 }}>This saves a transfer of ${Math.abs(matching.amount).toFixed(2)} from that account into {selectedAccount?.name || "this bank"}. No donation or expense is created.</div>
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -974,6 +978,7 @@ export const OnlineBank: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                  <button type="button" className="link-button" style={{ marginTop: 6 }} onClick={() => setAddAccountFor("transfer_out")}>+ Add a new account</button>
                 </label>
               )}
               <div
@@ -1203,6 +1208,19 @@ export const OnlineBank: React.FC = () => {
           )}
         </section>
       </div>
+      {addAccountFor && (
+        <CloudAddAccountModal
+          hint="Leave the starting balance at 0 if this bank transaction is the first money in or out of this account. The transfer you save will add it, so it won't be counted twice."
+          onClose={() => setAddAccountFor("")}
+          onSaved={(account) => {
+            setAllAccounts((current) => [...current, account]);
+            if (addAccountFor === "transfer_in") setTransferInSourceId(account.id);
+            else setTargetAccountId(account.id);
+            setAddAccountFor("");
+            setNotice(`Account "${account.name}" was added and selected.`);
+          }}
+        />
+      )}
     </main>
   );
 };

@@ -8,7 +8,7 @@ const kinds: Record<string, { value: string; label: string }[]> = {
 };
 
 /** Form to add a new account to the Chart of Accounts. */
-export const CloudAddAccountModal: React.FC<{ onClose: () => void; onSaved: (account: any) => void; mode?: 'account' | 'category' }> = ({ onClose, onSaved, mode = 'account' }) => {
+export const CloudAddAccountModal: React.FC<{ onClose: () => void; onSaved: (account: any) => void; mode?: 'account' | 'category'; hint?: string }> = ({ onClose, onSaved, mode = 'account', hint }) => {
   const isCategoryMode = mode === 'category';
   const [form, setForm] = useState({ name: '', type: isCategoryMode ? 'expense' : 'asset', subType: isCategoryMode ? '' : 'checking', currency: 'CAD', startingBalance: '0', loanDueDate: '', statementDay: '', paymentDueDay: '' });
   const [saving, setSaving] = useState(false); const [error, setError] = useState(''); const requestId = useRef('');
@@ -42,7 +42,7 @@ export const CloudAddAccountModal: React.FC<{ onClose: () => void; onSaved: (acc
   };
   return <div className="modal-overlay" onClick={onClose}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={save} style={{ maxWidth: 600, width: '94%' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>{isCategoryMode ? 'New Category' : 'New Account'}</h2><button type="button" className="modal-close" onClick={onClose}><X size={20} /></button></div>
-    <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
+    <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}{hint && <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--bg-input)', color: 'var(--navy)', fontSize: 13, marginBottom: 14 }}>{hint}</div>}
       <div className="form-grid-2">
         <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Account name *</span><input autoFocus value={form.name} onChange={event => set('name', event.target.value)} placeholder="For example: BMO Chequing, Loan from Reuven, Visa" /></label>
         <label className="form-group" style={{ margin: 0 }}><span>{isCategoryMode ? 'Category type *' : 'Account type *'}</span><select value={form.type} onChange={event => changeType(event.target.value)}>{isCategoryMode ? <><option value="expense">Expense category</option><option value="revenue">Income category</option></> : <><option value="asset">Asset (bank, cash)</option><option value="liability">Liability (loan, credit card)</option><option value="equity">Equity</option></>}</select></label>
