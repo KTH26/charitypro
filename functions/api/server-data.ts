@@ -3225,19 +3225,139 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, startDate: window.start, endDate: window.end, items: result.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor' })) });
   });
 
+  // Paid expenses that can still be refunded. Shows every refundable expense (not only ones
+  // bigger than the deposit), filtered by a search on vendor, memo, category, amount, or date.
   app.get('/v3/bank/refund-candidates', async (c: any) => {
     const denied = requirePermission(c, 'bills.read'); if (denied) return denied;
-    const accountId=String(c.req.query('accountId')||'');const amount=Number(c.req.query('amount'));
-    if(!accountId||!Number.isFinite(amount)||amount<=0)return c.json({success:false,error:'Bank account and positive refund amount are required.'},400);
-    const account:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId).first();
-    if(!account)return c.json({success:false,error:'Bank account not found.'},404);const accountData=parseSetting(account.data,{});
-    const rows=await c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,
+    const accountId = String(c.req.query('accountId') || '');
+    const search = String(c.req.query('search') || '').trim().toLowerCase().slice(0, 200);
+    if (!accountId) return c.json({ success: false, error: 'Bank account is required.' }, 400);
+    const account: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId).first();
+    if (!account) return c.json({ success: false, error: 'Bank account not found.' }, 404);
+    const accountData = parseSetting(account.data, {});
+    const words = search.split(/\s+/).filter(Boolean);
+    const firstWord = words[0] ? `%${words[0].replace(/[%_]/g, '')}%` : '%';
+    const rows = await c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,
       COALESCE((SELECT SUM(ABS(COALESCE(json_extract(r.data,'$.amount'),0))) FROM sync_records r WHERE r.type='bills' AND r.is_deleted=0 AND json_extract(r.data,'$.refundOfBillId')=b.id),0) AS refunded
       FROM sync_records b LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
       WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid' AND COALESCE(json_extract(b.data,'$.refundOfBillId'),'')=''
-      ORDER BY COALESCE(json_extract(b.data,'$.paidDate'),json_extract(b.data,'$.dueDate')) DESC,b.id DESC LIMIT 500`).all();
-    const items=rows.results.map((row:any)=>{const bill:any={...parseRecord(row),categoryName:row.category_name||'Uncategorized'};const rate=accountData.currency==='CAD'&&bill.currency==='USD'?Number(bill.exchangeRate||1.35):1;const refundable=Math.max(0,(Math.abs(Number(bill.amount||0))-Number(row.refunded||0))*rate);return {...bill,refundableAmount:refundable};}).filter((bill:any)=>bill.refundableAmount+0.005>=amount);
-    return c.json({success:true,items});
+        AND (lower(b.data) LIKE ? OR lower(COALESCE(json_extract(cat.data,'$.name'),'')) LIKE ?)
+      ORDER BY COALESCE(json_extract(b.data,'$.paidDate'),json_extract(b.data,'$.dueDate')) DESC,b.id DESC LIMIT 2000`).bind(firstWord, firstWord).all();
+    const items: any[] = [];
+    for (const row of rows.results as any[]) {
+      const bill: any = { ...parseRecord(row), categoryName: row.category_name || 'Uncategorized' };
+      const rate = accountData.currency === 'CAD' && bill.currency === 'USD' ? Number(bill.exchangeRate || 1.35) : 1;
+      const refundableAmount = Math.max(0, (Math.abs(Number(bill.amount || 0)) - Number(row.refunded || 0)) * rate);
+      if (refundableAmount < 0.005) continue;
+      const text = [bill.vendor, bill.memo, bill.categoryName, bill.internalCategory, bill.paidDate, bill.dueDate, Math.abs(Number(bill.amount || 0)).toFixed(2)].join(' ').toLowerCase();
+      if (words.some(word => !text.includes(word))) continue;
+      items.push({ ...bill, refundableAmount: Math.round(refundableAmount * 100) / 100 });
+      if (items.length >= 200) break;
+    }
+    return c.json({ success: true, items });
+  });
+
+  // Match one bank deposit as a refund of one or more paid expenses.
+  // The deposit is split across the chosen expenses in the order they were chosen; each one gets
+  // at most what is still refundable on it. Every chosen expense must get part of the refund.
+  app.post('/v3/bank/match-refund', async (c: any) => {
+    const denied = requirePermission(c, 'bills.mark_paid'); if (denied) return denied;
+    const body = await c.req.json();
+    const requestId = String(c.req.header('Idempotency-Key') || body.requestId || '').trim();
+    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
+    const mutationId = `v3-bank-refund-${requestId}`;
+    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
+    const accountId = String(body.accountId || '').trim();
+    const bankTransactionId = String(body.bankTransactionId || '').trim();
+    const bankDate = String(body.bankDate || '').trim();
+    const description = String(body.description || 'Expense refund').trim().slice(0, 500);
+    const amount = Math.round(Number(body.amount) * 100) / 100;
+    const requested: any[] = Array.isArray(body.bills) ? body.bills : (body.billId ? [{ billId: body.billId, revision: body.revision }] : []);
+    const picks: { billId: string; revision: number }[] = [];
+    for (const item of requested) {
+      const billId = String(item?.billId || '').trim(); const revision = Number(item?.revision);
+      if (!billId || !Number.isInteger(revision)) return c.json({ success: false, error: 'Each chosen expense needs its id and version.' }, 400);
+      if (!picks.some(pick => pick.billId === billId)) picks.push({ billId, revision });
+    }
+    if (!accountId || !bankTransactionId || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(bankDate) || !Number.isFinite(amount) || amount <= 0 || picks.length === 0 || picks.length > 100) {
+      return c.json({ success: false, error: 'Bank deposit, date, positive refund amount, and at least one expense are required.' }, 400);
+    }
+    const [accountRow, matchRow, linkedRow, billRows] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId),
+      c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0"),
+      c.env.DB.prepare("SELECT id FROM sync_records WHERE is_deleted=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')=? LIMIT 1").bind(bankTransactionId),
+      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,
+        COALESCE((SELECT SUM(ABS(COALESCE(json_extract(r.data,'$.amount'),0))) FROM sync_records r WHERE r.type='bills' AND r.is_deleted=0 AND json_extract(r.data,'$.refundOfBillId')=b.id),0) AS refunded
+        FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND b.id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(picks.map(pick => pick.billId)))
+    ]);
+    const account: any = accountRow.results[0]; const match: any = matchRow.results[0];
+    if (!account) return c.json({ success: false, error: 'Bank account not found.' }, 404);
+    const accountData = parseSetting(account.data, {});
+    if (accountData.type !== 'asset' || !accountData.plaidConnected) return c.json({ success: false, error: 'Choose a connected asset account.' }, 409);
+    if (linkedRow.results[0]) return c.json({ success: false, error: 'This bank deposit is already matched.' }, 409);
+    if (!match) return c.json({ success: false, error: 'Bank match history is unavailable.' }, 500);
+    const matchedIds: string[] = Array.isArray(parseSetting(match.data, [])) ? parseSetting(match.data, []) : [];
+    if (matchedIds.includes(bankTransactionId)) return c.json({ success: false, error: 'This bank deposit is already matched.' }, 409);
+    const byId = new Map((billRows.results as any[]).map(row => [String(row.id), row]));
+
+    // Split the refund across the chosen expenses.
+    let remaining = amount;
+    const allocations: { billId: string; revision: number; bill: any; inBillCurrency: number }[] = [];
+    let totalRefundable = 0;
+    for (const pick of picks) {
+      const row: any = byId.get(pick.billId);
+      if (!row) return c.json({ success: false, error: 'One of the chosen expenses was not found. Search again.', conflict: true }, 404);
+      if (Number(row.revision) !== pick.revision) return c.json({ success: false, error: 'One of the chosen expenses was changed. Search again and re-check it.', conflict: true }, 409);
+      const bill = parseSetting(row.data, {});
+      if (bill.status !== 'paid' || bill.refundOfBillId) return c.json({ success: false, error: `"${bill.vendor || 'Expense'}" is not a paid expense.` }, 409);
+      const rate = accountData.currency === 'CAD' && bill.currency === 'USD' ? Number(bill.exchangeRate || 1.35) : 1;
+      const refundable = Math.round(Math.max(0, Math.abs(Number(bill.amount || 0)) - Number(row.refunded || 0)) * rate * 100) / 100;
+      totalRefundable += refundable;
+      if (refundable < 0.005) return c.json({ success: false, error: `"${bill.vendor || 'Expense'}" was already fully refunded.` }, 409);
+      const part = Math.round(Math.min(remaining, refundable) * 100) / 100;
+      if (part < 0.005) return c.json({ success: false, error: `You chose more expenses than this refund covers. Uncheck "${bill.vendor || 'Expense'}".` }, 409);
+      remaining = Math.round((remaining - part) * 100) / 100;
+      allocations.push({ billId: pick.billId, revision: pick.revision, bill, inBillCurrency: part / rate });
+    }
+    if (remaining >= 0.005) return c.json({ success: false, error: `The chosen expenses only have $${totalRefundable.toFixed(2)} that can be refunded, but this refund is $${amount.toFixed(2)}. Choose more expenses.` }, 409);
+
+    const now = Date.now();
+    const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+    const matchAssertionId = `${mutationId}-match-assertion`; const matchOperationId = `${mutationId}-match-update`;
+    const nextMatchedData = JSON.stringify([...new Set([...matchedIds, bankTransactionId])]);
+    const assertionIds = [matchAssertionId];
+    const items: any[] = [];
+    const statements: any[] = [
+      c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(matchAssertionId, match.revision)
+    ];
+    allocations.forEach((allocation, index) => {
+      const { bill, billId } = allocation;
+      const billAssertionId = `${mutationId}-bill-assertion-${index}`; assertionIds.push(billAssertionId);
+      const id = crypto.randomUUID(); const operationId = `${mutationId}-refund-insert-${index}`;
+      const record = { id, vendor: bill.vendor || description, amount: -allocation.inBillCurrency, currency: bill.currency || accountData.currency || 'CAD', ...(bill.exchangeRate ? { exchangeRate: Number(bill.exchangeRate) } : {}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category: bill.category, internalCategory: bill.internalCategory || bill.taxCategory || '', sourceAccountId: accountId, offsetAccountId: bill.category, taxable: Boolean(bill.taxable), memo: allocations.length > 1 ? `${description} (part of a $${amount.toFixed(2)} refund for ${allocations.length} expenses)` : description, refundOfBillId: billId, bankTransactionId, ...(allocations.length > 1 ? { refundGroupId: mutationId } : {}) };
+      const data = JSON.stringify(record);
+      items.push({ ...record, revision: 1, updatedAt: now });
+      statements.push(
+        c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bills' AND id=? AND revision=? AND is_deleted=0) AND ?+COALESCE((SELECT SUM(ABS(COALESCE(json_extract(data,'$.amount'),0))) FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.refundOfBillId')=?),0)<=ABS(COALESCE((SELECT json_extract(data,'$.amount') FROM sync_records WHERE type='bills' AND id=?),0))+0.005 THEN 1 ELSE 0 END").bind(billAssertionId, billId, allocation.revision, allocation.inBillCurrency, billId, billId),
+        c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bills',?,?,1,0,?)").bind(id, data, now, operationId),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bills',1,'insert',?,?,?,?)").bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bills','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, mutationId, operationId, 'Linked incoming bank refund to original expense')
+      );
+    });
+    const response = { success: true, item: items[0], items, action: 'refund', originalBillId: allocations[0].billId, originalBillIds: allocations.map(allocation => allocation.billId) };
+    statements.push(
+      c.env.DB.prepare("UPDATE sync_records SET data=?,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0").bind(nextMatchedData, now, matchOperationId, match.revision),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=?").bind(mutationId, matchOperationId, Number(match.revision) + 1),
+      c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(assertionIds)),
+      c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(response), now)
+    );
+    try { await c.env.DB.batch(statements); return c.json(response); }
+    catch {
+      const repeated: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
+      if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
+      return c.json({ success: false, error: 'An expense or the bank match changed. Search again and try again.', conflict: true }, 409);
+    }
   });
 
   app.get('/v3/bank/incoming-transfer-candidates', async (c:any) => {
@@ -3267,35 +3387,6 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const matchedIds:string[]=Array.isArray(parseSetting(match.data,[]))?parseSetting(match.data,[]):[];if(matchedIds.includes(bankTransactionId))return c.json({success:false,error:'This credit-card deposit is already matched.'},409);
     const now=Date.now();const next={...old,toAccountId:accountId,destinationBankTransactionId:bankTransactionId};const data=JSON.stringify(next);const revision=expectedRevision+1;const nextMatchedData=JSON.stringify([...new Set([...matchedIds,bankTransactionId])]);const nextMatchRevision=Number(match.revision)+1;const operationId=`${mutationId}-transfer`;const matchOperationId=`${mutationId}-match`;const response={success:true,item:{...next,id:transferId,revision,updatedAt:now}};const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');
     try{await c.env.DB.batch([c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='accountTransfers' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,transferId,expectedRevision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'accountTransfers',?,'update',?,?,?,?)").bind(transferId,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'accountTransfers','update',?,?,?,?,?,?,?,?,?,?)").bind(transferId,expectedRevision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Linked credit-card deposit to existing bank transfer'),c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0").bind(nextMatchedData,nextMatchRevision,now,matchOperationId,match.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=?").bind(mutationId,matchOperationId,nextMatchRevision),c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now)]);return c.json(response);}catch{const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json)));return c.json({success:false,error:'The transfer or bank feed changed. Reload and try again.',conflict:true},409);}
-  });
-
-  app.post('/v3/bank/match-refund', async (c:any) => {
-    const denied=requirePermission(c,'bills.mark_paid');if(denied)return denied;const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||body.requestId||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);
-    const mutationId=`v3-bank-refund-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
-    const accountId=String(body.accountId||'').trim();const bankTransactionId=String(body.bankTransactionId||'').trim();const bankDate=String(body.bankDate||'').trim();const description=String(body.description||'Expense refund').trim().slice(0,500);const amount=Number(body.amount);const billId=String(body.billId||'').trim();const expectedRevision=Number(body.revision);
-    if(!accountId||!bankTransactionId||!billId||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(bankDate)||!Number.isFinite(amount)||amount<=0||!Number.isInteger(expectedRevision))return c.json({success:false,error:'Bank deposit, original expense, date, and positive refund amount are required.'},400);
-    const [accountRow,billRow,matchRow,linkedRow]=await c.env.DB.batch([
-      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(accountId),
-      c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='bills' AND id=? AND is_deleted=0").bind(billId),
-      c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0"),
-      c.env.DB.prepare("SELECT id FROM sync_records WHERE is_deleted=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')=? LIMIT 1").bind(bankTransactionId)
-    ]);
-    const account:any=accountRow.results[0];const current:any=billRow.results[0];const match:any=matchRow.results[0];if(!account)return c.json({success:false,error:'Bank account not found.'},404);const accountData=parseSetting(account.data,{});if(accountData.type!=='asset'||!accountData.plaidConnected)return c.json({success:false,error:'Choose a connected asset account.'},409);if(!current)return c.json({success:false,error:'Original expense not found.'},404);if(Number(current.revision)!==expectedRevision)return c.json({success:false,error:'The original expense changed. Reload the refund list.',conflict:true},409);if(linkedRow.results[0])return c.json({success:false,error:'This bank deposit is already matched.'},409);if(!match)return c.json({success:false,error:'Bank match history is unavailable.'},500);
-    const bill=parseSetting(current.data,{});if(bill.status!=='paid'||bill.refundOfBillId)return c.json({success:false,error:'Choose an original paid expense.'},409);const rate=accountData.currency==='CAD'&&bill.currency==='USD'?Number(bill.exchangeRate||1.35):1;const refundAmountInBillCurrency=amount/rate;
-    const refundedRow:any=await c.env.DB.prepare("SELECT COALESCE(SUM(ABS(COALESCE(json_extract(data,'$.amount'),0))),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.refundOfBillId')=?").bind(billId).first();const refundable=Math.max(0,Math.abs(Number(bill.amount||0))-Number(refundedRow?.total||0));if(refundAmountInBillCurrency-refundable>=0.005)return c.json({success:false,error:`Only $${(refundable*rate).toFixed(2)} remains refundable for this expense.`},409);
-    const matchedIds:string[]=Array.isArray(parseSetting(match.data,[]))?parseSetting(match.data,[]):[];if(matchedIds.includes(bankTransactionId))return c.json({success:false,error:'This bank deposit is already matched.'},409);
-    const now=Date.now();const id=crypto.randomUUID();const operationId=`${mutationId}-refund-insert`;const matchOperationId=`${mutationId}-match-update`;const billAssertionId=`${mutationId}-bill-assertion`;const matchAssertionId=`${mutationId}-match-assertion`;const record={id,vendor:bill.vendor||description,amount:-refundAmountInBillCurrency,currency:bill.currency||accountData.currency||'CAD',...(bill.exchangeRate?{exchangeRate:Number(bill.exchangeRate)}:{}),dueDate:bankDate,paidDate:bankDate,status:'paid',category:bill.category,internalCategory:bill.internalCategory||bill.taxCategory||'',sourceAccountId:accountId,offsetAccountId:bill.category,taxable:Boolean(bill.taxable),memo:description,refundOfBillId:billId,bankTransactionId};const data=JSON.stringify(record);const nextMatchedData=JSON.stringify([...new Set([...matchedIds,bankTransactionId])]);const response={success:true,item:{...record,revision:1,updatedAt:now},action:'refund',originalBillId:billId};const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');
-    try{await c.env.DB.batch([
-      c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='bills' AND id=? AND revision=? AND is_deleted=0) AND ?+COALESCE((SELECT SUM(ABS(COALESCE(json_extract(data,'$.amount'),0))) FROM sync_records WHERE type='bills' AND is_deleted=0 AND json_extract(data,'$.refundOfBillId')=?),0)<=ABS(COALESCE((SELECT json_extract(data,'$.amount') FROM sync_records WHERE type='bills' AND id=?),0))+0.005 THEN 1 ELSE 0 END").bind(billAssertionId,billId,expectedRevision,refundAmountInBillCurrency,billId,billId),
-      c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(matchAssertionId,match.revision),
-      c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'bills',?,?,1,0,?)").bind(id,data,now,operationId),
-      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'bills',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId),
-      c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'bills','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,userId,userEmail,now,mutationId,operationId,'Linked incoming bank refund to original expense'),
-      c.env.DB.prepare("UPDATE sync_records SET data=?,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=? AND is_deleted=0").bind(nextMatchedData,now,matchOperationId,match.revision),
-      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND revision=?").bind(mutationId,matchOperationId,Number(match.revision)+1),
-      c.env.DB.prepare('DELETE FROM sync_batch_assertions WHERE id IN (?,?)').bind(billAssertionId,matchAssertionId),
-      c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(response),now)
-    ]);return c.json(response);}catch{const repeated:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(repeated?.result_json)return c.json(JSON.parse(String(repeated.result_json)));return c.json({success:false,error:'The expense or bank match changed. Reload the refund list and try again.',conflict:true},409);}
   });
 
   app.post('/v3/bank/match-deposit', async (c: any) => {

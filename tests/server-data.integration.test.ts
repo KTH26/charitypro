@@ -305,6 +305,37 @@ describe('server-driven bank deposit matching', () => {
     expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM audit_log').get() as any).count)).toBe(3);
   });
 
+  it('searches all refundable expenses and splits one refund across several', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'accounts', 'bank', { id: 'bank', name: 'Bank', type: 'asset', currency: 'CAD', plaidConnected: true });
+    seedRecord(db, 'accounts', 'supplies', { id: 'supplies', name: 'Supplies', type: 'expense', currency: 'CAD' });
+    seedRecord(db, 'matchedBankTransactions', 'matchedBankTransactions', [], 1);
+    const bill = (id: string, vendor: string, amount: number, date: string) => seedRecord(db, 'bills', id, { id, vendor, amount, currency: 'CAD', dueDate: date, paidDate: date, status: 'paid', category: 'supplies', sourceAccountId: 'bank' }, 1);
+    bill('a1', 'Amazon', 40, '2026-10-01'); bill('a2', 'Amazon', 70, '2026-10-05'); bill('a3', 'Amazon', 90, '2026-10-09'); bill('s1', 'Staples', 500, '2026-10-02');
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
+    registerServerDataRoutes(app as any);
+    // Search finds all Amazon charges, even ones smaller than the refund.
+    const found = await (await app.request('/v3/bank/refund-candidates?accountId=bank&search=amazon', {}, { DB: db } as any)).json() as any;
+    expect(found.items.map((item: any) => item.id).sort()).toEqual(['a1', 'a2', 'a3']);
+    expect((await (await app.request('/v3/bank/refund-candidates?accountId=bank&search=supplies 500', {}, { DB: db } as any)).json() as any).items.map((item: any) => item.id)).toEqual(['s1']);
+    const refund = (key: string, bills: string[], amount: number) => app.request('/v3/bank/match-refund', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ requestId: key, accountId: 'bank', bankTransactionId: 'dep-1', bankDate: '2026-10-20', description: 'AMAZON REFUND', amount, bills: bills.map(billId => ({ billId, revision: 1 })) }) }, { DB: db } as any);
+    // Not enough chosen.
+    expect((await refund('r-short', ['a1', 'a2'], 150)).status).toBe(409);
+    // Too many chosen: the refund is covered before the last one.
+    expect((await refund('r-extra', ['a3', 'a2', 'a1'], 150)).status).toBe(409);
+    // 40 + 70 + 90 = 200, refund 150: split in order, last one partly.
+    const ok = await refund('r-ok', ['a1', 'a2', 'a3'], 150);
+    expect(ok.status).toBe(200);
+    const refunds = (db.database.prepare("SELECT data FROM sync_records WHERE type='bills' AND json_extract(data,'$.refundOfBillId') IS NOT NULL").all() as any[]).map(row => JSON.parse(String(row.data)));
+    const byBill = Object.fromEntries(refunds.map(item => [item.refundOfBillId, item.amount]));
+    expect(byBill).toEqual({ a1: -40, a2: -70, a3: -40 });
+    expect(refunds.every(item => item.bankTransactionId === 'dep-1' && item.category === 'supplies')).toBe(true);
+    // a1 and a2 are fully refunded and no longer offered; a3 has 50 left.
+    const after = await (await app.request('/v3/bank/refund-candidates?accountId=bank&search=amazon', {}, { DB: db } as any)).json() as any;
+    expect(after.items).toEqual([expect.objectContaining({ id: 'a3', refundableAmount: 50 })]);
+  });
+
   it('links an incoming bank refund to the original expense and reverses the expense amount', async()=>{
     const db=new MockD1();databases.push(db);
     seedRecord(db,'accounts','bank-refund',{id:'bank-refund',name:'Bank',type:'asset',currency:'CAD',plaidConnected:true});
@@ -317,7 +348,7 @@ describe('server-driven bank deposit matching', () => {
     expect(response.status).toBe(200);const body=await response.json() as any;expect(body.action).toBe('refund');
     const refund:any=db.database.prepare("SELECT data FROM sync_records WHERE type='bills' AND json_extract(data,'$.refundOfBillId')='original-expense'").get();expect(JSON.parse(String(refund.data))).toMatchObject({amount:-40,category:'expense-refund',sourceAccountId:'bank-refund',bankTransactionId:'bank-refund-transaction'});
     const match:any=db.database.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions'").get();expect(JSON.parse(String(match.data))).toContain('bank-refund-transaction');
-    const remainingResponse=await app.request('/v3/bank/refund-candidates?accountId=bank-refund&amount=61',{}, {DB:db} as any);expect((await remainingResponse.json() as any).items).toHaveLength(0);
+    const remainingResponse=await app.request('/v3/bank/refund-candidates?accountId=bank-refund',{}, {DB:db} as any);expect((await remainingResponse.json() as any).items[0]).toMatchObject({id:'original-expense',refundableAmount:60});
   });
 
   it('lists registered and previously used vendors without duplicates', async () => {

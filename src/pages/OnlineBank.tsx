@@ -113,7 +113,11 @@ export const OnlineBank: React.FC = () => {
   // Add a new account right from the transfer choices; it is then selected in that list.
   const [addAccountFor, setAddAccountFor] = useState<"" | "transfer_in" | "transfer_out">("");
   const [refundCandidates, setRefundCandidates] = useState<RefundCandidate[]>([]);
-  const [refundBillId, setRefundBillId] = useState("");
+  // Refund matching: search all refundable expenses and tick one or more. Order of ticking matters:
+  // the refund is split across them in that order.
+  const [refundSearch, setRefundSearch] = useState("");
+  const [refundSelected, setRefundSelected] = useState<RefundCandidate[]>([]);
+  const [refundLoading, setRefundLoading] = useState(false);
   const [incomingTransferCandidates,setIncomingTransferCandidates]=useState<IncomingTransferCandidate[]>([]);
   const [incomingTransferId,setIncomingTransferId]=useState("");
   const [showMissingPayment, setShowMissingPayment] = useState(false);
@@ -250,18 +254,26 @@ export const OnlineBank: React.FC = () => {
     setCandidates(data.items);
     setCandidateWindow({ startDate: data.startDate, endDate: data.endDate });
   };
-  const loadRefundCandidates = async (transaction: BankTransaction) => {
-    const response = await fetch(`/api/v3/bank/refund-candidates?accountId=${encodeURIComponent(selectedBank)}&amount=${encodeURIComponent(String(transaction.amount))}`);
-    const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.error || "Unable to load refundable expenses.");
-    setRefundCandidates(data.items || []);
-  };
+  const loadRefundCandidates = useCallback(async (search: string) => {
+    setRefundLoading(true);
+    try {
+      const response = await fetch(`/api/v3/bank/refund-candidates?accountId=${encodeURIComponent(selectedBank)}&search=${encodeURIComponent(search)}`);
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || "Unable to load refundable expenses.");
+      setRefundCandidates(data.items || []);
+    } catch (reason: any) {
+      setError(reason.message || "Unable to load refundable expenses.");
+    } finally {
+      setRefundLoading(false);
+    }
+  }, [selectedBank]);
   const loadIncomingTransferCandidates=async(transaction:BankTransaction)=>{const response=await fetch(`/api/v3/bank/incoming-transfer-candidates?accountId=${encodeURIComponent(selectedBank)}&amount=${encodeURIComponent(String(transaction.amount))}&bankDate=${encodeURIComponent(transaction.date)}`);const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||"Unable to load matching bank payments.");setIncomingTransferCandidates(data.items||[]);};
   const openDepositMatch = async (transaction: BankTransaction) => {
     setMatching(transaction);
     setDepositAction("payments");
     setRefundCandidates([]);
-    setRefundBillId("");
+    setRefundSelected([]);
+    setRefundSearch("");
     setIncomingTransferCandidates([]);
     setIncomingTransferId("");
     setTransferInSourceId("");
@@ -375,10 +387,14 @@ export const OnlineBank: React.FC = () => {
       setSaving(false);
     }
   };
+  // Search refundable expenses again shortly after typing stops.
+  useEffect(() => {
+    if (!matching || depositAction !== "refund") return;
+    const timer = window.setTimeout(() => void loadRefundCandidates(refundSearch), 300);
+    return () => window.clearTimeout(timer);
+  }, [matching, depositAction, refundSearch, loadRefundCandidates]);
   const confirmRefund = async () => {
-    if (!matching || !refundBillId) return;
-    const bill = refundCandidates.find((item) => item.id === refundBillId);
-    if (!bill) return;
+    if (!matching || !refundSelected.length) return;
     setSaving(true);
     setError("");
     const requestId = matchRequestIds.current[matching.id] || crypto.randomUUID();
@@ -397,8 +413,7 @@ export const OnlineBank: React.FC = () => {
           bankDate: matching.date,
           description: matching.description,
           amount: matching.amount,
-          billId: bill.id,
-          revision: bill.revision,
+          bills: refundSelected.map((bill) => ({ billId: bill.id, revision: bill.revision })),
         }),
       });
       const data = await response.json();
@@ -411,11 +426,12 @@ export const OnlineBank: React.FC = () => {
       removeMatchedFromVisibleFeed(matchedId);
       setMatching(null);
       setRefundCandidates([]);
-      setRefundBillId("");
-      setNotice("Refund linked to the original expense and applied to its category.");
+      setRefundSelected([]);
+      setNotice(refundSelected.length > 1 ? `Refund split across ${refundSelected.length} expenses and applied to their categories.` : "Refund linked to the original expense and applied to its category.");
       await Promise.all([loadState(true), loadFeed(true)]);
     } catch (reason: any) {
       setError(reason.message || "The refund could not be matched. You can safely try again.");
+      if (reason.message?.includes("changed") || reason.message?.includes("not found")) { setRefundSelected([]); void loadRefundCandidates(refundSearch); }
     } finally {
       setSaving(false);
     }
@@ -670,7 +686,7 @@ export const OnlineBank: React.FC = () => {
                     const action = event.target.value as "payments" | "refund" | "transfer" | "transfer_in";
                     setDepositAction(action);
                     setError("");
-                    if (action === "refund") void loadRefundCandidates(matching);
+                    if (action === "refund") { setRefundSelected([]); setRefundSearch(""); }
                     if (action === "transfer") void loadIncomingTransferCandidates(matching);
                   }}
                 >
@@ -821,30 +837,50 @@ export const OnlineBank: React.FC = () => {
                   </div>
                 </>
               )}
-              {depositAction === "refund" && (
-                <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
-                  <label className="form-group" style={{ margin: 0 }}>
-                    <span>Original paid expense *</span>
-                    <select value={refundBillId} onChange={(event) => setRefundBillId(event.target.value)}>
-                      <option value="">Select the expense that was refunded</option>
-                      {refundCandidates.map((bill) => (
-                        <option key={bill.id} value={bill.id}>
-                          {bill.vendor} — {bill.currency || "CAD"} ${Math.abs(Number(bill.amount)).toFixed(2)} — {bill.paidDate || bill.dueDate} — {bill.categoryName} — refundable ${bill.refundableAmount.toFixed(2)}
-                        </option>
+              {depositAction === "refund" && (() => {
+                const refundAmount = Math.abs(matching.amount);
+                const selectedIds = new Set(refundSelected.map((bill) => bill.id));
+                const selectedTotal = Math.round(refundSelected.reduce((sum, bill) => sum + bill.refundableAmount, 0) * 100) / 100;
+                // Same split the server does: in the order ticked, each up to what is refundable.
+                let left = refundAmount; const extra: string[] = [];
+                for (const bill of refundSelected) { if (left < 0.005) extra.push(bill.vendor || "Expense"); left = Math.round((left - Math.min(left, bill.refundableAmount)) * 100) / 100; }
+                const short = Math.round((refundAmount - selectedTotal) * 100) / 100;
+                const ready = refundSelected.length > 0 && short < 0.005 && extra.length === 0;
+                const toggle = (bill: RefundCandidate) => setRefundSelected((current) => current.some((item) => item.id === bill.id) ? current.filter((item) => item.id !== bill.id) : [...current, bill]);
+                const money = (value: number) => "$" + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const shown = [...refundSelected, ...refundCandidates.filter((bill) => !selectedIds.has(bill.id))];
+                return (
+                  <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span>Find the expenses this refund is for</span>
+                      <input value={refundSearch} onChange={(event) => setRefundSearch(event.target.value)} placeholder="Search by vendor, category, memo, amount, or date" autoFocus />
+                    </label>
+                    <div className="refund-pick-list">
+                      {shown.map((bill) => (
+                        <label key={bill.id} className={"refund-pick-row" + (selectedIds.has(bill.id) ? " selected" : "")}>
+                          <input type="checkbox" checked={selectedIds.has(bill.id)} onChange={() => toggle(bill)} />
+                          <span className="refund-pick-main"><strong>{bill.vendor || "Expense"}</strong><small>{bill.paidDate || bill.dueDate} · {bill.categoryName}{bill.memo ? " · " + bill.memo : ""}</small></span>
+                          <span className="refund-pick-amount">{bill.currency || "CAD"} {money(Math.abs(Number(bill.amount)))}{Math.abs(bill.refundableAmount - Math.abs(Number(bill.amount))) >= 0.005 && <small>{money(bill.refundableAmount)} left to refund</small>}</span>
+                        </label>
                       ))}
-                    </select>
-                  </label>
-                  {!refundCandidates.length && <div style={{ color: "var(--text-muted)" }}>No paid expense has enough remaining value for this refund.</div>}
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                    <button className="btn btn-secondary" onClick={() => setMatching(null)}>
-                      Cancel
-                    </button>
-                    <button className="btn btn-primary" disabled={!refundBillId || saving} onClick={() => void confirmRefund()}>
-                      {saving ? "Matching refund securely..." : "Match Refund to Expense"}
-                    </button>
+                      {!shown.length && <div style={{ padding: 16, color: "var(--text-muted)" }}>{refundLoading ? "Searching..." : "No paid expense matches this search."}</div>}
+                    </div>
+                    <div className={"refund-pick-total" + (ready ? " ok" : "")}>
+                      <div><span>Selected ({refundSelected.length})</span><strong>{money(selectedTotal)}</strong></div>
+                      <div><span>Refund amount</span><strong>{money(refundAmount)}</strong></div>
+                      <div><span>{short >= 0.005 ? "Still missing" : short <= -0.005 ? "Selected more by" : "Difference"}</span><strong>{money(Math.abs(short))}</strong></div>
+                    </div>
+                    {short <= -0.005 && extra.length === 0 && <small style={{ color: "var(--text-muted)" }}>The selected expenses add up to more than the refund. The last one you checked will be only partly refunded.</small>}
+                    {extra.length > 0 && <small style={{ color: "var(--red)", fontWeight: 700 }}>The refund is already covered without {extra.join(", ")}. Uncheck it.</small>}
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                      <button className="btn btn-secondary" onClick={() => setMatching(null)}>Cancel</button>
+                      <button className="btn btn-primary" disabled={!ready || saving} onClick={() => void confirmRefund()}>
+                        {saving ? "Matching refund securely..." : refundSelected.length > 1 ? "Match Refund to " + refundSelected.length + " Expenses" : "Match Refund to Expense"}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
               {depositAction === "transfer_in" && (() => {
                 const source = transferAccounts.find((account) => account.id === transferInSourceId);
                 const groups: [string, string][] = [["liability", "Loans & credit cards"], ["asset", "Bank & cash"], ["equity", "Equity"]];
