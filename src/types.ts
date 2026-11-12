@@ -17,7 +17,7 @@
 export interface Donor {
   id: string;
   displayId: string;
-  
+
   // Basic Info
   firstName: string;
   lastName: string;
@@ -34,13 +34,13 @@ export interface Donor {
   title?: string;      // from "טיטל" column — shown AFTER last Yiddish name
   postTitle?: string;
   doubleNames?: string;
-  
+
   // Family Info
   hisFather?: string;
   herFather?: string;
   householdFullName?: string;
   allMaiden?: string;
-  
+
   // Additional Contact Info
   homePhone?: string;
   mobilePhone?: string;
@@ -48,7 +48,7 @@ export interface Donor {
   phone3?: string;
   confidentialMobile?: string;
   confidentialMobile2?: string;
-  
+
   // Address Breakdown
   addrBuildingNum?: string;
   addrStreet?: string;
@@ -57,7 +57,7 @@ export interface Donor {
   addrNo?: string;
   addrPostalCode?: string;
   addrLandlord?: string;
-  
+
   // Metrics
   totalGiven: number;
   balanceOwed: number;
@@ -291,7 +291,7 @@ export type PersistenceClassification =
   | 'server-secret'
   | 'transient';
 
-export type PersistedStateKey = 
+export type PersistedStateKey =
   | 'clientId'
   | 'lastEventId'
   | 'isRtl'
@@ -511,15 +511,20 @@ export interface AppState {
   removeExpenseFromQueue: (id: string) => void;
 }
 
+/** Generates a short unique ID. */
 export const uid = () => {
   return Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 };
 
+/**
+ * Returns a stable, deterministic ID for one occurrence of a recurring
+ * schedule so the same date never generates a duplicate record.
+ */
 export const scheduledOccurrenceId = (
   kind: 'payment' | 'expense' | 'payroll',
   scheduleId: string,
   occurrenceDate: string
 ) => `scheduled-${kind}-${scheduleId}-${occurrenceDate}`;
 
-// System-reserved account ID for Undeposited Funds
+/** System-reserved account ID for Undeposited Funds. */
 export const UNDEPOSITED_FUNDS_ID = 'sys-undeposited-funds';

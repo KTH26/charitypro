@@ -6,7 +6,7 @@ import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 // Re-export all types so existing `import { Donor } from '../store'` calls
 // continue to work without any changes.
 export * from './types';
-import type { AppState, Bill, Transaction, Pledge, Donor, Fundraiser, Account, Employee } from './types';
+import type { AppState, Bill, Transaction, Pledge } from './types';
 import { uid, scheduledOccurrenceId, UNDEPOSITED_FUNDS_ID } from './types';
 
 // Private: methods that go to Undeposited Funds instead of hitting the bank directly
@@ -125,10 +125,10 @@ export const useStore = create<AppState>()(
       setCachedSolaStartDate: (date) => set({ cachedSolaStartDate: date }),
       setCachedSolaEndDate: (date) => set({ cachedSolaEndDate: date }),
       setHasSolaSynced: (synced) => set({ hasSolaSynced: synced }),
-      dismissSolaRef: (ref) => set((state) => ({ 
-        dismissedSolaRefs: state.dismissedSolaRefs.includes(ref) 
-          ? state.dismissedSolaRefs 
-          : [...state.dismissedSolaRefs, ref] 
+      dismissSolaRef: (ref) => set((state) => ({
+        dismissedSolaRefs: state.dismissedSolaRefs.includes(ref)
+          ? state.dismissedSolaRefs
+          : [...state.dismissedSolaRefs, ref]
       })),
       setDonorSortBy: (key) => set({ donorSortBy: key }),
       setBankFeed: (accountId, feed) => {
@@ -182,7 +182,7 @@ export const useStore = create<AppState>()(
       bulkUpsertDonors: (donorsArray) => set(state => {
         let updatedDonors = [...state.donors];
         let nextNum = 1001 + state.donors.length;
-        
+
         for (const d of donorsArray) {
           const existingIndex = updatedDonors.findIndex(x => x.displayId === d.displayId);
           if (existingIndex !== -1) {
@@ -231,7 +231,7 @@ export const useStore = create<AppState>()(
               ? { ...f, balanceOwed: f.balanceOwed + (tx.amount * f.percentage / 100) }
               : f)
           : state.fundraisers;
-          
+
         return { transactions: [newTx, ...state.transactions], donors: updatedDonors, accounts: updatedAccounts, fundraisers: updatedFundraisers };
         });
         get().recalculateBalances();
@@ -265,11 +265,11 @@ export const useStore = create<AppState>()(
             sourceAccountId: effectiveSourceId,
           };
         });
-        
+
         let updatedDonors = [...state.donors];
         let updatedAccounts = [...state.accounts];
         let updatedFundraisers = [...state.fundraisers];
-        
+
         // Maps to accumulate changes and apply them efficiently
         const donorUpdates = new Map<string, { totalGiven: number, balanceOwed: number }>();
         const accountUpdates = new Map<string, number>();
@@ -277,7 +277,7 @@ export const useStore = create<AppState>()(
 
         for (const tx of newTxs) {
           const effectiveAmount = tx.amountCAD ?? tx.amount;
-          
+
           // Accumulate donor updates
           const dUpdate = donorUpdates.get(tx.donorId) || { totalGiven: 0, balanceOwed: 0 };
           if (tx.type === 'approved') dUpdate.totalGiven += effectiveAmount;
@@ -435,22 +435,22 @@ export const useStore = create<AppState>()(
 
       autoMatchPledges: () => set(state => {
         const newTransactions = [...state.transactions];
-        
+
         // Group pledges by donor and sort by date ASC
         const donorPledges = new Map<string, Pledge[]>();
         for (const p of state.pledges) {
           if (!donorPledges.has(p.donorId)) donorPledges.set(p.donorId, []);
           donorPledges.get(p.donorId)!.push(p);
         }
-        
+
         for (const [donorId, pledges] of donorPledges.entries()) {
           pledges.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-          
+
           for (let i = 0; i < pledges.length; i++) {
             const p = pledges[i];
             const startDate = new Date(p.date).getTime();
             const endDate = i < pledges.length - 1 ? new Date(pledges[i+1].date).getTime() : Infinity;
-            
+
             for (let j = 0; j < newTransactions.length; j++) {
               const tx = newTransactions[j];
               if (tx.donorId === donorId && tx.type === 'approved' && !tx.isBatch) {
@@ -500,7 +500,7 @@ export const useStore = create<AppState>()(
         set(state => {
           const seen = new Set<string>();
           const toDelete = new Set<string>();
-          
+
           for (const tx of state.transactions) {
             // Only remove a transaction when every persisted field except its
             // generated ID is identical. The previous short hash could erase
@@ -580,7 +580,7 @@ export const useStore = create<AppState>()(
 
       checkSystemAccounts: () => set(state => {
         let changed = false;
-        
+
         // Helper to deduplicate any array of objects with an 'id'
         const deduplicate = <T extends { id: string }>(arr: T[]): T[] => {
           const seen = new Set<string>();
@@ -649,7 +649,7 @@ export const useStore = create<AppState>()(
         if (changed) {
           return { accounts: nextAccounts, bills: nextBills, transactions: nextTransactions, donors: nextDonors, vendors: nextVendors, pledges: nextPledges };
         }
-        
+
         return {};
       }),
 
@@ -699,30 +699,30 @@ export const useStore = create<AppState>()(
               const getPaidForPledge = (pledgeId: string) => state.transactions
                 .filter(t => t.donorId === donorId && !t.isBatch && t.type === 'approved' && (t.pledgeId === pledgeId || (t.pledgeId === undefined && new Date(t.date + 'T00:00:00Z') >= periodStart && new Date(t.date + 'T00:00:00Z') < periodEnd)))
                 .reduce((sum, t) => sum + (t.amountCAD ?? t.amount), 0);
-              
+
               const donorRecurring = state.recurringPayments.filter(r => r.donorId === donorId);
-              
+
               const schedule = state.recurringPayments.find(r => r.pledgeId === p.id && r.active)
                 ?? (p.id === donorPledgesSorted[donorPledgesSorted.length - 1]?.id ? donorRecurring.find(r => r.active && !r.pledgeId) : undefined);
 
               let projectedFuture = 0;
               if (schedule && schedule.amount > 0) {
                 let d = new Date(periodStart);
-                
+
                 const projectionEnd = new Date(periodStart);
                 projectionEnd.setUTCFullYear(projectionEnd.getUTCFullYear() + 1);
                 const effectiveProjectionEnd = projectionEnd < periodEnd ? projectionEnd : periodEnd;
-                
+
                 const today = new Date(todayStr + 'T00:00:00Z');
 
                 while (d < effectiveProjectionEnd) {
                   // Count as future if the date is >= today, or if it falls anywhere in the current calendar month
                   const isFutureOrCurrentMonth = d >= today || (d.getUTCFullYear() === today.getUTCFullYear() && d.getUTCMonth() === today.getUTCMonth());
-                  
+
                   if (isFutureOrCurrentMonth) {
                     projectedFuture += schedule.amount;
                   }
-                  
+
                   if (schedule.frequency === 'monthly') d.setUTCMonth(d.getUTCMonth() + 1);
                   else if (schedule.frequency === 'weekly') d.setUTCDate(d.getUTCDate() + 7);
                   else if (schedule.frequency === 'yearly') d.setUTCFullYear(d.getUTCFullYear() + 1);
@@ -735,7 +735,7 @@ export const useStore = create<AppState>()(
                 .filter(t => {
                   if (t.donorId !== donorId || t.isBatch) return false;
                   if (t.type !== 'approved') return false;
-                  
+
                   if (t.pledgeId) return t.pledgeId === p.id;
                   const d = new Date(t.date + 'T00:00:00Z');
                   return d >= periodStart && d < periodEnd;
@@ -772,7 +772,7 @@ export const useStore = create<AppState>()(
             // If the transaction was deposited via a batch, it was moved out of Undeposited Funds.
             // Do NOT add it to the Undeposited Funds balance, as the master batch tx already accounts for it in the destination bank.
             const isDepositedFromHolding = tx.sourceAccountId === UNDEPOSITED_FUNDS_ID && tx.depositStatus === 'deposited';
-            
+
             if (!isDepositedFromHolding) {
               const acc = state.accounts.find(a => a.id === tx.sourceAccountId);
               if (acc) {
@@ -986,8 +986,6 @@ export const useStore = create<AppState>()(
         return id;
       },
 
-
-
       editBill: (id, updates) => {
         set((state) => {
           const newBills = state.bills.map(b => b.id === id ? { ...b, ...updates } : b);
@@ -1075,10 +1073,10 @@ export const useStore = create<AppState>()(
 
         updatedSchedules = updatedSchedules.map(rec => {
           if (!rec.active) return rec;
-          
+
           let currentNextDate = rec.nextDate;
           let generatedCount = 0;
-          
+
           while (currentNextDate <= today && generatedCount < 12) {
             const occurrenceId = scheduledOccurrenceId('payment', rec.id, currentNextDate);
             if (!existingTransactionIds.has(occurrenceId)) {
@@ -1096,17 +1094,17 @@ export const useStore = create<AppState>()(
               });
               existingTransactionIds.add(occurrenceId);
             }
-            
+
             const d = new Date(currentNextDate);
             if (rec.frequency === 'monthly') d.setUTCMonth(d.getUTCMonth() + 1);
             else if (rec.frequency === 'weekly') d.setUTCDate(d.getUTCDate() + 7);
             else if (rec.frequency === 'yearly') d.setUTCFullYear(d.getUTCFullYear() + 1);
             else d.setUTCMonth(d.getUTCMonth() + 3);
-            
+
             currentNextDate = d.toISOString().split('T')[0];
             generatedCount++;
           }
-          
+
           let active: boolean = rec.active;
           if (rec.endDate && currentNextDate > rec.endDate) {
             active = false;
@@ -1131,7 +1129,7 @@ export const useStore = create<AppState>()(
       processRecurringPayroll: () => {
         const state = get();
         const today = new Date().toISOString().split('T')[0];
-        
+
         const duePayroll = state.recurringPayroll.filter(p => p.active && p.nextDate <= today && p.startDate <= today);
         if (duePayroll.length > 0) {
           set(draft => {
@@ -1176,7 +1174,7 @@ export const useStore = create<AppState>()(
               if (p.frequency === 'weekly') d.setDate(d.getDate() + 7);
               else if (p.frequency === 'biweekly') d.setDate(d.getDate() + 14);
               else if (p.frequency === 'monthly') d.setMonth(d.getMonth() + 1);
-              
+
               const updatedP = { ...p, nextDate: d.toISOString().split('T')[0] };
               newState.recurringPayroll = newState.recurringPayroll.map(r => r.id === p.id ? updatedP : r);
             });
@@ -1196,12 +1194,12 @@ export const useStore = create<AppState>()(
           // NOTE: account balances are now computed by recalculateBalances
           // We only need to flip the bill to 'paid' status here
           return {
-            bills: state.bills.map(b => b.id === id ? { 
-              ...b, 
-              status: 'paid', 
-              paidDate: new Date().toISOString().split('T')[0], 
-              sourceAccountId: finalSource, 
-              offsetAccountId: finalOffset 
+            bills: state.bills.map(b => b.id === id ? {
+              ...b,
+              status: 'paid',
+              paidDate: new Date().toISOString().split('T')[0],
+              sourceAccountId: finalSource,
+              offsetAccountId: finalOffset
             } : b),
           };
         });
@@ -1228,7 +1226,7 @@ export const useStore = create<AppState>()(
       autoMatchBankTransactions: () => set(state => {
         let newState = { ...state };
         let newMatched = new Set(newState.matchedBankTransactions);
-        
+
         const currentBankIds = new Set<string>();
         Object.values(newState.bankFeeds).forEach(feed => feed.forEach((t: any) => currentBankIds.add(t.id)));
 
@@ -1237,8 +1235,8 @@ export const useStore = create<AppState>()(
             if (!newMatched.has(t.id)) {
               if (t.amount < 0) {
                 const matchingBills = newState.bills.filter(b =>
-                  b.status === 'paid' && 
-                  b.sourceAccountId === accountId && 
+                  b.status === 'paid' &&
+                  b.sourceAccountId === accountId &&
                   b.amount === Math.abs(t.amount) &&
                   (b.dueDate === t.date || b.paidDate === t.date) &&
                   (!b.bankTransactionId || !currentBankIds.has(b.bankTransactionId))
@@ -1304,7 +1302,7 @@ export const useStore = create<AppState>()(
 
       unmatchBankTransaction: (id) => set(state => {
         let newState = { ...state };
-        
+
         // 1. Delete matching AccountTransfers and reverse their balance effects
         const transfersToDelete = newState.accountTransfers.filter(t => t.bankTransactionId === id);
         transfersToDelete.forEach(t => {
@@ -1331,7 +1329,7 @@ export const useStore = create<AppState>()(
               newState.accounts = newState.accounts.map(a => a.id === tx.sourceAccountId ? { ...a, balance: a.balance - tx.amount } : a);
            }
         });
-        
+
         // If it was a batch, we also need to UNLINK the child transactions
         txsToDelete.forEach(tx => {
           if (tx.isBatch) {
@@ -1363,7 +1361,7 @@ export const useStore = create<AppState>()(
 
       addBatchDeposit: (bankFeedId, internalTxIds, accountId, totalAmount, date, desc) => set((state) => {
         const batchId = uid();
-        
+
         // 1. Create the master batch transaction (the real bank deposit)
         const masterTx: Transaction = {
           id: batchId,
@@ -1505,4 +1503,3 @@ methodsToWrap.forEach(method => {
 });
 
 useStore.setState(overrides);
-
