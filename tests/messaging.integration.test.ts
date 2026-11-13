@@ -50,6 +50,7 @@ const setup = () => {
   seed(db, 'pledges', 'p1', { donorId: 'd1', amount: 1800, currency: 'CAD', date: `${today.slice(0, 4)}-01-15` });
   seed(db, 'tasks', 't1', { donorId: 'd1', title: 'Call about pledge', notes: 'He said after Chanukah', dueDate: today, priority: 'high', type: 'call', completed: false });
   seed(db, 'tasks', 't2', { title: 'Already done', dueDate: today, completed: true });
+  seed(db, 'tasks', 't3', { donorId: 'd1', title: 'Sola payment declined', dueDate: today, type: 'declined_payment', completed: false });
   const app = new Hono();
   app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userEmail', 'tester@example.com'); await next(); });
   registerServerDataRoutes(app as any);

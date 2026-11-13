@@ -36,7 +36,8 @@ export const OnlineReminders: React.FC = () => {
         if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load reminders.');
         all.push(...(data.items || [])); if (page >= Number(data.totalPages || 1)) break;
       }
-      setTasks(all.sort((a, b) => a.dueDate.localeCompare(b.dueDate)));
+      // Declined / missing card payments are not reminders; they stay on the Tasks page and the donor card.
+      setTasks(all.filter(task => task.type !== 'declined_payment').sort((a, b) => a.dueDate.localeCompare(b.dueDate)));
     } catch (reason: any) { setMessage({ ok: false, text: reason.message }); }
     fetch('/api/v3/reminders/today').then(response => response.json()).then(data => { if (data.success) setDigest(data); }).catch(() => undefined);
   }, [view, range]);

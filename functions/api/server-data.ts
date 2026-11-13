@@ -589,7 +589,7 @@ export const donorDisplayName = (donor: any) => { const yiddish = [donor?.preTit
 
 /** Today's reminders (and older ones not done yet), with each donor's phone and balance. */
 export const buildReminderDigest = async (db: any, today = torontoToday()) => {
-  const rows = await db.prepare("SELECT id,data FROM sync_records WHERE type='tasks' AND is_deleted=0 AND COALESCE(json_extract(data,'$.completed'),0) IN (0,'false') AND json_extract(data,'$.dueDate')<=? ORDER BY json_extract(data,'$.dueDate'),id LIMIT 100").bind(today).all();
+  const rows = await db.prepare("SELECT id,data FROM sync_records WHERE type='tasks' AND is_deleted=0 AND COALESCE(json_extract(data,'$.completed'),0) IN (0,'false') AND COALESCE(json_extract(data,'$.type'),'')<>'declined_payment' AND json_extract(data,'$.dueDate')<=? ORDER BY json_extract(data,'$.dueDate'),id LIMIT 100").bind(today).all();
   const items: any[] = [];
   for (const raw of rows.results || []) {
     const task = parseSetting((raw as any).data, {});
