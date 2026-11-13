@@ -155,7 +155,24 @@ describe('official receipts', () => {
     expect((await call('POST', '/v3/receipts/card1/void', { reason: 'Wrong amount' })).status).toBe(200);
     expect((await call('GET', '/v3/receipts?status=void')).body.items.map((item: any) => item.receiptNumber)).toEqual(['00664']);
     expect((await call('POST', '/v3/receipts/send', { paymentIds: ['card1'] })).body.results[0]).toMatchObject({ ok: true, receiptNumber: '00665' });
-    expect((await call('GET', '/v3/receipts?status=sent')).body.items).toMatchObject([{ receiptNumber: '00665', addressLine1: '432 Chemin de Tash, Apt #A', addressLine2: 'Boisbriand, Quebec J7E 4H4', yiddishPreTitle: 'מו"ה' }]);
+    expect((await call('GET', '/v3/receipts?status=sent')).body.items).toMatchObject([{ receiptNumber: '00665', addressLine1: '432 Chemin de Tash', addressLine2: 'Boisbriand, Quebec J7E 4H4', yiddishPreTitle: 'מו"ה' }]);
+  });
+  it('shows 50 per page with true totals, and "send all" goes in groups', async () => {
+    const { db, call } = setup();
+    for (let index = 0; index < 60; index += 1) {
+      seed(db, 'donors', `dd${index}`, { name: `Donor ${index}`, ...(index < 45 ? { email: `d${index}@example.com` } : {}) });
+      seed(db, 'transactions', `pp${index}`, { donorId: `dd${index}`, amount: 10, currency: 'CAD', date: `2026-03-${String(1 + (index % 28)).padStart(2, '0')}`, method: 'credit_card', type: 'approved' });
+    }
+    const first = await call('GET', '/v3/receipts?status=waiting&page=1');
+    expect(first.body).toMatchObject({ total: 60, totalPages: 2, withEmail: 45, totalAmount: 600 });
+    expect(first.body.items).toHaveLength(50);
+    expect((await call('GET', '/v3/receipts?status=waiting&page=2')).body.items).toHaveLength(10);
+    await connectEmail(call); captureEmails();
+    const group = await call('POST', '/v3/receipts/send-next', { size: 25 });
+    expect(group.body).toMatchObject({ sent: 25, remaining: 20 });
+    expect((await call('POST', '/v3/receipts/send-next', { size: 25 })).body).toMatchObject({ sent: 20, remaining: 0 });
+    expect((await call('GET', '/v3/receipts?status=waiting')).body).toMatchObject({ total: 15, withEmail: 0 });
+    expect((await call('GET', '/v3/receipts?status=sent&page=1')).body).toMatchObject({ total: 45, totalPages: 1 });
   });
   it('sends by itself after a card payment is saved, when turned on', async () => {
     const { db, call } = setup();

@@ -55,10 +55,10 @@ export const addressLines = (donor: any): [string, string] => {
   const postalMatch = /\b([A-Z]\d[A-Z])\s?(\d[A-Z]\d)\s*$/i.exec(address);
   const postal = postalMatch ? `${postalMatch[1].toUpperCase()} ${postalMatch[2].toUpperCase()}` : String(donor.postalCode || '').toUpperCase();
   if (postalMatch) address = address.slice(0, postalMatch.index).trim();
-  let unit = '';
+  // The apartment / building is left off (not needed on a receipt).
   const unitMatch = /\s+((?:apt|app|appt|unit|suite|bldg|#)\b.*)$/i.exec(address);
-  if (unitMatch) { unit = unitMatch[1].trim(); address = address.slice(0, unitMatch.index).trim(); }
-  if (address.includes(',')) { const comma = address.indexOf(','); return [address.slice(0, comma).trim() + (unit ? `, ${unit}` : ''), [address.slice(comma + 1).trim(), postal].filter(Boolean).join(' ')]; }
+  if (unitMatch) address = address.slice(0, unitMatch.index).trim();
+  if (address.includes(',')) { const comma = address.indexOf(','); return [address.slice(0, comma).trim(), [address.slice(comma + 1).trim(), postal].filter(Boolean).join(' ')]; }
   // "432 Tash Ch de" → "432 Chemin de Tash"
   const street = /^(\d+[A-Z]?(?:-\d+)?)\s+(.+)$/i.exec(address);
   if (street) {
@@ -70,7 +70,7 @@ export const addressLines = (donor: any): [string, string] => {
     }
   }
   const city = [donor.city, donor.province].filter(Boolean).join(', ') || CITY_BY_POSTAL[postal.slice(0, 3)] || '';
-  return [address + (unit ? `, ${unit}` : ''), [city, postal].filter(Boolean).join(' ')];
+  return [address, [city, postal].filter(Boolean).join(' ')];
 };
 export const loadGift = async (db: any, paymentId: string): Promise<Gift | null> => {
   const row: any = await db.prepare("SELECT p.data AS payment,d.data AS donor FROM sync_records p LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0 WHERE p.type='transactions' AND p.id=? AND p.is_deleted=0").bind(paymentId).first();
@@ -197,27 +197,44 @@ export const registerReceiptRoutes = (app: any, requirePermission: (c: any, perm
     return c.json({ success: true, settings: next });
   });
   // The receipt lists: "waiting" = payments that should get a receipt and did not get one yet.
+  /** Payments that should get a receipt and did not get one yet (filters: from, to, search). */
+  const waitingQuery = (settings: ReceiptSettings, query: { from: string; to: string; search: string }) => {
+    const methods = settings.eligibleMethods.length ? settings.eligibleMethods : ['none'];
+    const binds: any[] = [...methods];
+    let where = `p.type='transactions' AND p.is_deleted=0 AND json_extract(p.data,'$.type')='approved' AND json_extract(p.data,'$.method') IN (${methods.map(() => '?').join(',')}) AND NOT EXISTS(SELECT 1 FROM sync_records r WHERE r.type='receipts' AND r.id='rcpt-'||p.id AND r.is_deleted=0 AND json_extract(r.data,'$.status')='sent')`;
+    const start = query.from || settings.startDate; if (start) { where += " AND json_extract(p.data,'$.date')>=?"; binds.push(start); }
+    if (query.to) { where += " AND json_extract(p.data,'$.date')<=?"; binds.push(query.to); }
+    if (query.search) { where += " AND (lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR CAST(json_extract(p.data,'$.amount') AS TEXT) LIKE ?)"; binds.push(`%${query.search}%`, `%${query.search}%`); }
+    const from = "FROM sync_records p LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0";
+    return { where, binds, from };
+  };
+  const hasEmail = "COALESCE(json_extract(d.data,'$.email'),'') LIKE '%_@_%._%'";
   app.get('/v3/receipts', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const status = String(c.req.query('status') || 'waiting'); const search = String(c.req.query('search') || '').trim().toLowerCase();
     const from = String(c.req.query('from') || ''); const to = String(c.req.query('to') || '');
+    const limit = Math.min(100, Math.max(10, Number(c.req.query('limit')) || 50)); const page = Math.max(1, Math.floor(Number(c.req.query('page')) || 1)); const offset = (page - 1) * limit;
     const settings = await getReceiptSettings(c.env.DB);
     if (status === 'waiting') {
-      const methods = settings.eligibleMethods.length ? settings.eligibleMethods : ['none'];
-      const binds: any[] = [...methods]; let where = `p.type='transactions' AND p.is_deleted=0 AND json_extract(p.data,'$.type')='approved' AND json_extract(p.data,'$.method') IN (${methods.map(() => '?').join(',')}) AND NOT EXISTS(SELECT 1 FROM sync_records r WHERE r.type='receipts' AND r.id='rcpt-'||p.id AND r.is_deleted=0 AND json_extract(r.data,'$.status')='sent')`;
-      const start = from || settings.startDate; if (start) { where += " AND json_extract(p.data,'$.date')>=?"; binds.push(start); }
-      if (to) { where += " AND json_extract(p.data,'$.date')<=?"; binds.push(to); }
-      if (search) { where += " AND (lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR CAST(json_extract(p.data,'$.amount') AS TEXT) LIKE ?)"; binds.push(`%${search}%`, `%${search}%`); }
-      const rows = await c.env.DB.prepare(`SELECT p.id,p.data,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.email') AS donor_email,r.data AS receipt FROM sync_records p LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records r ON r.type='receipts' AND r.id='rcpt-'||p.id AND r.is_deleted=0 WHERE ${where} ORDER BY json_extract(p.data,'$.date') DESC LIMIT 500`).bind(...binds).all();
-      return c.json({ success: true, items: (rows.results || []).map((row: any) => { const payment = parse(row.data, {}); const receipt = parse(row.receipt, null); return { paymentId: row.id, donorId: payment.donorId, donorName: String(row.donor_name || ''), email: String(row.donor_email || ''), amount: Number(payment.amountCAD ?? payment.amount ?? 0), date: payment.date, method: payment.method, receiptNumber: receipt?.receiptNumber || '', error: receipt?.error || '' }; }) });
+      const query = waitingQuery(settings, { from, to, search });
+      const [rows, totals] = await c.env.DB.batch([
+        c.env.DB.prepare(`SELECT p.id,p.data,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.email') AS donor_email,r.data AS receipt ${query.from} LEFT JOIN sync_records r ON r.type='receipts' AND r.id='rcpt-'||p.id AND r.is_deleted=0 WHERE ${query.where} ORDER BY json_extract(p.data,'$.date') DESC,p.id LIMIT ? OFFSET ?`).bind(...query.binds, limit, offset),
+        c.env.DB.prepare(`SELECT COUNT(*) AS count,SUM(CASE WHEN ${hasEmail} THEN 1 ELSE 0 END) AS with_email,COALESCE(SUM(COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0)),0) AS amount ${query.from} WHERE ${query.where}`).bind(...query.binds)
+      ]);
+      const total: any = totals.results?.[0] || {};
+      return c.json({ success: true, page, limit, total: Number(total.count || 0), totalPages: Math.max(1, Math.ceil(Number(total.count || 0) / limit)), withEmail: Number(total.with_email || 0), totalAmount: Number(total.amount || 0), items: (rows.results || []).map((row: any) => { const payment = parse(row.data, {}); const receipt = parse(row.receipt, null); return { paymentId: row.id, donorId: payment.donorId, donorName: String(row.donor_name || ''), email: String(row.donor_email || ''), amount: Number(payment.amountCAD ?? payment.amount ?? 0), date: payment.date, method: payment.method, receiptNumber: receipt?.receiptNumber || '', error: receipt?.error || '' }; }) });
     }
     let where = "type='receipts' AND is_deleted=0"; const binds: any[] = [];
     if (status !== 'all') { where += " AND json_extract(data,'$.status')=?"; binds.push(status); }
     if (search) { where += " AND lower(data) LIKE ?"; binds.push(`%${search}%`); }
     if (from) { where += " AND json_extract(data,'$.giftDate')>=?"; binds.push(from); }
     if (to) { where += " AND json_extract(data,'$.giftDate')<=?"; binds.push(to); }
-    const rows = await c.env.DB.prepare(`SELECT data FROM sync_records WHERE ${where} ORDER BY json_extract(data,'$.receiptNumber') DESC LIMIT 500`).bind(...binds).all();
-    return c.json({ success: true, items: (rows.results || []).map((row: any) => { const { history, ...item } = parse(row.data, {}); return item; }) });
+    const [rows, totals] = await c.env.DB.batch([
+      c.env.DB.prepare(`SELECT data FROM sync_records WHERE ${where} ORDER BY json_extract(data,'$.receiptNumber') DESC LIMIT ? OFFSET ?`).bind(...binds, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS amount FROM sync_records WHERE ${where}`).bind(...binds)
+    ]);
+    const total: any = totals.results?.[0] || {};
+    return c.json({ success: true, page, limit, total: Number(total.count || 0), totalPages: Math.max(1, Math.ceil(Number(total.count || 0) / limit)), totalAmount: Number(total.amount || 0), items: (rows.results || []).map((row: any) => { const { history, ...item } = parse(row.data, {}); return item; }) });
   });
   app.post('/v3/receipts/send', async (c: any) => {
     const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
@@ -227,6 +244,19 @@ export const registerReceiptRoutes = (app: any, requirePermission: (c: any, perm
     const results = [];
     for (const id of ids) results.push(await issueAndSendReceipt(c, id, { to: ids.length === 1 ? body.to : undefined, force: Boolean(body.resend) }));
     return c.json({ success: true, results, sent: results.filter(item => item.ok).length, failed: results.filter(item => !item.ok).length });
+  });
+  // "Send all": sends the next group (up to 25) of waiting receipts that have an email, skipping ones that failed in this run.
+  app.post('/v3/receipts/send-next', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const body = await c.req.json().catch(() => ({}));
+    const size = Math.min(25, Math.max(1, Number(body.size) || 25)); const skip = (Array.isArray(body.skip) ? body.skip : []).map(String).slice(0, 5000);
+    const settings = await getReceiptSettings(c.env.DB);
+    const query = waitingQuery(settings, { from: String(body.from || ''), to: String(body.to || ''), search: String(body.search || '').trim().toLowerCase() });
+    const rows = await c.env.DB.prepare(`SELECT p.id ${query.from} WHERE ${query.where} AND ${hasEmail} AND p.id NOT IN (SELECT value FROM json_each(?)) ORDER BY json_extract(p.data,'$.date'),p.id LIMIT ?`).bind(...query.binds, JSON.stringify(skip), size).all();
+    const results = [];
+    for (const row of rows.results || []) results.push(await issueAndSendReceipt(c, String((row as any).id)));
+    const left: any = await c.env.DB.prepare(`SELECT COUNT(*) AS count ${query.from} WHERE ${query.where} AND ${hasEmail}`).bind(...query.binds).first();
+    return c.json({ success: true, results, sent: results.filter(item => item.ok).length, failed: results.filter(item => !item.ok), remaining: Number(left?.count || 0) });
   });
   // See the receipt PDF (before it is sent it shows "(new)" instead of the number).
   app.get('/v3/receipts/:paymentId/pdf', async (c: any) => {

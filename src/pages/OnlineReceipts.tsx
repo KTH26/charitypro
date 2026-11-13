@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileCheck2, Send, Settings2 } from 'lucide-react';
 import { startLiveRefresh } from '../utils/liveUpdates';
@@ -49,24 +49,29 @@ const ReceiptSettingsBox: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   </section>;
 };
 
-/** Official receipts: who still has to get one, who got one, what failed, what was cancelled. */
+/** Official receipts: who still has to get one, who got one, what failed, what was cancelled. 50 per page. */
 export const OnlineReceipts: React.FC = () => {
   const [tab, setTab] = useState<Tab>('waiting');
   const [waiting, setWaiting] = useState<Waiting[]>([]); const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [page, setPage] = useState(1); const [totals, setTotals] = useState({ total: 0, totalPages: 1, withEmail: 0, totalAmount: 0 });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState('');
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null); const [sending, setSending] = useState(false); const [showSettings, setShowSettings] = useState(false);
+  const [progress, setProgress] = useState<{ sent: number; failed: number; remaining: number; errors: string[] } | null>(null);
+  const stopRef = useRef(false);
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ status: tab, search, from, to });
+    const params = new URLSearchParams({ status: tab, search, from, to, page: String(page), limit: '50' });
     const response = await fetch(`/api/v3/receipts?${params}`); const data = await response.json();
     if (!response.ok || !data.success) { setMessage({ ok: false, text: data.error || 'Unable to load receipts.' }); return; }
     if (tab === 'waiting') setWaiting(data.items || []); else setReceipts(data.items || []);
-  }, [tab, search, from, to]);
-  useEffect(() => { setSelected(new Set()); void load(); return startLiveRefresh(() => void load()); }, [load]);
+    setTotals({ total: Number(data.total || 0), totalPages: Number(data.totalPages || 1), withEmail: Number(data.withEmail || 0), totalAmount: Number(data.totalAmount || 0) });
+  }, [tab, search, from, to, page]);
+  useEffect(() => { void load(); if (sending) return undefined; return startLiveRefresh(() => void load()); }, [load, sending]);
+  useEffect(() => { setPage(1); setSelected(new Set()); }, [tab, search, from, to]);
+  useEffect(() => { setSelected(new Set()); }, [page]);
 
   const send = async (paymentIds: string[], resend = false) => {
     if (!paymentIds.length) return;
-    if (paymentIds.length > 1 && !window.confirm(`Email ${paymentIds.length} official receipts now?`)) return;
     setSending(true); setMessage(null);
     try {
       const response = await fetch('/api/v3/receipts/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentIds, resend }) });
@@ -76,6 +81,25 @@ export const OnlineReceipts: React.FC = () => {
       setSelected(new Set()); void load();
     } catch (reason: any) { setMessage({ ok: false, text: reason.message }); } finally { setSending(false); }
   };
+  // Send every waiting receipt that has an email, 25 at a time, until done or stopped.
+  const sendAll = async () => {
+    setMessage(null); stopRef.current = false; setSending(true);
+    const skip: string[] = []; const errors: string[] = []; let sent = 0; let failed = 0; let remaining = totals.withEmail;
+    setProgress({ sent, failed, remaining, errors });
+    try {
+      while (!stopRef.current) {
+        const response = await fetch('/api/v3/receipts/send-next', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to, search, skip, size: 25 }) });
+        const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Sending stopped.');
+        sent += data.sent; remaining = data.remaining;
+        for (const item of data.failed || []) { failed += 1; skip.push(item.paymentId); if (!errors.includes(item.error)) errors.push(item.error); }
+        setProgress({ sent, failed, remaining, errors: [...errors] });
+        if (!data.results?.length || remaining - (failed) <= 0) break;
+        // When every one in a group failed the same way (for example the daily Gmail limit), stop and say why.
+        if (data.sent === 0 && (data.failed || []).length) { setMessage({ ok: false, text: `Stopped: ${data.failed[0].error}` }); break; }
+      }
+    } catch (reason: any) { setMessage({ ok: false, text: reason.message }); }
+    finally { setSending(false); void load(); }
+  };
   const cancel = async (receipt: Receipt) => {
     const reason = window.prompt(`Cancel (void) receipt #${receipt.receiptNumber} for ${receipt.donorName}? It stays saved as cancelled, and you can send a new one after.\n\nWhy?`);
     if (reason === null) return;
@@ -84,8 +108,8 @@ export const OnlineReceipts: React.FC = () => {
     void load();
   };
   const withEmail = useMemo(() => waiting.filter(item => item.email), [waiting]);
-  const total = (tab === 'waiting' ? waiting : receipts).reduce((sum, item: any) => sum + Number(item.amount || 0), 0);
   const toggle = (id: string) => setSelected(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const pager = <div className="receipt-pager"><span>Page {page} of {totals.totalPages} · {totals.total.toLocaleString()} {tab === 'waiting' ? 'payments' : 'receipts'} · {money(totals.totalAmount)}</span><div style={{ display: 'flex', gap: 6 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(1)}>First</button><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totals.totalPages} onClick={() => setPage(value => value + 1)}>Next</button><button className="btn btn-secondary btn-sm" disabled={page >= totals.totalPages} onClick={() => setPage(totals.totalPages)}>Last</button></div></div>;
 
   return <div style={{ padding: 28, maxWidth: 1300, margin: '0 auto', display: 'grid', gap: 16 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -97,10 +121,18 @@ export const OnlineReceipts: React.FC = () => {
     <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <div className="filter-strip"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search donor or amount" /><input type="date" value={from} onChange={event => setFrom(event.target.value)} title="From date" /><input type="date" value={to} onChange={event => setTo(event.target.value)} title="To date" /></div>
       {message && <div style={{ padding: '10px 16px', fontWeight: 700, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
+      {tab === 'waiting' && <div className="receipt-summary">
+        <div><strong>{totals.total.toLocaleString()}</strong><small>payments waiting</small></div>
+        <div><strong>{totals.withEmail.toLocaleString()}</strong><small>have an email</small></div>
+        <div><strong style={{ color: 'var(--red)' }}>{(totals.total - totals.withEmail).toLocaleString()}</strong><small>no email (add it on the donor)</small></div>
+        <div><strong>{money(totals.totalAmount)}</strong><small>total</small></div>
+        {sending && progress ? <div className="receipt-progress"><strong>Sending… {progress.sent} sent{progress.failed ? `, ${progress.failed} not sent` : ''}, {Math.max(0, progress.remaining - progress.failed)} left</strong><button className="btn btn-secondary btn-sm" onClick={() => { stopRef.current = true; }}>Stop</button></div>
+          : <button className="btn btn-primary" disabled={sending || totals.withEmail === 0} onClick={() => { if (window.confirm(`Email all ${totals.withEmail.toLocaleString()} waiting receipts that have an email${from || to || search ? ' (with the filters above)' : ''}? They go out 25 at a time; you can stop any time.`)) void sendAll(); }}><Send size={15} /> Send all {totals.withEmail.toLocaleString()}</button>}
+      </div>}
+      {!sending && progress && <div style={{ padding: '8px 16px', fontWeight: 700, color: progress.failed ? 'var(--red)' : 'var(--green)' }}>Done: {progress.sent} sent{progress.failed ? `, ${progress.failed} not sent (${progress.errors.slice(0, 3).join(' · ')})` : ''}.</div>}
       {tab === 'waiting' && <div className="receipt-actions">
-        <label className="msg-check"><input type="checkbox" checked={withEmail.length > 0 && withEmail.every(item => selected.has(item.paymentId))} onChange={event => setSelected(event.target.checked ? new Set(withEmail.map(item => item.paymentId)) : new Set())} /> Select all with email ({withEmail.length})</label>
-        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>{waiting.length} payments · {money(total)}</span>
-        <button className="btn btn-primary" disabled={sending || selected.size === 0} onClick={() => void send([...selected])}><Send size={15} /> {sending ? 'Sending…' : `Send ${selected.size || ''} receipt${selected.size === 1 ? '' : 's'}`}</button>
+        <label className="msg-check"><input type="checkbox" checked={withEmail.length > 0 && withEmail.every(item => selected.has(item.paymentId))} onChange={event => setSelected(event.target.checked ? new Set(withEmail.map(item => item.paymentId)) : new Set())} /> Select this page ({withEmail.length} with email)</label>
+        <button className="btn btn-secondary" style={{ marginLeft: 'auto' }} disabled={sending || selected.size === 0} onClick={() => void send([...selected])}><Send size={15} /> Send {selected.size || ''} selected</button>
       </div>}
       <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
         {tab === 'waiting' ? <><thead><tr><th /><th>Date</th><th>Donor</th><th>Email</th><th>Paid by</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead><tbody>
@@ -121,6 +153,7 @@ export const OnlineReceipts: React.FC = () => {
           {receipts.length === 0 && <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}>Nothing here.</td></tr>}
         </tbody></>}
       </table></div>
+      {pager}
     </section>
   </div>;
 };
