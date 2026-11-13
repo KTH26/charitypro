@@ -122,4 +122,19 @@ describe('matching a bank deposit to checks', () => {
     expect((await call('POST', '/v3/bank/match-checks', { ...deposit, transactionIds: ['chk1'], amount: 360 })).status).toBe(409);
     expect((await call('GET', '/v3/bank/check-candidates?accountId=bmo&bankDate=2026-11-05')).body.items).toHaveLength(0);
   });
+  it('also matches e-transfers and wires (in the bank already, or still in Undeposited Funds)', async () => {
+    const { db, call } = setup();
+    seed(db, 'matchedBankTransactions', 'matchedBankTransactions', {});
+    db.database.prepare("UPDATE sync_records SET data='[]' WHERE id='matchedBankTransactions'").run();
+    seed(db, 'transactions', 'et1', { donorId: 'd1', amount: 250, currency: 'CAD', date: '2026-11-03', method: 'e_transfer', type: 'approved', sourceAccountId: 'bmo' });
+    seed(db, 'transactions', 'wire1', { donorId: 'd2', amount: 1000, currency: 'CAD', date: '2026-11-03', method: 'wire', type: 'approved', sourceAccountId: 'sys-undeposited-funds' });
+    seed(db, 'transactions', 'et-batched', { donorId: 'd2', amount: 75, currency: 'CAD', date: '2026-11-03', method: 'e_transfer', type: 'approved', sourceAccountId: 'sys-undeposited-funds', depositStatus: 'deposited', batchTransactionId: 'b1' });
+    const list = await call('GET', '/v3/bank/check-candidates?accountId=bmo&bankDate=2026-11-05');
+    expect(list.body.items.map((item: any) => `${item.id}:${item.checkState}`).sort()).toEqual(['et1:deposited', 'wire1:waiting']);
+    const matched = await call('POST', '/v3/bank/match-checks', { accountId: 'bmo', bankTransactionId: 'bmo:tx88', bankDate: '2026-11-05', amount: 1250, transactionIds: ['et1', 'wire1'] });
+    expect(matched.body).toMatchObject({ success: true, total: 1250 });
+    const read = (id: string) => JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE id=?").get(id) as any).data));
+    expect(read('wire1')).toMatchObject({ sourceAccountId: 'bmo', depositStatus: 'deposited', bankTransactionId: 'bmo:tx88' });
+    expect(read('et1')).toMatchObject({ sourceAccountId: 'bmo', bankTransactionId: 'bmo:tx88' });
+  });
 });

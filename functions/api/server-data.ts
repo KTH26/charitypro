@@ -3770,11 +3770,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (!accountId || !bankDate) return c.json({ success: false, error: 'Choose the bank deposit first.' }, 400);
     const from = isoDate(c.req.query('from')) || shiftDate(bankDate, -120); const to = isoDate(c.req.query('to')) || shiftDate(bankDate, 3);
     const rows = await c.env.DB.prepare(`SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0
-      WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.method')='check' AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND COALESCE(json_extract(t.data,'$.bankTransactionId'),'')=''
-        AND (json_extract(t.data,'$.type')='pending' OR (json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.sourceAccountId')=?))
+      WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.method') IN ('check','e_transfer','wire','ach') AND COALESCE(json_extract(t.data,'$.isBatch'),0)=0 AND COALESCE(json_extract(t.data,'$.bankTransactionId'),'')=''
+        AND (json_extract(t.data,'$.type')='pending' OR (json_extract(t.data,'$.type')='approved' AND (json_extract(t.data,'$.sourceAccountId')=? OR (json_extract(t.data,'$.sourceAccountId')='sys-undeposited-funds' AND COALESCE(json_extract(t.data,'$.depositStatus'),'undeposited')<>'deposited' AND COALESCE(json_extract(t.data,'$.batchTransactionId'),'')=''))))
         AND json_extract(t.data,'$.date') BETWEEN ? AND ?
       ORDER BY json_extract(t.data,'$.date') DESC,t.id LIMIT 500`).bind(accountId, from, to).all();
-    return c.json({ success: true, startDate: from, endDate: to, items: (rows.results || []).map((row: any) => { const item = parseRecord(row); return { ...item, donorName: row.donor_name || 'Unknown Donor', checkState: item.type === 'pending' ? 'waiting' : 'deposited' }; }) });
+    return c.json({ success: true, startDate: from, endDate: to, items: (rows.results || []).map((row: any) => { const item = parseRecord(row); return { ...item, donorName: row.donor_name || 'Unknown Donor', checkState: item.type === 'pending' || item.sourceAccountId === 'sys-undeposited-funds' ? 'waiting' : 'deposited' }; }) });
   });
   app.post('/v3/bank/match-checks', async (c: any) => {
     const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
@@ -3794,7 +3794,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (matchedIds.includes(bankTransactionId)) return c.json({ success: false, error: 'This bank deposit is already matched.' }, 409);
     const rows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='transactions' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all();
     const checks = (rows.results || []).map((row: any) => ({ id: String(row.id), revision: Number(row.revision), raw: String(row.data), data: parseSetting(row.data, {}) }));
-    const usable = checks.filter((check: any) => check.data.method === 'check' && !check.data.isBatch && !check.data.bankTransactionId && (check.data.type === 'pending' || (check.data.type === 'approved' && check.data.sourceAccountId === accountId)));
+    // Checks, e-transfers and wires: waiting (pending, or still in Undeposited Funds) or already entered into this bank.
+    const inUndeposited = (data: any) => data.sourceAccountId === 'sys-undeposited-funds' && data.depositStatus !== 'deposited' && !data.batchTransactionId;
+    const usable = checks.filter((check: any) => ['check', 'e_transfer', 'wire', 'ach'].includes(check.data.method) && !check.data.isBatch && !check.data.bankTransactionId && (check.data.type === 'pending' || (check.data.type === 'approved' && (check.data.sourceAccountId === accountId || inUndeposited(check.data)))));
     if (usable.length !== ids.length) return c.json({ success: false, error: 'One of the checks changed or is already matched. The list has been reloaded.', conflict: true }, 409);
     const total = usable.reduce((sum: number, check: any) => sum + Number(check.data.amountCAD ?? check.data.amount ?? 0), 0);
     if (Math.abs(total - amount) >= 0.005) return c.json({ success: false, error: `The checks add up to $${total.toFixed(2)}, but the bank deposit is $${amount.toFixed(2)}.` }, 409);
@@ -3802,7 +3804,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const statements: any[] = []; const depositedPaymentIds: string[] = []; const items: any[] = [];
     for (const check of usable) {
       const waiting = check.data.type === 'pending';
-      const next = waiting ? { ...check.data, type: 'approved', sourceAccountId: accountId, depositStatus: 'deposited', depositedAt: new Date(now).toISOString(), depositDate: bankDate, bankTransactionId } : { ...check.data, depositStatus: 'deposited', bankTransactionId };
+      const next = waiting ? { ...check.data, type: 'approved', sourceAccountId: accountId, depositStatus: 'deposited', depositedAt: new Date(now).toISOString(), depositDate: bankDate, bankTransactionId }
+        : inUndeposited(check.data) ? { ...check.data, sourceAccountId: accountId, depositStatus: 'deposited', depositedAt: new Date(now).toISOString(), depositDate: bankDate, bankTransactionId }
+        : { ...check.data, depositStatus: 'deposited', bankTransactionId };
       if (waiting) depositedPaymentIds.push(check.id);
       const data = JSON.stringify(next); const revision = check.revision + 1; const operationId = `${mutationId}-${check.id}`;
       items.push({ ...next, id: check.id, revision });

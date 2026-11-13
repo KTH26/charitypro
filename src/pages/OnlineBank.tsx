@@ -350,7 +350,7 @@ export const OnlineBank: React.FC = () => {
       setMatching(null);
       setCandidates([]);
       setSelectedIds([]);
-      setNotice(depositSource === "checks" ? `Deposit matched to ${transactionIds.length} check${transactionIds.length === 1 ? "" : "s"}.${data.depositedPaymentIds?.length ? ` ${data.depositedPaymentIds.length} marked deposited.` : ""}` : `Deposit matched to ${data.selectedCount} cloud payment${data.selectedCount === 1 ? "" : "s"}.`);
+      setNotice(depositSource === "checks" ? `Deposit matched to ${transactionIds.length} payment${transactionIds.length === 1 ? "" : "s"}.${data.depositedPaymentIds?.length ? ` ${data.depositedPaymentIds.length} marked deposited.` : ""}` : `Deposit matched to ${data.selectedCount} cloud payment${data.selectedCount === 1 ? "" : "s"}.`);
       await Promise.all([loadState(true), loadFeed(true)]);
     } catch (e: any) {
       setError(e.message || "The bank deposit could not be matched. You can safely try again.");
@@ -708,7 +708,7 @@ export const OnlineBank: React.FC = () => {
               {depositAction === "payments" && (
                 <>
                   <div className="pay-toggle" style={{ marginTop: 14 }} role="group" aria-label="Match to">
-                    {([["cards", "Card payments (Sola)"], ["checks", "Checks"]] as const).map(([value, label]) => (
+                    {([["cards", "Card payments (Sola)"], ["checks", "Checks, E-Transfers & Wires"]] as const).map(([value, label]) => (
                       <button key={value} type="button" className={depositSource === value ? "active" : ""} onClick={() => { setDepositSource(value); setSelectedIds([]); setCandidates([]); if (matching) void loadDepositCandidates(matching, undefined, undefined, value).catch((reason) => setError(reason.message)); }}>{label}</button>
                     ))}
                   </div>
@@ -765,7 +765,7 @@ export const OnlineBank: React.FC = () => {
                     }}
                   >
                     <p style={{ margin: 0 }}>
-                      {depositSource === "checks" ? <>Showing checks from <strong>{candidateWindow.startDate}</strong> through <strong>{candidateWindow.endDate}</strong>: checks waiting to be deposited (they will be marked deposited into this bank), and checks already marked deposited here.</> : <>Showing eligible Undeposited Funds payments from <strong>{candidateWindow.startDate}</strong> through <strong>{candidateWindow.endDate}</strong>.</>}
+                      {depositSource === "checks" ? <>Showing checks, e-transfers and wires from <strong>{candidateWindow.startDate}</strong> through <strong>{candidateWindow.endDate}</strong>. "waiting" ones will be put into this bank; "in bank" ones are already entered here and will only be linked.</> : <>Showing eligible Undeposited Funds payments from <strong>{candidateWindow.startDate}</strong> through <strong>{candidateWindow.endDate}</strong>.</>}
                     </p>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button className="btn btn-primary btn-sm" disabled={!candidates.length || selectedIds.length === candidates.length} onClick={() => setSelectedIds(candidates.map((candidate) => candidate.id))}>
@@ -804,7 +804,7 @@ export const OnlineBank: React.FC = () => {
                             </td>
                             <td>{candidate.date}</td>
                             <td>{candidate.donorName}</td>
-                            <td>{candidate.method === "check" ? <>Check{candidate.checkNumber ? ` #${candidate.checkNumber}` : ""} <span className={`badge ${candidate.checkState === "waiting" ? "badge-yellow" : "badge-green"}`}>{candidate.checkState === "waiting" ? "waiting" : "deposited"}</span></> : candidate.method}</td>
+                            <td>{candidate.checkState ? <>{({ check: "Check", e_transfer: "E-Transfer", wire: "Wire", ach: "ACH" } as Record<string, string>)[candidate.method] || candidate.method}{candidate.checkNumber ? ` #${candidate.checkNumber}` : ""} <span className={`badge ${candidate.checkState === "waiting" ? "badge-yellow" : "badge-green"}`}>{candidate.checkState === "waiting" ? "waiting" : "in bank"}</span></> : candidate.method}</td>
                             <td style={{ textAlign: "right", fontWeight: 800 }}>${Number(candidate.amountCAD ?? candidate.amount).toFixed(2)}</td>
                           </tr>
                         ))}
