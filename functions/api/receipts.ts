@@ -32,12 +32,45 @@ export const getReceiptSettings = async (db: any): Promise<ReceiptSettings> => {
 export type ReceiptCopy = { donorName: string; addressLine1: string; addressLine2: string; yiddishPreTitle: string; yiddishName: string; yiddishPostTitle: string; amount: number; giftDate: string };
 type Gift = ReceiptCopy & { paymentId: string; donorId: string; email: string; method: string; type: string };
 /** Split "106 Car Andre-Ouellet, Boisbriand Qc., J7E 4H4" into two lines at the first comma (or use the city). */
-export const addressLines = (donor: any) => {
-  const address = String(donor.address || '').trim(); const city = [donor.city, donor.province, donor.postalCode].filter(Boolean).join(', ');
-  if (address.includes('\n')) { const [first, ...rest] = address.split('\n').map(line => line.trim()).filter(Boolean); return [first || '', [rest.join(', '), city].filter(Boolean).join(', ')]; }
-  if (city) return [address, city];
-  const comma = address.indexOf(',');
-  return comma > 0 ? [address.slice(0, comma + 1), address.slice(comma + 1).trim()] : [address, ''];
+// Street types as they are saved in the donor list ("432 Tash Ch de"), and how they are written on a letter.
+const STREET_TYPES: [RegExp, string][] = [
+  [/^ch\.? de la$/i, 'Chemin de la'], [/^ch\.? de$/i, 'Chemin de'], [/^ch\.? du$/i, 'Chemin du'], [/^ch\.?$/i, 'Chemin'],
+  [/^carr\.?$|^car\.?$|^carré$/i, 'Carré'], [/^rue de la$/i, 'Rue de la'], [/^rue de$/i, 'Rue de'], [/^rue$/i, 'Rue'], [/^cour$/i, 'Cour'],
+  [/^place$|^pl\.?$/i, 'Place'], [/^boul\.?$|^bd$/i, 'Boulevard'], [/^av\.?$|^ave$|^avenue$/i, 'Avenue'], [/^mtée$|^montee$|^montée$/i, 'Montée'],
+  [/^cr\.?$|^crois\.?$/i, 'Croissant'], [/^imp\.?$/i, 'Impasse'], [/^terr\.?$/i, 'Terrasse'], [/^rang$/i, 'Rang'], [/^allée$|^allee$/i, 'Allée']
+];
+const STREET_TYPE_WORDS = /\s+((?:ch\.?|rue)(?:\s+(?:de\s+la|de|du))?|carr\.?|car\.?|carré|cour|place|pl\.?|boul\.?|bd|av\.?|ave|avenue|mtée|montee|montée|cr\.?|crois\.?|imp\.?|terr\.?|rang|allée|allee)$/i;
+/** Postal codes that are Boisbriand (Kiryas Tosh and around). */
+const CITY_BY_POSTAL: Record<string, string> = { J7E: 'Boisbriand, Quebec', J7G: 'Boisbriand, Quebec', J7H: 'Boisbriand, Quebec' };
+
+/**
+ * The donor address as two letter lines:
+ * "432 Tash Ch de  Apt #A J7E 4H4" → ["432 Chemin de Tash, Apt #A", "Boisbriand, Quebec J7E 4H4"].
+ */
+export const addressLines = (donor: any): [string, string] => {
+  let address = String(donor.address || '').replace(/\s+/g, ' ').trim();
+  if (!address) return ['', ''];
+  // Already written with separate lines or commas: keep it as it is.
+  if (String(donor.address).includes('\n')) { const [first, ...rest] = String(donor.address).split('\n').map(line => line.trim()).filter(Boolean); return [first || '', rest.join(', ')]; }
+  const postalMatch = /\b([A-Z]\d[A-Z])\s?(\d[A-Z]\d)\s*$/i.exec(address);
+  const postal = postalMatch ? `${postalMatch[1].toUpperCase()} ${postalMatch[2].toUpperCase()}` : String(donor.postalCode || '').toUpperCase();
+  if (postalMatch) address = address.slice(0, postalMatch.index).trim();
+  let unit = '';
+  const unitMatch = /\s+((?:apt|app|appt|unit|suite|bldg|#)\b.*)$/i.exec(address);
+  if (unitMatch) { unit = unitMatch[1].trim(); address = address.slice(0, unitMatch.index).trim(); }
+  if (address.includes(',')) { const comma = address.indexOf(','); return [address.slice(0, comma).trim() + (unit ? `, ${unit}` : ''), [address.slice(comma + 1).trim(), postal].filter(Boolean).join(' ')]; }
+  // "432 Tash Ch de" → "432 Chemin de Tash"
+  const street = /^(\d+[A-Z]?(?:-\d+)?)\s+(.+)$/i.exec(address);
+  if (street) {
+    const typeMatch = STREET_TYPE_WORDS.exec(' ' + street[2]);
+    if (typeMatch) {
+      const name = (' ' + street[2]).slice(0, typeMatch.index).trim();
+      const type = STREET_TYPES.find(([pattern]) => pattern.test(typeMatch[1].replace(/\s+/g, ' ')))?.[1] || typeMatch[1];
+      if (name) address = `${street[1]} ${type} ${name}`;
+    }
+  }
+  const city = [donor.city, donor.province].filter(Boolean).join(', ') || CITY_BY_POSTAL[postal.slice(0, 3)] || '';
+  return [address + (unit ? `, ${unit}` : ''), [city, postal].filter(Boolean).join(' ')];
 };
 export const loadGift = async (db: any, paymentId: string): Promise<Gift | null> => {
   const row: any = await db.prepare("SELECT p.data AS payment,d.data AS donor FROM sync_records p LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0 WHERE p.type='transactions' AND p.id=? AND p.is_deleted=0").bind(paymentId).first();

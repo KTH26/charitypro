@@ -3,7 +3,7 @@ import { validatePayload } from './validation';
 import { buildDonorSheetPlan } from './donor-sheet';
 import { HDate } from '@hebcal/core';
 import { registerMessagingRoutes, getMessagingSettings, sendEmail, sendSms, splitList } from './messaging';
-import { registerReceiptRoutes } from './receipts';
+import { registerReceiptRoutes, addressLines } from './receipts';
 import { registerSmsRoutes } from './sms';
 import { registerStripeRoutes, verifyStripePayment } from './stripe';
 
@@ -640,7 +640,7 @@ export const buildDonorStatement = async (db: any, donorId: string, from: string
   const cell = 'padding:6px 8px;border-bottom:1px solid #e5e7eb';
   const html = `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#111">
 <h2 style="margin:0;color:#0f2b46">${escapeHtml(orgName)}</h2><div style="color:#666">Donor statement · ${escapeHtml(period)}</div>
-<p style="margin:16px 0 4px;font-size:17px"><b dir="auto">${escapeHtml(name)}</b>${english && english !== name ? `<br><span style="color:#555">${escapeHtml(english)}</span>` : ''}${donor.address ? `<br><span style="color:#555">${escapeHtml([donor.address, donor.city].filter(Boolean).join(', '))}</span>` : ''}</p>
+<p style="margin:16px 0 4px;font-size:17px"><b dir="auto">${escapeHtml(name)}</b>${english && english !== name ? `<br><span style="color:#555">${escapeHtml(english)}</span>` : ''}${donor.address ? `<br><span style="color:#555">${addressLines(donor).filter(Boolean).map(escapeHtml).join('<br>')}</span>` : ''}</p>
 <table style="width:100%;border-collapse:collapse;margin:14px 0"><tr>
 <td style="padding:10px;background:#f1f5f9;border-radius:8px"><div style="color:#666;font-size:12px">Pledged in this period</div><b style="font-size:18px">${cad(pledged)}</b></td>
 <td style="padding:10px;background:#f1f5f9"><div style="color:#666;font-size:12px">Paid in this period</div><b style="font-size:18px;color:#15803d">${cad(paid)}</b></td>

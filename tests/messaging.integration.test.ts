@@ -134,7 +134,7 @@ describe('official receipts', () => {
   const captureEmails = () => { const sent: any[] = []; vi.stubGlobal('fetch', async (_url: string, init: any) => { sent.push(JSON.parse(String(init.body))); return new Response(JSON.stringify({ ok: true })); }); return sent; };
   it('waits in the list, gets the next number, is sent as a PDF, and can be cancelled and sent again', async () => {
     const { db, call } = setup();
-    db.database.prepare("UPDATE sync_records SET data=json_set(data,'$.email','moshe@example.com','$.address','106 Car Andre-Ouellet, Boisbriand Qc., J7E 4H4','$.preTitle','מו\"ה','$.postTitle','הי\"ו') WHERE id='d1'").run();
+    db.database.prepare("UPDATE sync_records SET data=json_set(data,'$.email','moshe@example.com','$.address','432 Tash Ch de  Apt #A J7E 4H4','$.preTitle','מו\"ה','$.postTitle','הי\"ו') WHERE id='d1'").run();
     seed(db, 'transactions', 'card1', { donorId: 'd1', amount: 180, currency: 'CAD', date: '2026-11-03', method: 'credit_card', type: 'approved' });
     seed(db, 'transactions', 'cash1', { donorId: 'd1', amount: 50, currency: 'CAD', date: '2026-11-03', method: 'cash', type: 'approved' });
     seed(db, 'transactions', 'check1', { donorId: 'd1', amount: 360, currency: 'CAD', date: '2026-11-04', method: 'check', type: 'pending' });
@@ -155,7 +155,7 @@ describe('official receipts', () => {
     expect((await call('POST', '/v3/receipts/card1/void', { reason: 'Wrong amount' })).status).toBe(200);
     expect((await call('GET', '/v3/receipts?status=void')).body.items.map((item: any) => item.receiptNumber)).toEqual(['00664']);
     expect((await call('POST', '/v3/receipts/send', { paymentIds: ['card1'] })).body.results[0]).toMatchObject({ ok: true, receiptNumber: '00665' });
-    expect((await call('GET', '/v3/receipts?status=sent')).body.items).toMatchObject([{ receiptNumber: '00665', addressLine1: '106 Car Andre-Ouellet,', addressLine2: 'Boisbriand Qc., J7E 4H4', yiddishPreTitle: 'מו"ה' }]);
+    expect((await call('GET', '/v3/receipts?status=sent')).body.items).toMatchObject([{ receiptNumber: '00665', addressLine1: '432 Chemin de Tash, Apt #A', addressLine2: 'Boisbriand, Quebec J7E 4H4', yiddishPreTitle: 'מו"ה' }]);
   });
   it('sends by itself after a card payment is saved, when turned on', async () => {
     const { db, call } = setup();
