@@ -40,3 +40,4 @@ jobs:
           run_automation "/api/v3/schedules/process-due"
           run_automation "/api/v3/automation/daily-sola"
           run_automation "/api/v3/automation/process-recurring"
+          run_automation "/api/v3/automation/daily-reminders"

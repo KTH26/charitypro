@@ -31,7 +31,7 @@ type PaymentResponse = {
 };
 
 const methodLabel: Record<string, string> = {
-  credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer',
+  credit_card: 'Credit Card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer', wire: 'Wire',
   vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'Other'
 };
 
@@ -173,7 +173,7 @@ export const OnlinePayments: React.FC = () => {
           </div>
         </div>
 
-        {showCreate && <OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {
+        {showCreate && <div className="modal-overlay" onClick={() => setShowCreate(false)}><div className="pay-modal" onClick={event => event.stopPropagation()}><OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {
           setShowCreate(false);
           setNotice(createdStatus === 'pending'
             ? 'Check saved safely in the cloud as pending. You can view it under Pending checks when you are ready.'
@@ -183,7 +183,7 @@ export const OnlinePayments: React.FC = () => {
           // The three-second cloud refresh will show it here when it belongs to the
           // current filter; pending checks remain available under Pending checks.
           if (status === createdStatus) void load();
-        }} />}
+        }} /></div></div>}
         {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}
 
         <section className="card" style={{ padding: 18, marginBottom: 18 }}>

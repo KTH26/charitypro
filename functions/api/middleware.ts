@@ -5,7 +5,9 @@ import type { Context, Next } from 'hono';
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 export const requireAuth = async (c: Context, next: Next) => {
-  if(/\/v3\/(?:automation\/(?:daily-sola|process-recurring)|schedules\/process-due)$/.test(c.req.path)){const configured=String((c.env as any).CRON_SECRET||'');const supplied=String(c.req.header('Authorization')||'').replace(/^Bearer\s+/i,'');if(configured&&supplied===configured){c.set('userId','system-automation');c.set('userEmail','automation@charitypro.local');c.set('userRoles',['administrator']);await next();return;}return c.json({success:false,error:'Unauthorized automation request.'},401);}
+  // Twilio's incoming-text webhook has no login; the handler itself checks Twilio's signature (functions/api/sms.ts).
+  if (c.req.method === 'POST' && /\/v3\/sms\/inbound$/.test(c.req.path)) { c.set('userId', 'twilio-webhook'); c.set('userEmail', 'twilio@charitypro.local'); c.set('userRoles', []); await next(); return; }
+  if(/\/v3\/(?:automation\/(?:daily-sola|process-recurring|daily-reminders)|schedules\/process-due)$/.test(c.req.path)){const configured=String((c.env as any).CRON_SECRET||'');const supplied=String(c.req.header('Authorization')||'').replace(/^Bearer\s+/i,'');if(configured&&supplied===configured){c.set('userId','system-automation');c.set('userEmail','automation@charitypro.local');c.set('userRoles',['administrator']);await next();return;}return c.json({success:false,error:'Unauthorized automation request.'},401);}
   const jwt = c.req.header('Cf-Access-Jwt-Assertion');
   
   if (!jwt) {

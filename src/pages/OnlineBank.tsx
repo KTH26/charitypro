@@ -37,6 +37,8 @@ type Candidate = {
   amountCAD?: number;
   date: string;
   method: string;
+  checkNumber?: string;
+  checkState?: "waiting" | "deposited";
 };
 type BillCandidate = {
   id: string;
@@ -109,6 +111,8 @@ export const OnlineBank: React.FC = () => {
     endDate: "",
   });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Which payments a deposit is matched to: card payments waiting in Undeposited Funds (most deposits), or checks.
+  const [depositSource, setDepositSource] = useState<'cards' | 'checks'>('cards');
   const [depositAction, setDepositAction] = useState<"payments" | "refund" | "transfer" | "transfer_in">("payments");
   const [transferInSourceId, setTransferInSourceId] = useState("");
   const [transferInLoanDueDate, setTransferInLoanDueDate] = useState("");
@@ -244,13 +248,14 @@ export const OnlineBank: React.FC = () => {
       .catch(() => undefined);
   }, []);
 
-  const loadDepositCandidates = async (transaction: BankTransaction, from?: string, to?: string) => {
+  const loadDepositCandidates = async (transaction: BankTransaction, from?: string, to?: string, source: 'cards' | 'checks' = depositSource) => {
     const params = new URLSearchParams({
       bankDate: transaction.date,
+      ...(source === 'checks' ? { accountId: selectedBank } : {}),
       ...(from ? { from } : {}),
       ...(to ? { to } : {}),
     });
-    const response = await fetch(`/api/v3/bank/deposit-candidates?${params}`);
+    const response = await fetch(`/api/v3/bank/${source === 'checks' ? 'check-candidates' : 'deposit-candidates'}?${params}`);
     const data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.error || "Unable to load deposit candidates.");
     setCandidates(data.items);
@@ -273,6 +278,7 @@ export const OnlineBank: React.FC = () => {
   const openDepositMatch = async (transaction: BankTransaction) => {
     setMatching(transaction);
     setDepositAction("payments");
+    setDepositSource("cards");
     setRefundCandidates([]);
     setRefundSelected([]);
     setRefundSearch("");
@@ -285,7 +291,7 @@ export const OnlineBank: React.FC = () => {
     setError("");
     setNotice("");
     try {
-      await loadDepositCandidates(transaction);
+      await loadDepositCandidates(transaction, undefined, undefined, "cards");
     } catch (e: any) {
       setError(e.message || "Unable to load deposit candidates.");
     }
@@ -315,7 +321,7 @@ export const OnlineBank: React.FC = () => {
     const requestId = matchRequestIds.current[matching.id] || crypto.randomUUID();
     matchRequestIds.current[matching.id] = requestId;
     try {
-      const response = await fetch("/api/v3/bank/match-deposit", {
+      const response = await fetch(depositSource === "checks" ? "/api/v3/bank/match-checks" : "/api/v3/bank/match-deposit", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -344,7 +350,7 @@ export const OnlineBank: React.FC = () => {
       setMatching(null);
       setCandidates([]);
       setSelectedIds([]);
-      setNotice(`Deposit matched to ${data.selectedCount} cloud payment${data.selectedCount === 1 ? "" : "s"}.`);
+      setNotice(depositSource === "checks" ? `Deposit matched to ${transactionIds.length} check${transactionIds.length === 1 ? "" : "s"}.${data.depositedPaymentIds?.length ? ` ${data.depositedPaymentIds.length} marked deposited.` : ""}` : `Deposit matched to ${data.selectedCount} cloud payment${data.selectedCount === 1 ? "" : "s"}.`);
       await Promise.all([loadState(true), loadFeed(true)]);
     } catch (e: any) {
       setError(e.message || "The bank deposit could not be matched. You can safely try again.");
@@ -701,6 +707,11 @@ export const OnlineBank: React.FC = () => {
               </label>
               {depositAction === "payments" && (
                 <>
+                  <div className="pay-toggle" style={{ marginTop: 14 }} role="group" aria-label="Match to">
+                    {([["cards", "Card payments (Sola)"], ["checks", "Checks"]] as const).map(([value, label]) => (
+                      <button key={value} type="button" className={depositSource === value ? "active" : ""} onClick={() => { setDepositSource(value); setSelectedIds([]); setCandidates([]); if (matching) void loadDepositCandidates(matching, undefined, undefined, value).catch((reason) => setError(reason.message)); }}>{label}</button>
+                    ))}
+                  </div>
                   <div
                     style={{
                       display: "grid",
@@ -754,7 +765,7 @@ export const OnlineBank: React.FC = () => {
                     }}
                   >
                     <p style={{ margin: 0 }}>
-                      Showing eligible Undeposited Funds payments from <strong>{candidateWindow.startDate}</strong> through <strong>{candidateWindow.endDate}</strong>.
+                      {depositSource === "checks" ? <>Showing checks from <strong>{candidateWindow.startDate}</strong> through <strong>{candidateWindow.endDate}</strong>: checks waiting to be deposited (they will be marked deposited into this bank), and checks already marked deposited here.</> : <>Showing eligible Undeposited Funds payments from <strong>{candidateWindow.startDate}</strong> through <strong>{candidateWindow.endDate}</strong>.</>}
                     </p>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button className="btn btn-primary btn-sm" disabled={!candidates.length || selectedIds.length === candidates.length} onClick={() => setSelectedIds(candidates.map((candidate) => candidate.id))}>
@@ -793,7 +804,7 @@ export const OnlineBank: React.FC = () => {
                             </td>
                             <td>{candidate.date}</td>
                             <td>{candidate.donorName}</td>
-                            <td>{candidate.method}</td>
+                            <td>{candidate.method === "check" ? <>Check{candidate.checkNumber ? ` #${candidate.checkNumber}` : ""} <span className={`badge ${candidate.checkState === "waiting" ? "badge-yellow" : "badge-green"}`}>{candidate.checkState === "waiting" ? "waiting" : "deposited"}</span></> : candidate.method}</td>
                             <td style={{ textAlign: "right", fontWeight: 800 }}>${Number(candidate.amountCAD ?? candidate.amount).toFixed(2)}</td>
                           </tr>
                         ))}

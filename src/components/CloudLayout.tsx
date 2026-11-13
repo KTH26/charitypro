@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  BarChart3, Building, Calendar, CalendarClock, CheckSquare, FileText,
+  BarChart3, Bell, Building, FileCheck2, Calendar, CalendarClock, CheckSquare, FileText,
   HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Megaphone, Printer,
   Menu, Settings, ShieldCheck, Store, Users, Wallet, X, PhoneCall, UserCheck } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
@@ -13,7 +13,8 @@ type NavCategory = { label: string; items: NavItem[] };
 const categories: NavCategory[] = [
   { label: 'HOME', items: [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard, ready: true },
-    { path: '/calendar', label: 'Calendar', icon: Calendar, ready: true }
+    { path: '/calendar', label: 'Calendar', icon: Calendar, ready: true },
+    { path: '/reminders', label: 'Reminders', icon: Bell, ready: true }
   ] },
   { label: 'CONTACTS', items: [
     { path: '/donors', label: 'Donors', icon: Users, ready: true },
@@ -25,6 +26,7 @@ const categories: NavCategory[] = [
     { path: '/pledges', label: 'Pledges', icon: HeartHandshake, ready: true },
     { path: '/payments', label: 'Payments', icon: Wallet, ready: true },
     { path: '/pending-payments', label: 'Pending Verification', icon: CalendarClock, ready: true },
+    { path: '/receipts', label: 'Official Receipts', icon: FileCheck2, ready: true },
     { path: '/schedules', label: 'Schedules', icon: CalendarClock, ready: true }
   ] },
   { label: 'EXPENSES', items: [

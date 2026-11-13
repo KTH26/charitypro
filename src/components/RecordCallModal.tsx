@@ -226,13 +226,13 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
     </div>
     {showPledge && donor && <PledgeFormModal
       pledge={pledgeDone ? { id: pledgeDone.id, revision: pledgeDone.revision, donorId: donor.id, donorName: donorNames(donor).main, amount: pledgeDone.amount, currency: pledgeDone.currency === 'USD' ? 'USD' : 'CAD', date: pledgeDone.date, notes: pledgeDone.notes, followUpDate: pledgeDone.followUpDate, followUpNote: pledgeDone.followUpNote, fundraiserGroupId: pledgeDone.fundraiserGroupId, fundraiserAllocations: pledgeDone.fundraiserAllocations } : null}
-      defaultDonor={{ id: donor.id, name: donorNames(donor).main }}
+      defaultDonor={donor}
       defaults={{ date: form.date, notes: form.notes.trim(), fundraiserAllocations: (() => { const commission = Number(fundraisers.find(item => item.id === form.fundraiserId)?.percentage || 0); return form.fundraiserId && commission > 0 && commission <= 100 ? [{ fundraiserId: form.fundraiserId, percentage: commission }] : []; })() }}
       onClose={() => setShowPledge(false)}
       onSaved={item => { setShowPledge(false); setPledgeDone({ id: String(item?.id || pledgeDone?.id || ''), revision: Number(item?.revision || 1), amount: Number(item?.amount || 0), currency: String(item?.currency || 'CAD'), date: String(item?.date || form.date), notes: item?.notes, followUpDate: item?.followUpDate, followUpNote: item?.followUpNote, fundraiserGroupId: item?.fundraiserGroupId, fundraiserAllocations: item?.fundraiserAllocations }); }} />}
     {payWindow && donor && <div className="modal-overlay"><div onClick={event => event.stopPropagation()} style={{ width: 'min(980px,96vw)', maxHeight: '94vh', overflowY: 'auto' }}>
       {payWindow === 'payment' ? <>
-        <OnlinePaymentForm donor={{ id: donor.id, name: donor.name, email: donor.email }} onCancel={() => setPayWindow('')} onCreated={(status, item) => { setPaymentDone({ id: String(item?.id || ''), amount: Number(item?.amount || 0), method: String(item?.method || ''), pending: status === 'pending' }); setPayWindow(''); }} />
+        <OnlinePaymentForm donor={donor} onCancel={() => setPayWindow('')} onCreated={(status, item) => { setPaymentDone({ id: String(item?.id || ''), amount: Number(item?.amount || 0), method: String(item?.method || ''), pending: status === 'pending' }); setPayWindow(''); }} />
         <div className="card" style={{ padding: 12, textAlign: 'right' }}><button type="button" className="btn btn-ghost btn-sm" onClick={() => setPayWindow('recurring')}>He wants monthly / recurring payments instead →</button></div>
       </> : <div className="card" style={{ padding: 20, display: 'grid', gap: 12 }}><h2 style={{ margin: 0, color: 'var(--navy)' }}>Set up payments for {donorNames(donor).main}</h2>{cardsToggle}{recurringForm(false)}</div>}
     </div></div>}

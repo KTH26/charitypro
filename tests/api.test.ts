@@ -85,7 +85,8 @@ describe('Backend API & Security Rules', () => {
     const bankSource = readFileSync(join(process.cwd(), 'src', 'pages', 'OnlineBank.tsx'), 'utf8');
     const workerSource = readFileSync(join(process.cwd(), 'functions', 'api', '[[route]].ts'), 'utf8');
     expect(appSource).toContain('path="/online/bank"');
-    expect(bankSource).toContain('fetch("/api/v3/bank/match-deposit"');
+    expect(bankSource).toContain('"/api/v3/bank/match-deposit"');
+    expect(bankSource).toContain('"/api/v3/bank/match-checks"');
     expect(bankSource).toContain('fetch("/api/v3/bank/match-outgoing"');
     expect(readFileSync(join(process.cwd(), 'src', 'pages', 'OnlinePayroll.tsx'), 'utf8')).toContain('types=asset,liability');
     expect(bankSource).toContain('Exact match');

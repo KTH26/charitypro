@@ -13,7 +13,7 @@ const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
   if (!existing) document.head.appendChild(script);
 });
 
-export const SolaCardCapture: React.FC<{ donorId: string; onSaved: () => void; onCancel: () => void }> = ({ donorId, onSaved, onCancel }) => {
+export const SolaCardCapture: React.FC<{ donorId: string; onSaved: (card?: any) => void; onCancel: () => void; oneTime?: boolean }> = ({ donorId, onSaved, onCancel, oneTime = false }) => {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
   const [ready, setReady] = useState(false); const [saving, setSaving] = useState(false); const [error, setError] = useState('');
   const [cardholderName, setCardholderName] = useState(''); const [expiryMonth, setExpiryMonth] = useState(''); const [expiryYear, setExpiryYear] = useState(''); const [isDefault, setIsDefault] = useState(false);
@@ -45,16 +45,16 @@ export const SolaCardCapture: React.FC<{ donorId: string; onSaved: () => void; o
       const cvvToken = document.querySelector<HTMLInputElement>('[data-ifields-id="cvv-token"]')?.value || '';
       if (!cardNumberToken || !cvvToken) throw new Error('Sola did not return secure card tokens. Please try again.');
       const key = requestId.current || crypto.randomUUID(); requestId.current = key;
-      const response = await fetch(`/api/v3/donors/${encodeURIComponent(donorId)}/payment-methods/tokenize`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ cardNumberToken, cvvToken, expiryMonth: month, expiryYear: year, cardholderName: cardholderName.trim(), isDefault }) });
+      const response = await fetch(`/api/v3/donors/${encodeURIComponent(donorId)}/payment-methods/tokenize`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ cardNumberToken, cvvToken, expiryMonth: month, expiryYear: year, cardholderName: cardholderName.trim(), isDefault: oneTime ? false : isDefault, oneTime }) });
       const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || 'Unable to save this card.');
-      requestId.current = ''; (window as any).clearIfield?.('card-number'); (window as any).clearIfield?.('cvv'); onSaved();
+      requestId.current = ''; (window as any).clearIfield?.('card-number'); (window as any).clearIfield?.('cvv'); onSaved(result.item);
     } catch (reason: any) { requestId.current = ''; setError(reason.message || 'Unable to save this card.'); }
     finally { setSaving(false); }
   };
 
   if (config && !config.configured) return <div className="secure-card-setup"><ShieldCheck size={28}/><div><strong>Secure card entry needs one final setting.</strong><p>Add the public Sola iFields key under Settings → Payment Gateway. The private API key alone cannot safely collect a new card.</p></div><button type="button" className="btn btn-secondary" onClick={onCancel}>Close</button></div>;
   return <form className="secure-card-form" onSubmit={save}>
-    <div className="secure-card-heading"><div><span className="page-kicker">SOLA SECURE FIELDS</span><h3><CreditCard size={20}/> Add a card on file</h3><p>The card number and security code go directly to Sola. CharityPro receives only temporary tokens and stores only a reusable gateway token plus masked details.</p></div><LockKeyhole size={30}/></div>
+    <div className="secure-card-heading"><div><span className="page-kicker">SOLA SECURE FIELDS</span><h3><CreditCard size={20}/> {oneTime ? 'Use a card once (not saved)' : 'Add a card on file'}</h3><p>The card number and security code go directly to Sola. CharityPro receives only temporary tokens and stores only a reusable gateway token plus masked details.</p></div><LockKeyhole size={30}/></div>
     {error && <div role="alert" className="secure-card-error">{error}</div>}
     <div className="secure-card-grid">
       <label><span>Cardholder name</span><input autoComplete="cc-name" value={cardholderName} onChange={event => setCardholderName(event.target.value)} /></label>
@@ -63,7 +63,7 @@ export const SolaCardCapture: React.FC<{ donorId: string; onSaved: () => void; o
       <label><span>Expiry month</span><select autoComplete="cc-exp-month" value={expiryMonth} onChange={event => setExpiryMonth(event.target.value)}><option value="">Month</option>{Array.from({length:12},(_,index)=>index+1).map(month=><option key={month} value={month}>{String(month).padStart(2,'0')}</option>)}</select></label>
       <label><span>Expiry year</span><select autoComplete="cc-exp-year" value={expiryYear} onChange={event => setExpiryYear(event.target.value)}><option value="">Year</option>{Array.from({length:20},(_,index)=>new Date().getFullYear()+index).map(year=><option key={year} value={year}>{year}</option>)}</select></label>
     </div>
-    <label className="secure-card-default"><input type="checkbox" checked={isDefault} onChange={event => setIsDefault(event.target.checked)} /> Make this the donor’s default card</label>
-    <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button><button className="btn btn-primary" disabled={!ready || saving}>{saving ? 'Tokenizing securely…' : 'Save Card Securely'}</button></div>
+    {!oneTime && <label className="secure-card-default"><input type="checkbox" checked={isDefault} onChange={event => setIsDefault(event.target.checked)} /> Make this the donor’s default card</label>}
+    <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button><button className="btn btn-primary" disabled={!ready || saving}>{saving ? 'Tokenizing securely…' : oneTime ? 'Use This Card' : 'Save Card Securely'}</button></div>
   </form>;
 };

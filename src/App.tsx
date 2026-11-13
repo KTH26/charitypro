@@ -21,6 +21,8 @@ import { OnlineAuditHistory } from './pages/OnlineAuditHistory';
 import { OnlineDonorFuseReconcile } from './pages/OnlineDonorFuseReconcile';
 import { NotFound } from './pages/NotFound';
 
+const OnlineReminders = React.lazy(() => import('./pages/OnlineReminders').then(module => ({ default: module.OnlineReminders })));
+const OnlineReceipts = React.lazy(() => import('./pages/OnlineReceipts').then(module => ({ default: module.OnlineReceipts })));
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
 const OnlineReconciliation = React.lazy(() => import('./pages/OnlineReconciliation').then(module => ({ default: module.OnlineReconciliation })));
@@ -63,6 +65,8 @@ function App() {
         <Route path="/reports" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reports...</div>}><OnlineReports /></React.Suspense>)} />
         <Route path="/profit-loss" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading Profit & Loss...</div>}><OnlineProfitLoss /></React.Suspense>)} />
         <Route path="/tasks" element={cloudPage(<OnlineTasks />)} />
+        <Route path="/receipts" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading receipts...</div>}><OnlineReceipts /></React.Suspense>)} />
+        <Route path="/reminders" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reminders...</div>}><OnlineReminders /></React.Suspense>)} />
         <Route path="/audit-history" element={cloudPage(<OnlineAuditHistory />)} />
         <Route path="/settings" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading settings...</div>}><OnlineSettings /></React.Suspense>)} />
         <Route path="/donorfuse-reconcile" element={cloudPage(<OnlineDonorFuseReconcile />)} />
