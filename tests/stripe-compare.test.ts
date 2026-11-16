@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { matchStripe, simplifyCharge } from '../functions/api/stripe';
+import { matchStripe, pickPledge, simplifyCharge } from '../functions/api/stripe';
 
 describe('Stripe compare', () => {
   it('reads a Stripe charge with the Canadian payout amount', () => {
@@ -21,5 +21,14 @@ describe('Stripe compare', () => {
     expect(result.matched.map(m => [m.charge.id, m.payment.id, m.how])).toEqual([['ch_a', 'p1', 'Stripe payment number'], ['ch_b', 'p2', 'Same donor, amount and date'], ['ch_c', 'p3', 'Same amount and date, similar name']]);
     expect(result.onlyStripe.map(c => c.id)).toEqual(['ch_d']);
     expect(result.onlyCharityPro.map(p => p.id)).toEqual(['p4']);
+  });
+
+  it('puts an added Stripe payment on the pledge of that campaign, else the last pledge before the date', () => {
+    const campaigns = [{ id: 'c25', startDate: '2025-03-01', endDate: '2026-02-28' }, { id: 'c26', startDate: '2026-03-01', endDate: '2027-02-28' }];
+    const pledges = [{ id: 'a', date: '2025-03-01', campaignId: 'c25' }, { id: 'b', date: '2026-03-01', campaignId: 'c26' }];
+    expect(pickPledge(pledges, campaigns, '2026-05-10')?.id).toBe('b');
+    expect(pickPledge(pledges, campaigns, '2025-12-01')?.id).toBe('a');
+    expect(pickPledge([{ id: 'x', date: '2024-03-01', campaignId: 'old' }], campaigns, '2026-05-10')?.id).toBe('x');
+    expect(pickPledge([], campaigns, '2026-05-10')).toBeNull();
   });
 });
