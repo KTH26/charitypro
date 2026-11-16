@@ -5,6 +5,7 @@ import {
   HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Megaphone, Printer,
   Menu, Settings, ShieldCheck, Store, Users, Wallet, X, PhoneCall, UserCheck } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
+import { PageExportButton } from './PageExportButton';
 import { startLiveRefresh, subscribeLiveStatus, type LiveStatus } from '../utils/liveUpdates';
 
 type NavItem = { path: string; label: string; icon: React.ElementType; ready?: boolean };
@@ -43,7 +44,7 @@ const categories: NavCategory[] = [
     { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon, ready: true }
   ] },
   { label: 'REPORTS', items: [
-    { path: '/reports', label: 'Fundraising Reports', icon: BarChart3, ready: true },
+    { path: '/reports', label: 'Reports', icon: BarChart3, ready: true },
     { path: '/profit-loss', label: 'Profit & Loss', icon: BarChart3, ready: true }
   ] },
   { label: 'SYSTEM', items: [
@@ -109,7 +110,7 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       <main className="main-content">
         <header className="topbar">
           <div className="topbar-brand"><button className="menu-button" type="button" aria-label="Open navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><Menu size={22} /></button><img src="/charitypro-kth-company-logo.png" alt="" /><div><span className="topbar-eyebrow">Hatzolah Tosh</span><h1>{pageLabel}</h1></div></div>
-          <div className="topbar-actions"><ReminderBell/><div className={`cloud-status cloud-status-${liveStatus}`} title={liveTitle} role="status" aria-live="polite"><span />{liveLabel}</div></div>
+          <div className="topbar-actions"><PageExportButton path={location.pathname}/><ReminderBell/><div className={`cloud-status cloud-status-${liveStatus}`} title={liveTitle} role="status" aria-live="polite"><span />{liveLabel}</div></div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>
       </main>

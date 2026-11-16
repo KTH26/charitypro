@@ -26,7 +26,7 @@ const OnlineReceipts = React.lazy(() => import('./pages/OnlineReceipts').then(mo
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
 const OnlineReconciliation = React.lazy(() => import('./pages/OnlineReconciliation').then(module => ({ default: module.OnlineReconciliation })));
-const OnlineReports = React.lazy(() => import('./pages/OnlineReports').then(module => ({ default: module.OnlineReports })));
+const OnlineReports = React.lazy(() => import('./pages/OnlineReportCenter').then(module => ({ default: module.OnlineReportCenter })));
 const OnlineProfitLoss = React.lazy(() => import('./pages/OnlineProfitLoss').then(module => ({ default: module.OnlineProfitLoss })));
 const OnlineSettings = React.lazy(() => import('./pages/OnlineSettings').then(module => ({ default: module.OnlineSettings })));
 const OnlineSolaSync = React.lazy(() => import('./pages/OnlineSolaSync').then(module => ({ default: module.OnlineSolaSync })));
