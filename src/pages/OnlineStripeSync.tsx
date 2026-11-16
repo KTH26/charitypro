@@ -30,7 +30,7 @@ export const OnlineStripeSync: React.FC = () => {
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const act = async (key: string, run: () => Promise<any>, done: string) => { setBusy(key); setError(''); setNotice(''); try { await run(); setNotice(done); await load(true); } catch (reason: any) { setError(reason.message); } finally { setBusy(''); } };
   const addCharge = (ch: Charge) => { if (!donor) return; void act(ch.id, () => post('/api/v3/stripe/import', { chargeId: ch.id, donorId: donor.id }), `Added $${money(ch.amount)} ${ch.currency} for ${donor.name}.`).then(() => { setAdding(null); setDonor(null); }); };
-  const link = (chargeId: string, paymentId: string) => act(chargeId, () => post('/api/v3/stripe/link', { chargeId, paymentId }), 'Linked.');
+  const link = (chargeId: string, paymentId: string) => { setBusy(chargeId); setError(''); setNotice(''); post('/api/v3/stripe/link', { chargeId, paymentId }).then(json => { setNotice(json.approved ? 'Linked - and marked approved, because Stripe charged it.' : 'Linked.'); return load(true); }).catch((reason: any) => setError(reason.message)).finally(() => setBusy('')); };
   const ignore = (ch: Charge, value: boolean) => act(ch.id, () => post('/api/v3/stripe/ignore', { chargeId: ch.id, ignore: value }), value ? 'Hidden from the list.' : 'Back in the list.');
   const remove = (p: Pay) => { if (!window.confirm(`Delete the payment of $${money(p.amount)} ${p.currency} on ${p.date} for ${p.donor}? (It goes to the Audit History and can be brought back.)`)) return; void act(p.id, () => post(`/api/v3/payments/${encodeURIComponent(p.id)}`, null, 'DELETE'), 'Payment deleted.'); };
   const exportExcel = () => {

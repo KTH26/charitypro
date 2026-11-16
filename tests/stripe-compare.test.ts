@@ -58,3 +58,26 @@ describe('Stripe Sync saved data', () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 });
+
+describe('Stripe link', () => {
+  it('approves a pending installment when it is linked to a Stripe charge that went through', async () => {
+    const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
+    const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(join(process.cwd(), 'scripts', 'staging-schema.sql'), 'utf8'));
+    const stmt = (sql: string, values: any[] = []): any => ({ sql, bind: (...v: any[]) => stmt(sql, v), all: async () => ({ results: sqlite.prepare(sql).all(...values) }), first: async () => sqlite.prepare(sql).get(...values) || null, run: async () => { const r = sqlite.prepare(sql).run(...values); return { meta: { changes: Number(r.changes) } }; } });
+    const db = { prepare: (sql: string) => stmt(sql), batch: async (list: any[]) => { const out = []; for (const s of list) out.push(/^s*SELECT/i.test(s.sql) ? await s.all() : await s.run()); return out; } };
+    const put = (type: string, id: string, data: any) => sqlite.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES(?,?,?,1,1,0)").run(id, type, JSON.stringify(data));
+    put('campaigns', 'c26', { name: 'Campaign 2026', startDate: '2026-03-01', endDate: '2027-02-28' });
+    put('pledges', 'p26', { donorId: 'd1', date: '2026-03-01', amount: 2400, campaignId: 'c26' });
+    put('transactions', 't1', { donorId: 'd1', amount: 200, currency: 'USD', amountCAD: 280, date: '2026-07-01', type: 'pending', method: 'credit_card', notes: 'Installment 1 of 8' });
+    const app = new Hono(); app.use('*', async (c: any, next) => { c.set('userId', 'u'); c.set('userEmail', 'e'); await next(); }); registerStripeRoutes(app, () => null);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ id: 'ch_9', payment_intent: 'pi_9', created: 1782900000, amount: 20000, currency: 'usd', status: 'succeeded', amount_refunded: 0, billing_details: { name: 'M W' }, payment_method_details: { card: { brand: 'visa', last4: '1111' } }, metadata: {}, balance_transaction: { amount: 20000, fee: 600, exchange_rate: null, currency: 'usd' } }), { status: 200 })) as any;
+    try {
+      const response = await app.request('/v3/stripe/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chargeId: 'ch_9', paymentId: 't1' }) }, { DB: db, STRIPE_SECRET_KEY: 'sk_test_x' } as any);
+      const json: any = await response.json();
+      expect(json).toMatchObject({ success: true, approved: true });
+      const saved = JSON.parse(String((sqlite.prepare("SELECT data FROM sync_records WHERE id='t1'").get() as any).data));
+      expect(saved).toMatchObject({ type: 'approved', stripeChargeId: 'ch_9', pledgeId: 'p26', amountCAD: 280 });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});

@@ -107,10 +107,21 @@ export const registerStripeRoutes = (app: any, requirePermission: (c: any, permi
     let ch: StripeCharge; try { ch = simplifyCharge(await stripeApi(c, `charges/${chargeId}?expand[]=balance_transaction`)); } catch (reason: any) { return c.json({ success: false, error: reason.message }, 502); }
     if (await alreadySaved(db, ch)) return c.json({ success: false, error: 'This Stripe charge is already linked to a payment.' }, 409);
     const d = JSON.parse(String(row.data));
-    const next = { ...d, stripeChargeId: ch.id, ...(ch.paymentIntentId ? { stripePaymentIntentId: ch.paymentIntentId } : {}), ...(ch.currency === 'USD' && ch.payoutCurrency === 'CAD' && ch.cadAmount !== null && Math.round(Number(d.amount) * 100) === Math.round(ch.amount * 100) ? { amountCAD: ch.cadAmount, exchangeRate: Math.round((ch.cadAmount / ch.amount) * 10000) / 10000, exchangeRateSource: 'stripe' } : {}), notes: `${d.notes ? d.notes + ' · ' : ''}Stripe ${ch.id}` };
+    // Stripe really charged it: a "pending" payment (planned installment) becomes approved and goes on the donor's pledge.
+    const charged = ch.status === 'Paid' || ch.status === 'Part refunded';
+    let approve: any = {};
+    if (charged && d.type === 'pending') {
+      approve = { type: 'approved', depositStatus: d.depositStatus || 'direct', ...(d.sourceAccountId ? {} : { sourceAccountId: 'sys-undeposited-funds' }), ...(d.offsetAccountId ? {} : { offsetAccountId: String(d.currency || 'CAD') === 'USD' ? '204' : '203' }) };
+      if (!d.pledgeId && !(Array.isArray(d.pledgeAllocations) && d.pledgeAllocations.length)) {
+        const [pledgeRows, campaignRows] = await db.batch([db.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(String(d.donorId || '')), db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0")]);
+        const pledge = pickPledge((pledgeRows.results || []).map((r: any) => ({ ...JSON.parse(String(r.data)), id: String(r.id) })), (campaignRows.results || []).map((r: any) => ({ ...JSON.parse(String(r.data)), id: String(r.id) })), String(d.date || ch.date));
+        if (pledge) approve.pledgeId = pledge.id;
+      }
+    }
+    const next = { ...d, ...approve, stripeChargeId: ch.id, ...(ch.paymentIntentId ? { stripePaymentIntentId: ch.paymentIntentId } : {}), ...(ch.currency === 'USD' && ch.payoutCurrency === 'CAD' && ch.cadAmount !== null && Math.round(Number(d.amount) * 100) === Math.round(ch.amount * 100) ? { amountCAD: ch.cadAmount, exchangeRate: Math.round((ch.cadAmount / ch.amount) * 10000) / 10000, exchangeRateSource: 'stripe' } : {}), notes: `${d.notes ? d.notes + ' · ' : ''}Stripe ${ch.id}` };
     const result = await db.batch(writeRecord(db, c, 'transactions', paymentId, next, row, `Linked to Stripe charge ${ch.id}`));
     if (!Number(result?.[0]?.meta?.changes ?? 1)) return c.json({ success: false, error: 'The payment was changed meanwhile - try again.' }, 409);
-    return c.json({ success: true });
+    return c.json({ success: true, approved: approve.type === 'approved' });
   });
   // Hide a Stripe charge from the "Only in Stripe" list (or show it again).
   app.post('/v3/stripe/ignore', async (c: any) => {
