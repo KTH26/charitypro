@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { EyeOff, FileSpreadsheet, Link as LinkIcon, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react';
 import { downloadExcel, type ExcelColumn } from '../utils/excel';
 import { DonorPicker, type PickedDonor } from '../components/DonorPicker';
@@ -11,22 +11,23 @@ import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal
  */
 type Charge = { id: string; paymentIntentId: string; date: string; amount: number; currency: string; refunded: number; status: string; name: string; email: string; card: string; description: string; donorId?: string; donorGuess?: string; cadAmount: number | null; cadFee: number | null; rate: number | null; payoutCurrency: string };
 type Pay = { id: string; revision: number; date: string; donor: string; donorName: string; donorId: string; amount: number; currency: string; amountCAD: number | null; method: string; status: string; notes: string; [key: string]: any };
-type Result = { from: string; counts: Record<string, number>; matched: { stripe: Charge; payment: Pay; how: string }[]; onlyStripe: Charge[]; onlyCharityPro: Pay[]; ignored: Charge[] };
+type Result = { lastRead?: { at: string; from: string; count: number } | null; saved?: boolean; from: string; counts: Record<string, number>; matched: { stripe: Charge; payment: Pay; how: string }[]; onlyStripe: Charge[]; onlyCharityPro: Pay[]; ignored: Charge[] };
 const money = (value: number | null | undefined) => value === null || value === undefined ? '' : Number(value).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const post = async (url: string, body: any, method = 'POST') => { const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: method === 'DELETE' ? undefined : JSON.stringify(body) }); const json = await response.json().catch(() => ({})); if (!response.ok || json.success === false) throw new Error(json.error || 'Something went wrong.'); return json; };
 const close = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
 export const OnlineStripeSync: React.FC = () => {
-  const [from, setFrom] = useState('2024-01-01'); const [data, setData] = useState<Result | null>(null);
+  const [from, setFrom] = useState(() => { try { return localStorage.getItem('stripeSyncFrom') || '2024-01-01'; } catch { return '2024-01-01'; } }); const [data, setData] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [tab, setTab] = useState<'stripe' | 'cp' | 'matched' | 'ignored'>('stripe');
   const [adding, setAdding] = useState<string | null>(null); const [donor, setDonor] = useState<PickedDonor | null>(null);
   const [busy, setBusy] = useState(''); const [openPayment, setOpenPayment] = useState<Pay | null>(null);
-  const load = async (quiet = false) => {
+  const load = async (quiet = false, live = false) => {
     if (!quiet) setLoading(true); setError('');
-    try { const response = await fetch(`/api/v3/stripe/compare?from=${from}`); const json = await response.json().catch(() => ({})); if (!response.ok || !json.success) throw new Error(json.error || 'Could not read Stripe.'); setData(json); }
+    try { try { localStorage.setItem('stripeSyncFrom', from); } catch { /* ignore */ } const response = await fetch(`/api/v3/stripe/compare?from=${from}${live ? '&mode=live' : ''}`); const json = await response.json().catch(() => ({})); if (!response.ok || !json.success) throw new Error(json.error || 'Could not read Stripe.'); setData(json); }
     catch (reason: any) { setError(reason.message || 'Could not read Stripe.'); } finally { setLoading(false); }
   };
+  useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const act = async (key: string, run: () => Promise<any>, done: string) => { setBusy(key); setError(''); setNotice(''); try { await run(); setNotice(done); await load(true); } catch (reason: any) { setError(reason.message); } finally { setBusy(''); } };
   const addCharge = (ch: Charge) => { if (!donor) return; void act(ch.id, () => post('/api/v3/stripe/import', { chargeId: ch.id, donorId: donor.id }), `Added $${money(ch.amount)} ${ch.currency} for ${donor.name}.`).then(() => { setAdding(null); setDonor(null); }); };
   const link = (chargeId: string, paymentId: string) => act(chargeId, () => post('/api/v3/stripe/link', { chargeId, paymentId }), 'Linked.');
@@ -54,7 +55,9 @@ export const OnlineStripeSync: React.FC = () => {
       <div><h2 style={{ margin: 0, color: 'var(--navy)' }}>Stripe Sync (US-dollar cards)</h2><p style={{ margin: '4px 0 0', color: 'var(--text-muted)' }}>Your Stripe charges next to the US-dollar payments in CharityPro. Add a missing charge for a donor, link it to a payment that is already there, ignore it, or delete a payment that should not be there.</p></div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
         <label className="form-group" style={{ margin: 0 }}><span>From date</span><input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label>
-        <button type="button" className="btn btn-primary btn-sm" disabled={loading} onClick={() => void load()}><RefreshCw size={15} /> {loading ? 'Reading Stripe…' : 'Read Stripe'}</button>
+        <button type="button" className="btn btn-primary btn-sm" disabled={loading} onClick={() => void load(false, true)}><RefreshCw size={15} /> {loading ? 'Reading Stripe…' : 'Read Stripe (get new charges)'}</button>
+        {data?.lastRead && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Last read from Stripe: {new Date(data.lastRead.at).toLocaleString('en-CA')} · {data.lastRead.count} charges since {data.lastRead.from}</span>}
+        {data && !data.lastRead && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not read from Stripe yet - click Read Stripe.</span>}
         <button type="button" className="btn btn-secondary btn-sm" disabled={!data} onClick={exportExcel}><FileSpreadsheet size={15} /> Export to Excel</button>
       </div>
       {error && <div style={{ color: 'var(--red)' }}>{error}</div>}

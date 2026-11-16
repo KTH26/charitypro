@@ -32,3 +32,29 @@ describe('Stripe compare', () => {
     expect(pickPledge([], campaigns, '2026-05-10')).toBeNull();
   });
 });
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { Hono } from 'hono';
+import { registerStripeRoutes } from '../functions/api/stripe';
+describe('Stripe Sync saved data', () => {
+  it('shows the saved Stripe charges without asking Stripe', async () => {
+    const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
+    const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(join(process.cwd(), 'scripts', 'staging-schema.sql'), 'utf8'));
+    const stmt = (sql: string, values: any[] = []): any => ({ bind: (...v: any[]) => stmt(sql, v), all: async () => ({ results: sqlite.prepare(sql).all(...values) }), first: async () => sqlite.prepare(sql).get(...values) || null, run: async () => sqlite.prepare(sql).run(...values) });
+    const db = { prepare: (sql: string) => stmt(sql), batch: async (list: any[]) => Promise.all(list.map(s => s.run())) };
+    const put = (type: string, id: string, data: any) => sqlite.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES(?,?,?,1,1,0)").run(id, type, JSON.stringify(data));
+    put('donors', 'd1', { name: 'Mordechei Wieder' });
+    put('transactions', 't1', { donorId: 'd1', amount: 200, currency: 'USD', date: '2026-05-01', type: 'approved', stripePaymentIntentId: 'pi_1' });
+    put('stripeCharges', 'ch_1', { id: 'ch_1', paymentIntentId: 'pi_1', date: '2026-05-01', amount: 200, currency: 'USD', refunded: 0, status: 'Paid', name: 'M Wieder', email: '', card: '', description: '', donorId: 'd1', cadAmount: 274, cadFee: 8, rate: 1.37, payoutCurrency: 'CAD' });
+    put('stripeCharges', 'ch_2', { id: 'ch_2', paymentIntentId: '', date: '2026-05-03', amount: 50, currency: 'USD', refunded: 0, status: 'Paid', name: 'Someone', email: '', card: '', description: '', donorId: '', cadAmount: 68, cadFee: 2, rate: 1.36, payoutCurrency: 'CAD' });
+    const app = new Hono(); registerStripeRoutes(app, () => null);
+    const originalFetch = globalThis.fetch; globalThis.fetch = (() => { throw new Error('Stripe must not be called'); }) as any;
+    try {
+      const response = await app.request('/v3/stripe/compare?from=2026-01-01', {}, { DB: db } as any);
+      const json: any = await response.json();
+      expect(json.saved).toBe(true);
+      expect(json.counts).toMatchObject({ stripe: 2, matched: 1, onlyStripe: 1, onlyCharityPro: 0 });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});

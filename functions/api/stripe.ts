@@ -124,14 +124,26 @@ export const registerStripeRoutes = (app: any, requirePermission: (c: any, permi
   app.get('/v3/stripe/compare', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
     const from = /^\d{4}-\d{2}-\d{2}$/.test(String(c.req.query('from') || '')) ? String(c.req.query('from')) : '2022-01-01';
-    const charges: StripeCharge[] = []; let after = '';
-    try {
+    const live = c.req.query('mode') === 'live';
+    let charges: StripeCharge[] = []; let after = '';
+    if (!live) {
+      const saved = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='stripeCharges' AND is_deleted=0 AND json_extract(data,'$.date')>=?").bind(from).all();
+      charges = (saved.results || []).map((r: any) => JSON.parse(String(r.data)));
+    } else try {
       for (let page = 0; page < 60; page++) {
         const list = await stripeApi(c, `charges?limit=100&created[gte]=${Math.floor(Date.parse(from + 'T00:00:00-05:00') / 1000)}&expand[]=data.balance_transaction${after ? `&starting_after=${after}` : ''}`);
         for (const ch of list.data || []) if (ch.status === 'succeeded' || ch.amount_refunded) charges.push(simplifyCharge(ch));
         if (!list.has_more || !list.data?.length) break; after = list.data[list.data.length - 1].id;
       }
     } catch (reason: any) { return c.json({ success: false, error: reason.message }, 502); }
+    if (live) {
+      // Save what Stripe sent, so the page shows it next time without reading Stripe again.
+      const now = Date.now();
+      for (let i = 0; i < charges.length; i += 50) await c.env.DB.batch(charges.slice(i, i + 50).map(ch => c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'stripeCharges',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(ch.id, JSON.stringify(ch), now, `stripe-read-${now}-${ch.id}`)));
+      await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('stripe_last_read',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify({ at: new Date(now).toISOString(), from, count: charges.length }), now).run();
+    }
+    const lastReadRow: any = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='stripe_last_read'").first();
+    const lastRead = (() => { try { return JSON.parse(String(lastReadRow?.value || 'null')); } catch { return null; } })();
     const rows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='transactions' AND is_deleted=0 AND COALESCE(json_extract(data,'$.isBatch'),0)=0 AND json_extract(data,'$.type') IN ('approved','pending') AND json_extract(data,'$.date')>=? AND (json_extract(data,'$.currency')='USD' OR json_extract(data,'$.stripePaymentIntentId') IS NOT NULL)").bind(from).all();
     const payments = (rows.results || []).map((r: any) => ({ ...JSON.parse(String(r.data)), id: String(r.id), revision: Number(r.revision) }));
     const donorRows = await c.env.DB.prepare("SELECT id,json_extract(data,'$.name') AS name FROM sync_records WHERE type='donors' AND is_deleted=0").all();
@@ -141,7 +153,7 @@ export const registerStripeRoutes = (app: any, requirePermission: (c: any, permi
     const result = { ...matchedAll, onlyStripe: matchedAll.onlyStripe.filter(ch => !ignored.has(ch.id)) };
     const ignoredRows = matchedAll.onlyStripe.filter(ch => ignored.has(ch.id)).map(ch => ({ ...ch, donorGuess: names.get(ch.donorId) || '' }));
     const pay = (p: any) => ({ ...p, donorName: names.get(String(p.donorId)) || '', id: p.id, date: p.date, donor: names.get(String(p.donorId)) || '', amount: Number(p.amount || 0), currency: p.currency || 'CAD', amountCAD: Number(p.amountCAD ?? 0) || null, method: p.method || '', status: p.type, notes: String(p.notes || '').slice(0, 160) });
-    return c.json({ success: true, from, counts: { ignored: ignoredRows.length, stripe: charges.length, charityPro: payments.length, matched: result.matched.length, onlyStripe: result.onlyStripe.length, onlyCharityPro: result.onlyCharityPro.length },
+    return c.json({ success: true, from, lastRead, saved: !live, counts: { ignored: ignoredRows.length, stripe: charges.length, charityPro: payments.length, matched: result.matched.length, onlyStripe: result.onlyStripe.length, onlyCharityPro: result.onlyCharityPro.length },
       matched: result.matched.map(m => ({ stripe: m.charge, payment: pay(m.payment), how: m.how })), onlyStripe: result.onlyStripe.map(ch => ({ ...ch, donorGuess: names.get(ch.donorId) || '', donorId: ch.donorId })), onlyCharityPro: result.onlyCharityPro.map(pay), ignored: ignoredRows });
   });
   app.get('/v3/stripe/settings', async (c: any) => {
