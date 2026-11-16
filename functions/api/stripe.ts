@@ -30,7 +30,55 @@ export const verifyStripePayment = async (c: any, paymentIntentId: string, donor
   return { ok: true as const, last4: String(card.last4 || ''), brand: String(card.brand || ''), chargeId: String(intent.latest_charge?.id || '') };
 };
 
+const torontoDay = (unixSeconds: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(unixSeconds * 1000));
+const words = (s: string) => new Set(String(s || '').toLowerCase().replace(/[^a-z֐-׿ ]/g, ' ').split(/\s+/).filter(w => w.length > 2));
+const daysApart = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 86400000;
+
+export type StripeCharge = { id: string; paymentIntentId: string; date: string; amount: number; currency: string; refunded: number; status: string; name: string; email: string; card: string; description: string; donorId: string; cadAmount: number | null; cadFee: number | null; rate: number | null; payoutCurrency: string };
+
+/** Turns Stripe's charge objects into simple rows. */
+export const simplifyCharge = (ch: any): StripeCharge => {
+  const bt = typeof ch.balance_transaction === 'object' && ch.balance_transaction ? ch.balance_transaction : null;
+  const card = ch.payment_method_details?.card || {};
+  return { id: String(ch.id), paymentIntentId: String(ch.payment_intent || ''), date: torontoDay(Number(ch.created)), amount: Number(ch.amount || 0) / 100, currency: String(ch.currency || '').toUpperCase(), refunded: Number(ch.amount_refunded || 0) / 100, status: ch.refunded ? 'Refunded' : ch.amount_refunded ? 'Part refunded' : ch.status === 'succeeded' ? 'Paid' : String(ch.status || ''), name: String(ch.billing_details?.name || ch.metadata?.name || ''), email: String(ch.billing_details?.email || ch.receipt_email || ''), card: card.last4 ? `${card.brand || 'card'} ${card.last4}` : '', description: String(ch.description || ''), donorId: String(ch.metadata?.donorId || ''), cadAmount: bt ? Number(bt.amount) / 100 : null, cadFee: bt ? Number(bt.fee) / 100 : null, rate: bt && bt.exchange_rate ? Number(bt.exchange_rate) : null, payoutCurrency: bt ? String(bt.currency || '').toUpperCase() : '' };
+};
+
+/** Matches Stripe charges to CharityPro payments: Stripe payment id first, then donor + amount + date, then amount + date + similar name. */
+export const matchStripe = (charges: StripeCharge[], payments: any[], donorName: (id: string) => string) => {
+  const used = new Set<string>(); const matched: { charge: StripeCharge; payment: any; how: string }[] = []; const left: StripeCharge[] = [];
+  const amountOf = (p: any) => Math.round(Number(p.amount || 0) * 100);
+  const take = (charge: StripeCharge, payment: any, how: string) => { used.add(payment.id); matched.push({ charge, payment, how }); };
+  const pending = [...charges];
+  for (const charge of pending) { const p = payments.find(p => !used.has(p.id) && ((p.stripePaymentIntentId && p.stripePaymentIntentId === charge.paymentIntentId) || (p.stripeChargeId && p.stripeChargeId === charge.id) || String(p.notes || '').includes(charge.id) || (charge.paymentIntentId && String(p.notes || '').includes(charge.paymentIntentId)))); if (p) take(charge, p, 'Stripe payment number'); }
+  const rest = () => pending.filter(ch => !matched.some(m => m.charge === ch));
+  for (const charge of rest()) { if (!charge.donorId) continue; const p = payments.filter(p => !used.has(p.id) && String(p.donorId) === charge.donorId && amountOf(p) === Math.round(charge.amount * 100) && daysApart(p.date, charge.date) <= 3).sort((a, b) => daysApart(a.date, charge.date) - daysApart(b.date, charge.date))[0]; if (p) take(charge, p, 'Same donor, amount and date'); }
+  for (const charge of rest()) { const nameWords = words(`${charge.name} ${charge.description}`); const p = payments.filter(p => !used.has(p.id) && amountOf(p) === Math.round(charge.amount * 100) && String(p.currency || 'CAD') === charge.currency && daysApart(p.date, charge.date) <= 3).map(p => ({ p, score: [...words(donorName(String(p.donorId)))].filter(w => nameWords.has(w)).length })).filter(x => x.score > 0).sort((a, b) => b.score - a.score || daysApart(a.p.date, charge.date) - daysApart(b.p.date, charge.date))[0]?.p; if (p) take(charge, p, 'Same amount and date, similar name'); }
+  for (const charge of rest()) left.push(charge);
+  return { matched, onlyStripe: left, onlyCharityPro: payments.filter(p => !used.has(p.id)) };
+};
+
 export const registerStripeRoutes = (app: any, requirePermission: (c: any, permission: string) => any) => {
+  // Read only: every Stripe charge since a date, next to the US-dollar / Stripe payments in CharityPro.
+  app.get('/v3/stripe/compare', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(c.req.query('from') || '')) ? String(c.req.query('from')) : '2022-01-01';
+    const charges: StripeCharge[] = []; let after = '';
+    try {
+      for (let page = 0; page < 60; page++) {
+        const list = await stripeApi(c, `charges?limit=100&created[gte]=${Math.floor(Date.parse(from + 'T00:00:00-05:00') / 1000)}&expand[]=data.balance_transaction${after ? `&starting_after=${after}` : ''}`);
+        for (const ch of list.data || []) if (ch.status === 'succeeded' || ch.amount_refunded) charges.push(simplifyCharge(ch));
+        if (!list.has_more || !list.data?.length) break; after = list.data[list.data.length - 1].id;
+      }
+    } catch (reason: any) { return c.json({ success: false, error: reason.message }, 502); }
+    const rows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='transactions' AND is_deleted=0 AND COALESCE(json_extract(data,'$.isBatch'),0)=0 AND json_extract(data,'$.type') IN ('approved','pending') AND json_extract(data,'$.date')>=? AND (json_extract(data,'$.currency')='USD' OR json_extract(data,'$.stripePaymentIntentId') IS NOT NULL)").bind(from).all();
+    const payments = (rows.results || []).map((r: any) => ({ ...JSON.parse(String(r.data)), id: String(r.id) }));
+    const donorRows = await c.env.DB.prepare("SELECT id,json_extract(data,'$.name') AS name FROM sync_records WHERE type='donors' AND is_deleted=0").all();
+    const names = new Map((donorRows.results || []).map((r: any) => [String(r.id), String(r.name || '')]));
+    const result = matchStripe(charges, payments, id => names.get(id) || '');
+    const pay = (p: any) => ({ id: p.id, date: p.date, donor: names.get(String(p.donorId)) || '', amount: Number(p.amount || 0), currency: p.currency || 'CAD', amountCAD: Number(p.amountCAD ?? 0) || null, method: p.method || '', status: p.type, notes: String(p.notes || '').slice(0, 160) });
+    return c.json({ success: true, from, counts: { stripe: charges.length, charityPro: payments.length, matched: result.matched.length, onlyStripe: result.onlyStripe.length, onlyCharityPro: result.onlyCharityPro.length },
+      matched: result.matched.map(m => ({ stripe: m.charge, payment: pay(m.payment), how: m.how })), onlyStripe: result.onlyStripe.map(ch => ({ ...ch, donorGuess: names.get(ch.donorId) || '' })), onlyCharityPro: result.onlyCharityPro.map(pay) });
+  });
   app.get('/v3/stripe/settings', async (c: any) => {
     const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
     const [secret, publishable] = await Promise.all([getSecret(c, 'STRIPE_SECRET_KEY'), getSecret(c, 'STRIPE_PUBLISHABLE_KEY')]);

@@ -30,6 +30,7 @@ const OnlineReports = React.lazy(() => import('./pages/OnlineReportCenter').then
 const OnlineProfitLoss = React.lazy(() => import('./pages/OnlineProfitLoss').then(module => ({ default: module.OnlineProfitLoss })));
 const OnlineSettings = React.lazy(() => import('./pages/OnlineSettings').then(module => ({ default: module.OnlineSettings })));
 const OnlineSolaSync = React.lazy(() => import('./pages/OnlineSolaSync').then(module => ({ default: module.OnlineSolaSync })));
+const OnlineStripeSync = React.lazy(() => import('./pages/OnlineStripeSync').then(module => ({ default: module.OnlineStripeSync })));
 
 /**
  * Production is cloud-only. Local-store pages and synchronization engines are
@@ -62,6 +63,7 @@ function App() {
         <Route path="/payroll" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading payroll...</div>}><OnlinePayroll /></React.Suspense>)} />
         <Route path="/reconciliation" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reconciliation...</div>}><OnlineReconciliation /></React.Suspense>)} />
         <Route path="/sola-sync" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading Sola Payments Sync...</div>}><OnlineSolaSync /></React.Suspense>)} />
+        <Route path="/stripe-sync" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading Stripe Sync...</div>}><OnlineStripeSync /></React.Suspense>)} />
         <Route path="/reports" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reports...</div>}><OnlineReports /></React.Suspense>)} />
         <Route path="/profit-loss" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading Profit & Loss...</div>}><OnlineProfitLoss /></React.Suspense>)} />
         <Route path="/tasks" element={cloudPage(<OnlineTasks />)} />

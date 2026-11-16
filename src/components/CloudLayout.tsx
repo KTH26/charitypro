@@ -41,7 +41,8 @@ const categories: NavCategory[] = [
     { path: '/bank-feed', label: 'Bank Feed', icon: Building, ready: true },
     { path: '/payroll', label: 'Payroll & T4A', icon: Users, ready: true },
     { path: '/reconciliation', label: 'Reconciliation', icon: CheckSquare, ready: true },
-    { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon, ready: true }
+    { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon, ready: true },
+    { path: '/stripe-sync', label: 'Stripe Sync (USD)', icon: LinkIcon, ready: true }
   ] },
   { label: 'REPORTS', items: [
     { path: '/reports', label: 'Reports', icon: BarChart3, ready: true },
