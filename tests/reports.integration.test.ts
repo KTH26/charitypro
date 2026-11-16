@@ -111,7 +111,7 @@ describe('monthly giving by donor', () => {
   ];
   it('gives each donor a total and a "how paid" per month', () => {
     expect(monthsBetween('2025-11', '2026-02')).toEqual(['2025-11', '2025-12', '2026-01', '2026-02']);
-    const report = buildMonthlyGiving(payments, donors, '2026-01', '2026-03');
+    const report = buildMonthlyGiving(payments, donors, '2026-01', '2026-03', { sort: 'first' });
     expect(report.months).toEqual(['2026-01', '2026-02', '2026-03']);
     expect(report.rows.map(row => row.donor)).toEqual(['Aaron Adler', 'Moshe Cohen']);
     const moshe = report.rows.find(row => row.donorId === 'd1')!;
@@ -127,5 +127,22 @@ describe('monthly giving by donor', () => {
     expect(sheet.columns.map(column => column.header).slice(4, 7)).toEqual(['Jan 2026 total', 'Jan 2026 how paid', 'Feb 2026 total']);
     expect(sheet.rows[1]['2026-01-how']).toBe('Cash $100 + Credit card $100 + Vouchers $100');
     expect(sheet.rows[0]['2026-01-amount']).toBe('');
+  });
+});
+
+describe('monthly giving sort orders', () => {
+  const donors = [
+    { id: 'a', name: 'Aaron Zeller', firstName: 'Aaron', lastName: 'Zeller', hebFirstName: 'אהרן', hebLastName: 'צעלער' },
+    { id: 'b', name: 'Zev Adler', firstName: 'Zev', lastName: 'Adler', hebFirstName: 'זאב', hebLastName: 'אדלער' },
+    { id: 'c', name: 'Moshe Klein', firstName: 'Moshe', lastName: 'Klein', hebFirstName: 'משה', hebLastName: '' },
+  ];
+  const payments = donors.map((donor, index) => ({ donorId: donor.id, date: '2026-01-02', status: 'Approved', method: 'Cash', amountCAD: (index + 1) * 10 }));
+  const order = (sort: any) => buildMonthlyGiving(payments, donors, '2026-01', '2026-01', { sort }).rows.map(row => row.donorId).join('');
+  it('sorts by first, last, Hebrew last and Hebrew first name, or by total', () => {
+    expect(order('first')).toBe('acb');
+    expect(order('last')).toBe('bca');
+    expect(order('hebLast')).toBe('bac'); // אדלער, צעלער, then the donor with no Hebrew last name
+    expect(order('hebFirst')).toBe('abc'); // אהרן, זאב, משה
+    expect(order('total')).toBe('cba');
   });
 });

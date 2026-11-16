@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { downloadExcel } from '../utils/excel';
 import { fetchReportRows, torontoToday } from '../utils/reportExport';
-import { buildMonthlyGiving, monthLabel, monthlyGivingSheet } from '../utils/monthlyGiving';
+import { buildMonthlyGiving, monthLabel, monthlyGivingSheet, type MonthlySort } from '../utils/monthlyGiving';
 
 const money = (value: number) => '$' + value.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -10,7 +10,7 @@ const money = (value: number) => '$' + value.toLocaleString('en-CA', { minimumFr
 export const MonthlyDonorReport: React.FC = () => {
   const today = torontoToday();
   const [from, setFrom] = useState(`${today.slice(0, 4)}-01`); const [to, setTo] = useState(today.slice(0, 7));
-  const [onlyGivers, setOnlyGivers] = useState(true); const [sort, setSort] = useState<'name' | 'total'>('name'); const [search, setSearch] = useState('');
+  const [onlyGivers, setOnlyGivers] = useState(true); const [sort, setSort] = useState<MonthlySort>('last'); const [search, setSearch] = useState('');
   const [payments, setPayments] = useState<Record<string, any>[] | null>(null); const [donors, setDonors] = useState<Record<string, any>[]>([]);
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   const load = async () => {
@@ -36,7 +36,7 @@ export const MonthlyDonorReport: React.FC = () => {
         <label className="form-group" style={{ margin: 0 }}><span>To month</span><input type="month" value={to} onChange={event => setTo(event.target.value)} /></label>
         <div style={{ display: 'flex', gap: 6 }}><button type="button" className="btn btn-secondary btn-sm" onClick={() => quick('this_year')}>This year</button><button type="button" className="btn btn-secondary btn-sm" onClick={() => quick('last_year')}>Last year</button><button type="button" className="btn btn-secondary btn-sm" onClick={() => quick('last_12')}>Last 12 months</button></div>
         <label className="form-group" style={{ margin: 0 }}><span>Which donors</span><select value={onlyGivers ? 'givers' : 'all'} onChange={event => setOnlyGivers(event.target.value === 'givers')}><option value="givers">Only donors who gave in these months</option><option value="all">All donors (also those who gave nothing)</option></select></label>
-        <label className="form-group" style={{ margin: 0 }}><span>Order</span><select value={sort} onChange={event => setSort(event.target.value as 'name' | 'total')}><option value="name">By name (A–Z)</option><option value="total">Biggest givers first</option></select></label>
+        <label className="form-group" style={{ margin: 0 }}><span>Order</span><select value={sort} onChange={event => setSort(event.target.value as MonthlySort)}><option value="last">Last name (A–Z)</option><option value="first">First name (A–Z)</option><option value="hebLast">Hebrew last name (א–ת)</option><option value="hebFirst">Hebrew first name (א–ת)</option><option value="total">Biggest givers first</option></select></label>
         <label className="form-group" style={{ margin: 0, minWidth: 160 }}><span>Search</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or phone" /></label>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>

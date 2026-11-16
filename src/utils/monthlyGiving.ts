@@ -6,7 +6,8 @@
 import type { ExcelColumn, ExcelSheet } from './excel';
 
 export type MonthCell = { amount: number; how: string; byMethod: Record<string, number> };
-export type MonthlyRow = { donorId: string; donorNumber: string; donor: string; hebrewName: string; phone: string; total: number; months: Record<string, MonthCell> };
+export type MonthlySort = 'first' | 'last' | 'hebLast' | 'hebFirst' | 'total';
+export type MonthlyRow = { donorId: string; donorNumber: string; donor: string; hebrewName: string; phone: string; firstName: string; lastName: string; hebFirstName: string; hebLastName: string; total: number; months: Record<string, MonthCell> };
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const monthLabel = (month: string) => `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
@@ -29,12 +30,12 @@ export const howText = (byMethod: Record<string, number>) => {
   return parts.map(([method, amount]) => `${method} ${dollars(cents(amount))}`).join(' + ');
 };
 
-export const buildMonthlyGiving = (payments: Record<string, any>[], donors: Record<string, any>[], fromMonth: string, toMonth: string, options: { onlyGivers?: boolean; sort?: 'name' | 'total' } = {}) => {
+export const buildMonthlyGiving = (payments: Record<string, any>[], donors: Record<string, any>[], fromMonth: string, toMonth: string, options: { onlyGivers?: boolean; sort?: MonthlySort } = {}) => {
   const months = monthsBetween(fromMonth, toMonth); const wanted = new Set(months);
   const rows = new Map<string, MonthlyRow>();
   const rowFor = (donorId: string, fallbackName = '') => {
     let row = rows.get(donorId);
-    if (!row) { const donor = donors.find(item => String(item.id) === donorId); row = { donorId, donorNumber: String(donor?.donorNumber || ''), donor: String(donor?.name || fallbackName || '(no donor)'), hebrewName: String(donor?.hebrewName || ''), phone: String(donor?.phone || ''), total: 0, months: {} }; rows.set(donorId, row); }
+    if (!row) { const donor = donors.find(item => String(item.id) === donorId); row = { donorId, donorNumber: String(donor?.donorNumber || ''), donor: String(donor?.name || fallbackName || '(no donor)'), hebrewName: String(donor?.hebrewName || ''), phone: String(donor?.phone || ''), firstName: String(donor?.firstName || ''), lastName: String(donor?.lastName || ''), hebFirstName: String(donor?.hebFirstName || ''), hebLastName: String(donor?.hebLastName || ''), total: 0, months: {} }; rows.set(donorId, row); }
     return row;
   };
   if (options.onlyGivers === false) donors.forEach(donor => rowFor(String(donor.id)));
@@ -48,8 +49,19 @@ export const buildMonthlyGiving = (payments: Record<string, any>[], donors: Reco
   }
   const list = [...rows.values()];
   for (const row of list) { row.total = cents(row.total); for (const cell of Object.values(row.months)) { cell.amount = cents(cell.amount); cell.how = howText(cell.byMethod); } }
-  const sortName = (row: MonthlyRow) => row.donor.toLowerCase();
-  list.sort((a, b) => options.sort === 'total' ? b.total - a.total || sortName(a).localeCompare(sortName(b)) : sortName(a).localeCompare(sortName(b)));
+  // Sort keys: the chosen name first, then the other parts, so ties stay in a sensible order. Donors without that name go last.
+  const words = (row: MonthlyRow) => row.donor.trim().split(/s+/);
+  const english = (row: MonthlyRow, part: 'first' | 'last') => (part === 'first' ? row.firstName || words(row)[0] : row.lastName || (words(row).length > 1 ? words(row)[words(row).length - 1] : '')) || '';
+  const keys = (row: MonthlyRow): string[] => {
+    const sort = options.sort || 'first';
+    if (sort === 'last') return [english(row, 'last'), english(row, 'first'), row.donor];
+    if (sort === 'hebLast') return [row.hebLastName, row.hebFirstName, row.donor];
+    if (sort === 'hebFirst') return [row.hebFirstName, row.hebLastName, row.donor];
+    return [english(row, 'first') || row.donor, english(row, 'last'), row.donor];
+  };
+  const compareText = (a: string, b: string) => !a && b ? 1 : a && !b ? -1 : a.localeCompare(b, ['he', 'en'], { sensitivity: 'base' });
+  const byName = (a: MonthlyRow, b: MonthlyRow) => { const x = keys(a); const y = keys(b); for (let i = 0; i < x.length; i++) { const result = compareText(x[i].trim(), y[i].trim()); if (result) return result; } return 0; };
+  list.sort((a, b) => options.sort === 'total' ? b.total - a.total || byName(a, b) : byName(a, b));
   // Totals for each month, with the split by method.
   const totals: Record<string, MonthCell> = {};
   for (const month of months) { const byMethod: Record<string, number> = {}; let amount = 0; for (const row of list) { const cell = row.months[month]; if (!cell) continue; amount += cell.amount; for (const [method, value] of Object.entries(cell.byMethod)) byMethod[method] = (byMethod[method] || 0) + value; } totals[month] = { amount: cents(amount), byMethod, how: howText(byMethod) }; }
