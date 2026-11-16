@@ -3,7 +3,7 @@
  * Numbers stay numbers, dates stay dates, Hebrew/Yiddish works, the top row is bold and frozen, with filter arrows.
  */
 export type ExcelColumn = { key: string; header: string; type?: 'text' | 'number' | 'money' | 'date'; width?: number };
-export type ExcelSheet = { name: string; columns: ExcelColumn[]; rows: Record<string, any>[]; totals?: Record<string, any> | null; title?: string };
+export type ExcelSheet = { name: string; columns: ExcelColumn[]; rows: Record<string, any>[]; totals?: Record<string, any> | null; title?: string; freezeColumns?: number };
 
 const CRC_TABLE = (() => { const table = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; table[n] = c >>> 0; } return table; })();
 const crc32 = (bytes: Uint8Array) => { let c = 0xffffffff; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
@@ -52,7 +52,7 @@ const sheetXml = (sheet: ExcelSheet) => {
   if (sheet.totals) rows.push(`<row r="${r}">${sheet.columns.map((column, i) => { const value = sheet.totals![column.key]; return value === undefined || value === '' ? `<c r="${colName(i)}${r}" s="5"/>` : cell(`${colName(i)}${r}`, value, column.type === 'money' ? 'money' : column.type === 'number' ? 'number' : 'text', column.type === 'money' ? 4 : 5); }).join('')}</row>`);
   const widths = sheet.columns.map((column, i) => { const longest = Math.max(String(column.header).length, ...sheet.rows.slice(0, 500).map(row => String(row[column.key] ?? '').length)); return `<col min="${i + 1}" max="${i + 1}" width="${column.width || Math.min(60, Math.max(9, longest + 2))}" customWidth="1"/>`; }).join('');
   const last = `${colName(Math.max(0, sheet.columns.length - 1))}${headerRow + sheet.rows.length}`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="${headerRow}" topLeftCell="A${headerRow + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${widths}</cols><sheetData>${rows.join('')}</sheetData>${sheet.columns.length ? `<autoFilter ref="A${headerRow}:${last}"/>` : ''}</worksheet>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0">${sheet.freezeColumns ? `<pane xSplit="${sheet.freezeColumns}" ySplit="${headerRow}" topLeftCell="${colName(sheet.freezeColumns)}${headerRow + 1}" activePane="bottomRight" state="frozen"/>` : `<pane ySplit="${headerRow}" topLeftCell="A${headerRow + 1}" activePane="bottomLeft" state="frozen"/>`}</sheetView></sheetViews><cols>${widths}</cols><sheetData>${rows.join('')}</sheetData>${sheet.columns.length ? `<autoFilter ref="A${headerRow}:${last}"/>` : ''}</worksheet>`;
 };
 
 export const buildWorkbook = (sheets: ExcelSheet[]) => {

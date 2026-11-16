@@ -96,3 +96,36 @@ describe('reports', () => {
     expect(text).toContain('<v>46054</v>'); // 2026-02-01 as an Excel date
   });
 });
+
+import { buildMonthlyGiving, howText, monthlyGivingSheet, monthsBetween } from '../src/utils/monthlyGiving';
+describe('monthly giving by donor', () => {
+  const donors = [{ id: 'd1', name: 'Moshe Cohen', donorNumber: '101', hebrewName: 'משה כהן' }, { id: 'd2', name: 'Aaron Adler' }, { id: 'd3', name: 'Zev Zeller' }];
+  const payments = [
+    { donorId: 'd1', date: '2026-01-05', status: 'Approved', method: 'Cash', amountCAD: 100 },
+    { donorId: 'd1', date: '2026-01-10', status: 'Approved', method: 'Credit card', amountCAD: 100 },
+    { donorId: 'd1', date: '2026-01-20', status: 'Approved', method: 'Vouchers', amountCAD: 100 },
+    { donorId: 'd1', date: '2026-02-01', status: 'Approved', method: 'Cash', amountCAD: 50 },
+    { donorId: 'd1', date: '2026-02-03', status: 'Declined', method: 'Credit card', amountCAD: 999 },
+    { donorId: 'd2', date: '2026-02-11', status: 'Approved', method: 'Check', amountCAD: 400 },
+    { donorId: 'd2', date: '2025-12-31', status: 'Approved', method: 'Check', amountCAD: 7 },
+  ];
+  it('gives each donor a total and a "how paid" per month', () => {
+    expect(monthsBetween('2025-11', '2026-02')).toEqual(['2025-11', '2025-12', '2026-01', '2026-02']);
+    const report = buildMonthlyGiving(payments, donors, '2026-01', '2026-03');
+    expect(report.months).toEqual(['2026-01', '2026-02', '2026-03']);
+    expect(report.rows.map(row => row.donor)).toEqual(['Aaron Adler', 'Moshe Cohen']);
+    const moshe = report.rows.find(row => row.donorId === 'd1')!;
+    expect(moshe.months['2026-01']).toMatchObject({ amount: 300, how: 'Cash $100 + Credit card $100 + Vouchers $100' });
+    expect(moshe.months['2026-02']).toMatchObject({ amount: 50, how: 'Cash' });
+    expect(moshe.total).toBe(350);
+    expect(report.totals['2026-02']).toMatchObject({ amount: 450, how: 'Check $400 + Cash $50' });
+    expect(report.grandTotal).toBe(750);
+    expect(buildMonthlyGiving(payments, donors, '2026-01', '2026-03', { onlyGivers: false }).rows).toHaveLength(3);
+    expect(buildMonthlyGiving(payments, donors, '2026-01', '2026-03', { sort: 'total' }).rows[0].donor).toBe('Aaron Adler');
+    expect(howText({ Cash: 10.5, Check: 20 })).toBe('Check $20 + Cash $10.50');
+    const sheet = monthlyGivingSheet(report, 'T');
+    expect(sheet.columns.map(column => column.header).slice(4, 7)).toEqual(['Jan 2026 total', 'Jan 2026 how paid', 'Feb 2026 total']);
+    expect(sheet.rows[1]['2026-01-how']).toBe('Cash $100 + Credit card $100 + Vouchers $100');
+    expect(sheet.rows[0]['2026-01-amount']).toBe('');
+  });
+});

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BarChart3, ChevronDown, ChevronRight, Download, FileSpreadsheet, Plus, RefreshCw, Save, Star, Trash2, X } from 'lucide-react';
 import { OnlineReports } from './OnlineReports';
+import { MonthlyDonorReport } from './MonthlyDonorReport';
 import { downloadExcel } from '../utils/excel';
 import { fetchReportRows, reportSheets, torontoToday } from '../utils/reportExport';
 import { PRESETS, RANGES, REPORT_SOURCES, defaultSetup, groupRows, presetSetup, runReport, sourceByKey, totalsOf, type Operator, type ReportSetup } from '../utils/reportSources';
@@ -9,16 +10,16 @@ const money = (value: unknown) => Number(value || 0).toLocaleString('en-CA', { m
 const OPS: [Operator, string][] = [['contains', 'contains'], ['is', 'is'], ['is_not', 'is not'], ['more', 'more than'], ['less', 'less than'], ['empty', 'is empty'], ['not_empty', 'is not empty']];
 const SHOW_LIMIT = 500;
 export const OnlineReportCenter: React.FC = () => {
-  const [view, setView] = useState<'builder' | 'classic'>('builder');
+  const [view, setView] = useState<'builder' | 'monthly' | 'classic'>('builder');
   return <div>
     <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-      {([['builder', 'Report builder'], ['classic', 'Classic reports']] as const).map(([key, label]) => <button key={key} type="button" className={`btn btn-sm ${view === key ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView(key)}>{label}</button>)}
+      {([['builder', 'Report builder'], ['monthly', 'Monthly giving by donor'], ['classic', 'Classic reports']] as const).map(([key, label]) => <button key={key} type="button" className={`btn btn-sm ${view === key ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView(key)}>{label}</button>)}
     </div>
-    {view === 'builder' ? <ReportBuilder /> : <OnlineReports />}
+    {view === 'builder' ? <ReportBuilder onMonthly={() => setView('monthly')} /> : view === 'monthly' ? <MonthlyDonorReport /> : <OnlineReports />}
   </div>;
 };
 
-const ReportBuilder: React.FC = () => {
+const ReportBuilder: React.FC<{ onMonthly: () => void }> = ({ onMonthly }) => {
   const [setup, setSetup] = useState<ReportSetup>(() => presetSetup(PRESETS[0].items[0]));
   const [cache, setCache] = useState<Record<string, { rows: Record<string, any>[]; today: string }>>({});
   const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
@@ -72,6 +73,7 @@ const ReportBuilder: React.FC = () => {
         <button type="button" onClick={() => setOpen(current => ({ ...current, [group.group]: !current[group.group] }))} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 800, fontSize: 13, color: 'var(--text-secondary)', padding: '6px' }}>
           {open[group.group] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{group.group === 'My saved reports' && <Star size={13} />} {group.group}
         </button>
+        {open[group.group] && group.group === 'Donations' && <button type="button" onClick={onMonthly} style={{ all: 'unset', cursor: 'pointer', display: 'block', padding: '6px 8px 6px 24px', fontSize: 13.5, fontWeight: 700, color: 'var(--navy)' }}>Monthly giving by donor ★</button>}
         {open[group.group] && group.items.map(item => <div key={item.title} style={{ display: 'flex', alignItems: 'center' }}>
           <button type="button" onClick={() => setSetup({ ...item.setup })} title={item.description} style={{ all: 'unset', cursor: 'pointer', flex: 1, padding: '6px 8px 6px 24px', borderRadius: 8, fontSize: 13.5, background: setup.name === item.title ? 'var(--bg-input)' : undefined, fontWeight: setup.name === item.title ? 700 : 500, color: 'var(--navy)' }}>{item.title}</button>
           {item.saved && <button type="button" className="btn btn-secondary btn-sm" style={{ padding: 4 }} title="Remove" onClick={() => void removeSaved(item.title)}><Trash2 size={13} /></button>}
