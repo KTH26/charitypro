@@ -81,3 +81,22 @@ describe('Stripe link', () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 });
+
+describe('Stripe add with a rate', () => {
+  it('saves a US-dollar Stripe charge with the Canadian amount from the rate you chose', async () => {
+    const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
+    const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(join(process.cwd(), 'scripts', 'staging-schema.sql'), 'utf8'));
+    const stmt = (sql: string, values: any[] = []): any => ({ sql, bind: (...v: any[]) => stmt(sql, v), all: async () => ({ results: sqlite.prepare(sql).all(...values) }), first: async () => sqlite.prepare(sql).get(...values) || null, run: async () => { const r = sqlite.prepare(sql).run(...values); return { meta: { changes: Number(r.changes) } }; } });
+    const db = { prepare: (sql: string) => stmt(sql), batch: async (list: any[]) => { const out = []; for (const s of list) out.push(/^\s*SELECT/i.test(s.sql) ? await s.all() : await s.run()); return out; } };
+    sqlite.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES('d1','donors','{\"name\":\"M W\"}',1,1,0)").run();
+    const app = new Hono(); app.use('*', async (c: any, next) => { c.set('userId', 'u'); c.set('userEmail', 'e'); await next(); }); registerStripeRoutes(app, () => null);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ id: 'ch_5', payment_intent: 'pi_5', created: 1782900000, amount: 20000, currency: 'usd', status: 'succeeded', amount_refunded: 0, billing_details: {}, payment_method_details: {}, metadata: {}, balance_transaction: { amount: 20000, fee: 600, currency: 'usd' } }), { status: 200 })) as any;
+    try {
+      const response = await app.request('/v3/stripe/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chargeId: 'ch_5', donorId: 'd1', exchangeRate: 1.4 }) }, { DB: db, STRIPE_SECRET_KEY: 'sk_test_x' } as any);
+      expect(await response.json()).toMatchObject({ success: true, amountCAD: 280 });
+      const saved = JSON.parse(String((sqlite.prepare("SELECT data FROM sync_records WHERE id='stripe-ch_5'").get() as any).data));
+      expect(saved).toMatchObject({ amount: 200, currency: 'USD', amountCAD: 280, exchangeRate: 1.4, exchangeRateSource: 'agreed', type: 'approved' });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});

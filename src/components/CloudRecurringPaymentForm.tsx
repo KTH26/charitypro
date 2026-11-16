@@ -12,6 +12,8 @@ export const CloudRecurringPaymentForm: React.FC<{
 }> = ({ donor, onCancel, onCreated, defaultAmount, defaultPledgeId }) => {
   const [amount, setAmount] = useState(defaultAmount ? String(defaultAmount) : '');
   const [currency, setCurrency] = useState<'CAD' | 'USD'>('CAD');
+  // US-dollar schedules: the rate used to turn each payment into Canadian dollars (Bank of Canada rate, or a rate you agree on).
+  const [exchangeRate, setExchangeRate] = useState(''); const [rateNote, setRateNote] = useState('');
   const [frequency, setFrequency] = useState('monthly');
   const [method, setMethod] = useState('credit_card');
   const [nextDate, setNextDate] = useState(new Date().toISOString().slice(0, 10));
@@ -25,6 +27,7 @@ export const CloudRecurringPaymentForm: React.FC<{
 
   useEffect(()=>{const controller=new AbortController();Promise.all([fetch(`/api/v3/donors/${encodeURIComponent(donor.id)}/payment-methods`,{signal:controller.signal}),fetch('/api/v3/accounts?limit=100',{signal:controller.signal}),fetch(`/api/v3/donors/${encodeURIComponent(donor.id)}/profile`,{signal:controller.signal})]).then(async responses=>Promise.all(responses.map(async response=>{const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Unable to load recurring-payment choices.');return data;}))).then(([cardData,accountData,profileData])=>{const active=(cardData.items||[]).filter((item:Choice)=>item.status==='active');setCards(active);setPaymentMethodIds(active.map((item:Choice)=>item.id));setAccounts(accountData.items||[]);setPledges(profileData.pledges||[]);}).catch(reason=>{if(reason.name!=='AbortError')setError(reason.message||'Unable to load recurring-payment choices.');});return()=>controller.abort();},[donor.id]);
 
+  useEffect(() => { if (currency !== 'USD' || exchangeRate) return; const controller = new AbortController(); fetch(`/api/v3/exchange-rates/usd-cad?date=${encodeURIComponent(new Date().toISOString().slice(0, 10))}`, { signal: controller.signal }).then(response => response.json()).then(data => { if (data.success) { setExchangeRate(String(data.rate)); setRateNote(`Bank of Canada rate of ${data.rateDate}`); } }).catch(() => undefined); return () => controller.abort(); }, [currency, exchangeRate]);
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     const parsedAmount = Number(amount);
@@ -32,6 +35,7 @@ export const CloudRecurringPaymentForm: React.FC<{
       setError('Enter a positive amount and the next payment date.');
       return;
     }
+    if(currency==='USD'&&!(Number(exchangeRate)>0&&Number(exchangeRate)<100)){setError('Enter the USD to CAD exchange rate (for example 1.38).');return;}
     if(endDate&&endDate<nextDate){setError('End date must be on or after the next payment date.');return;}
     if(!sourceAccountId||!offsetAccountId){setError('Choose the receiving account and revenue account.');return;}
     if(method==='credit_card'&&!paymentMethodIds.length){setError('Choose at least one active saved card.');return;}
@@ -40,7 +44,7 @@ export const CloudRecurringPaymentForm: React.FC<{
     setSaving(true);
     setError('');
     try {
-      const data = { donorId: donor.id, amount: parsedAmount, currency, frequency, method, nextDate, ...(endDate ? { endDate } : {}),sourceAccountId,offsetAccountId,...(pledgeId?{pledgeId}:{}),...(method==='credit_card'?{paymentMethodIds,retryDays:Number(retryDays),maxAttempts:Number(maxAttempts)}:{}), active: true };
+      const data = { donorId: donor.id, amount: parsedAmount, currency, ...(currency==='USD'?{exchangeRate:Number(exchangeRate),amountCAD:Math.round(parsedAmount*Number(exchangeRate)*100)/100,exchangeRateSource:'agreed'}:{}), frequency, method, nextDate, ...(endDate ? { endDate } : {}),sourceAccountId,offsetAccountId,...(pledgeId?{pledgeId}:{}),...(method==='credit_card'?{paymentMethodIds,retryDays:Number(retryDays),maxAttempts:Number(maxAttempts)}:{}), active: true };
       const response = await fetch('/api/v3/records/recurringPayments', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ data })
       });
@@ -60,6 +64,7 @@ export const CloudRecurringPaymentForm: React.FC<{
       <div className="form-group" style={{ margin: 0 }}><span>Donor</span><div style={{ padding: '10px 12px', background: 'var(--bg-input)', borderRadius: 8, fontWeight: 800 }}>{donor.name}</div></div>
       <label className="form-group" style={{ margin: 0 }}><span>Amount *</span><input type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} /></label>
       <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={currency} onChange={event => setCurrency(event.target.value as 'CAD' | 'USD')}><option>CAD</option><option>USD</option></select></label>
+      {currency==='USD'&&<label className="form-group" style={{ margin: 0 }}><span>USD → CAD rate *</span><input type="number" min="0.0001" step="0.0001" value={exchangeRate} onChange={event => { setExchangeRate(event.target.value); setRateNote('Rate you entered'); }} placeholder="1.38" /><small style={{color:'var(--text-muted)'}}>{Number(amount)>0&&Number(exchangeRate)>0?`Each payment = CAD $${(Number(amount)*Number(exchangeRate)).toFixed(2)}`:''}{rateNote?` · ${rateNote}`:''}</small></label>}
       <label className="form-group" style={{ margin: 0 }}><span>Frequency</span><select value={frequency} onChange={event => setFrequency(event.target.value)}><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></label>
       <label className="form-group" style={{ margin: 0 }}><span>Payment method</span><select value={method} onChange={event => setMethod(event.target.value)}><option value="credit_card">Credit card</option><option value="check">Check</option><option value="cash">Cash</option><option value="e_transfer">E-transfer</option><option value="other">Other</option></select></label>
       <label className="form-group" style={{ margin: 0 }}><span>Next date *</span><input type="date" value={nextDate} onChange={event => setNextDate(event.target.value)} /></label>
