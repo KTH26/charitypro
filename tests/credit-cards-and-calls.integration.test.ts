@@ -373,3 +373,19 @@ describe('deleting a call', () => {
     expect((await call('GET', '/v3/tasks?status=pending')).body.items.some((task: any) => task.dueDate === '2026-11-20')).toBe(false);
   });
 });
+
+describe('card schedules charged by Sola or Stripe', () => {
+  it('saves a card schedule without a saved card when Sola or Stripe charges it, and keeps the USD rate', async () => {
+    const { call } = setup();
+    seed((databases[databases.length - 1]), 'accounts', 'rev', { name: 'Donation', type: 'revenue', currency: 'CAD' });
+    const base = { donorId: 'd1', amount: 200, frequency: 'monthly', method: 'credit_card', nextDate: '2026-12-01', sourceAccountId: 'bmo', offsetAccountId: 'rev', active: true };
+    const stripe = await call('POST', '/v3/records/recurringPayments', { data: { ...base, currency: 'USD', exchangeRate: 1.4, amountCAD: 280, chargedBy: 'stripe' } });
+    expect(stripe.status).toBeLessThan(300);
+    expect(stripe.body.item).toMatchObject({ chargedBy: 'stripe', amountCAD: 280, exchangeRate: 1.4 });
+    const sola = await call('POST', '/v3/records/recurringPayments', { data: { ...base, currency: 'CAD', chargedBy: 'sola' } });
+    expect(sola.status).toBeLessThan(300);
+    const own = await call('POST', '/v3/records/recurringPayments', { data: { ...base, currency: 'CAD' } });
+    expect(own.status).toBe(400);
+    expect(own.body.error).toMatch(/saved card/i);
+  });
+});
