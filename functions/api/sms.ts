@@ -17,8 +17,8 @@ const parse = (raw: unknown, fallback: any) => { try { return JSON.parse(String(
 const cad = (value: number) => { const amount = Math.round(Number(value || 0) * 100) / 100; const whole = Number.isInteger(amount); const text = Math.abs(amount).toLocaleString('en-CA', { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }); return `${amount < 0 ? '-' : ''}$${text}`; };
 /**
  * The balance part of the text, from the pledges (each already has paid, pending and scheduled worked out).
- * "Still owes" is the pledge minus what is paid (and pending). Card charges planned for later are shown on their own line,
- * so a planned charge never makes the balance look negative.
+ * First what is scheduled to come (card, Eizer, checks …), then "Still owes": what is left after the paid and the scheduled payments.
+ * Without a schedule it is simply the pledge minus what is paid (and pending).
  */
 export const balanceLines = (pledges: any[], year: number) => {
   const pledgeYear = (pledge: any) => Number(String(pledge.periodStart || pledge.date || '').slice(0, 4));
@@ -33,14 +33,17 @@ export const balanceLines = (pledges: any[], year: number) => {
     const scheduled = thisYear.reduce((sum, pledge) => sum + Number(pledge.scheduled || 0), 0);
     const left = Math.round(thisYear.reduce((sum, pledge) => sum + owes(pledge), 0) * 100) / 100;
     lines.push(`${year} pledge: ${cad(pledged)}, paid on it: ${cad(paid)}${pending > 0.005 ? `, waiting: ${cad(pending)}` : ''}`);
-    lines.push(left < -0.005 ? `Paid ${cad(-left)} more than the pledge.` : `Still owes: ${cad(left)}`);
     if (scheduled > 0.005) {
       const extra = Math.round((scheduled - Math.max(left, 0)) * 100) / 100;
-      lines.push(`Card will still charge: ${cad(scheduled)}${extra > 0.005 ? ` (${cad(extra)} more than he owes)` : extra < -0.005 ? ` (${cad(-extra)} still not covered)` : ''}`);
+      lines.push(`Scheduled to come: ${cad(scheduled)}${extra > 0.005 ? ` (${cad(extra)} more than the pledge)` : ''}`);
     }
+    if (left < -0.005) lines.push(`Paid ${cad(-left)} more than the pledge.`);
+    else lines.push(scheduled > 0.005 ? `Still owes (not scheduled): ${cad(Math.max(0, left - scheduled))}` : `Still owes: ${cad(left)}`);
   }
-  const all = Math.round(pledges.reduce((sum, pledge) => sum + owes(pledge), 0) * 100) / 100;
-  if (pledges.some(pledge => pledgeYear(pledge) !== year)) lines.push(`All years still owes: ${cad(all)}`);
+  // All years: what is owed and not covered by a schedule.
+  const notScheduled = (pledge: any) => { const due = owes(pledge); return due - Math.min(Number(pledge.scheduled || 0), Math.max(due, 0)); };
+  const all = Math.round(pledges.reduce((sum, pledge) => sum + notScheduled(pledge), 0) * 100) / 100;
+  if (pledges.some(pledge => pledgeYear(pledge) !== year)) lines.push(`All years still owes${pledges.some(pledge => Number(pledge.scheduled || 0) > 0.005) ? ' (not scheduled)' : ''}: ${cad(all)}`);
   return lines;
 };
 const METHODS: Record<string, string> = { credit_card: 'card', check: 'check', cash: 'cash', e_transfer: 'e-transfer', wire: 'wire', vouchers: 'vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'other', ach: 'ACH' };
