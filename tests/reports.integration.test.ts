@@ -31,7 +31,7 @@ const seed = () => {
   put('donors', { id: 'd1', name: 'Moshe Cohen', hebFirstName: 'משה', hebLastName: 'כהן', phone: '514-555-1111', email: 'm@example.com', displayId: '101', title: 'מו"ץ' });
   put('donors', { id: 'd2', name: 'Yaakov Klein', phone: '' });
   put('accounts', { id: '203', name: 'Donations CAD', type: 'income' });
-  put('pledges', { id: 'p1', donorId: 'd1', amount: 1000, date: '2026-01-01', currency: 'CAD', category: 'General' });
+  put('pledges', { id: 'p1', donorId: 'd1', amount: 1000, date: '2026-01-01', currency: 'CAD', category: 'General', tags: ['2026 campaign', 'Pledge 2026'] });
   put('transactions', { id: 't1', donorId: 'd1', amount: 300, date: '2026-02-01', type: 'approved', method: 'check', currency: 'CAD', pledgeId: 'p1', offsetAccountId: '203', depositStatus: 'undeposited' });
   put('transactions', { id: 't2', donorId: 'd1', amount: 100, amountCAD: 135, date: '2025-05-01', type: 'approved', method: 'cash', currency: 'USD' });
   put('transactions', { id: 't3', donorId: 'd2', amount: 50, date: '2026-03-01', type: 'declined', method: 'credit_card', currency: 'CAD' });
@@ -52,10 +52,11 @@ describe('reports', () => {
     const pledges = await buildReportRows(db, 'pledges', today);
     expect(pledges[0]).toMatchObject({ donor: 'Moshe Cohen', amount: 1000, paid: 300, balance: 700, open: 'Open' });
     const donors = await buildReportRows(db, 'donors', today);
-    expect(donors.find(row => row.id === 'd1')).toMatchObject({ totalGiven: 435, givenThisYear: 300, givenLastYear: 135, gifts: 2, lastGift: '2026-02-01', balanceOwed: 700, pledges: 1, openPledges: 1, tag: 'מו"ץ', firstName: 'Moshe', lastName: 'Cohen', hebFirstName: 'משה', hebLastName: 'כהן' });
-    expect(t1).toMatchObject({ firstName: 'Moshe', lastName: 'Cohen', hebFirstName: 'משה', hebLastName: 'כהן', tag: 'מו"ץ' });
-    expect(pledges[0]).toMatchObject({ tag: 'מו"ץ', lastName: 'Cohen' });
-    expect(groupRows(pledges, { ...defaultSetup('pledges'), groupBy: 'tag' }).map(group => [group.key, group.sums.balance])).toEqual([['מו"ץ', 700]]);
+    expect(donors.find(row => row.id === 'd1')).toMatchObject({ totalGiven: 435, givenThisYear: 300, givenLastYear: 135, gifts: 2, lastGift: '2026-02-01', balanceOwed: 700, pledges: 1, openPledges: 1, title: 'מו"ץ', firstName: 'Moshe', lastName: 'Cohen', hebFirstName: 'משה', hebLastName: 'כהן' });
+    expect(t1).toMatchObject({ firstName: 'Moshe', lastName: 'Cohen', hebFirstName: 'משה', hebLastName: 'כהן', title: 'מו"ץ', pledgeTags: '2026 campaign, Pledge 2026' });
+    expect(pledges[0]).toMatchObject({ title: 'מו"ץ', tags: '2026 campaign, Pledge 2026', lastName: 'Cohen' });
+    expect(groupRows(pledges, { ...defaultSetup('pledges'), groupBy: 'tags' }).map(group => [group.key, group.sums.balance])).toEqual([['2026 campaign', 700], ['Pledge 2026', 700]]);
+    expect(groupRows(payments, { ...defaultSetup('payments'), groupBy: 'pledgeTags' }).map(group => [group.key, group.count])).toEqual([['(no tag)', 2], ['2026 campaign', 1], ['Pledge 2026', 1]]);
     const bills = await buildReportRows(db, 'bills', today);
     expect(bills.find(row => row.id === 'b1')).toMatchObject({ status: 'Unpaid', daysOverdue: 75, aging: '61-90 days' });
     expect(bills.find(row => row.id === 'b2')).toMatchObject({ status: 'Paid', amountCAD: 140 });
@@ -137,7 +138,7 @@ describe('monthly giving by donor', () => {
     expect(buildMonthlyGiving(payments, donors, '2026-01', '2026-03', { sort: 'total' }).rows[0].donor).toBe('Aaron Adler');
     expect(howText({ Cash: 10.5, Check: 20 })).toBe('Check $20 + Cash $10.50');
     const sheet = monthlyGivingSheet(report, 'T');
-    expect(sheet.columns.map(column => column.header).slice(0, 10)).toEqual(['Donor #', 'First name', 'Last name', 'Hebrew first name', 'Hebrew last name', 'Tag (title)', 'Phone', 'Jan 2026 total', 'Jan 2026 how paid', 'Feb 2026 total']);
+    expect(sheet.columns.map(column => column.header).slice(0, 10)).toEqual(['Donor #', 'First name', 'Last name', 'Hebrew first name', 'Hebrew last name', 'Title', 'Phone', 'Jan 2026 total', 'Jan 2026 how paid', 'Feb 2026 total']);
     expect(sheet.rows[1]['2026-01-how']).toBe('Cash $100 + Credit card $100 + Vouchers $100');
     expect(sheet.rows[0]['2026-01-amount']).toBe('');
   });
@@ -147,7 +148,7 @@ describe('monthly giving sort orders', () => {
   const donors = [
     { id: 'a', name: 'Aaron Zeller', firstName: 'Aaron', lastName: 'Zeller', hebFirstName: 'אהרן', hebLastName: 'צעלער' },
     { id: 'b', name: 'Zev Adler', firstName: 'Zev', lastName: 'Adler', hebFirstName: 'זאב', hebLastName: 'אדלער' },
-    { id: 'c', name: 'Moshe Klein', firstName: 'Moshe', lastName: 'Klein', hebFirstName: 'משה', hebLastName: '', tag: 'משב"ק' },
+    { id: 'c', name: 'Moshe Klein', firstName: 'Moshe', lastName: 'Klein', hebFirstName: 'משה', hebLastName: '', title: 'משב"ק' },
   ];
   const payments = donors.map((donor, index) => ({ donorId: donor.id, date: '2026-01-02', status: 'Approved', method: 'Cash', amountCAD: (index + 1) * 10 }));
   const order = (sort: any) => buildMonthlyGiving(payments, donors, '2026-01', '2026-01', { sort }).rows.map(row => row.donorId).join('');
@@ -157,6 +158,6 @@ describe('monthly giving sort orders', () => {
     expect(order('hebLast')).toBe('bac'); // אדלער, צעלער, then the donor with no Hebrew last name
     expect(order('hebFirst')).toBe('abc'); // אהרן, זאב, משה
     expect(order('total')).toBe('cba');
-    expect(order('tag')).toBe('cba'); // the donor with a tag first, then by last name
+    expect(order('title')).toBe('cba'); // the donor with a tag first, then by last name
   });
 });

@@ -14,6 +14,8 @@ const daysBetween = (from: string, to: string) => from && to ? Math.round((Date.
 const agingBucket = (days: number) => days <= 0 ? 'Not due yet' : days <= 30 ? '1-30 days' : days <= 60 ? '31-60 days' : days <= 90 ? '61-90 days' : 'Over 90 days';
 const METHODS: Record<string, string> = { credit_card: 'Credit card', check: 'Check', cash: 'Cash', e_transfer: 'E-transfer', wire: 'Wire', vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'Other', ach: 'ACH', saved_card: 'Credit card' };
 const method = (value: unknown) => METHODS[String(value || '')] || String(value || '');
+/** A pledge's tags as a clean list (they are saved as a list; old data may have a comma text). */
+const tagList = (value: unknown): string[] => [...new Set((Array.isArray(value) ? value : String(value || '').split(',')).map(tag => String(tag || '').trim()).filter(Boolean))];
 const STATUS: Record<string, string> = { approved: 'Approved', pending: 'Pending', declined: 'Declined' };
 
 export const REPORT_SOURCES = ['payments', 'pledges', 'donors', 'bills', 'vendors', 'schedules', 'expected', 'transfers', 'bank', 'accounts', 'campaigns', 'projects', 'tasks', 'receipts', 'employees', 'messages'] as const;
@@ -38,11 +40,12 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
   const donors = byId('donors'); const accounts = byId('accounts');
   const donorName = (id: unknown) => { const donor = donors.get(String(id || '')); return donor ? String(donor.name || '') : ''; };
   const donorHebrew = (id: unknown) => { const donor = donors.get(String(id || '')); const name = donor ? donorDisplayName(donor) : ''; return name && name !== donor?.name ? name : ''; };
-  // The name in separate parts (so a report can sort by any of them) and the donor's tag (his title, e.g. מו"ץ).
+  // The name in separate parts (so a report can sort by any of them) and the donor's title (e.g. מו"ץ).
+  // Pledge tags (like DonorFuse) are a list on each pledge; reports show them joined with ", ".
   const nameParts = (donor: any) => {
-    if (!donor) return { firstName: '', lastName: '', hebFirstName: '', hebLastName: '', tag: '' };
+    if (!donor) return { firstName: '', lastName: '', hebFirstName: '', hebLastName: '', title: '' };
     const words = String(donor.name || '').trim().split(/\s+/).filter(Boolean);
-    return { firstName: String(donor.firstName || '').trim() || words[0] || '', lastName: String(donor.lastName || '').trim() || (words.length > 1 ? words[words.length - 1] : ''), hebFirstName: String(donor.hebFirstName || '').trim(), hebLastName: String(donor.hebLastName || '').trim(), tag: String(donor.title || '').trim() };
+    return { firstName: String(donor.firstName || '').trim() || words[0] || '', lastName: String(donor.lastName || '').trim() || (words.length > 1 ? words[words.length - 1] : ''), hebFirstName: String(donor.hebFirstName || '').trim(), hebLastName: String(donor.hebLastName || '').trim(), title: String(donor.title || '').trim() };
   };
   const partsOf = (id: unknown) => nameParts(donors.get(String(id || '')));
   const accountName = (id: unknown) => { const key = String(id || ''); if (!key) return ''; const account = accounts.get(key); return account ? String(account.name || key) : key === 'sys-undeposited-funds' ? 'Undeposited funds' : key; };
@@ -63,16 +66,19 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
   const campaigns = byId('campaigns');
 
   if (source === 'payments') {
-    const pledges = byId('pledges'); const projects = byId('projects'); const receipts = new Map(list('receipts').map(item => [String(item.paymentId || ''), item]));
+    const pledges = byId('pledges');
+    // A payment gets the tags of the pledge(s) it pays.
+    const pledgeTagsOf = (item: any) => [...new Set((Array.isArray(item.pledgeAllocations) && item.pledgeAllocations.length ? item.pledgeAllocations.map((entry: any) => entry.pledgeId) : [item.pledgeId]).flatMap((id: any) => tagList(pledges.get(String(id || ''))?.tags)))]; const projects = byId('projects'); const receipts = new Map(list('receipts').map(item => [String(item.paymentId || ''), item]));
     return payments.map(item => {
       const pledge = pledges.get(String(item.pledgeId || '')); const receipt = receipts.get(String(item.id));
-      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: cad(item), method: method(item.method), status: STATUS[item.type] || item.type || '', checkNumber: item.checkNumber || item.referenceNumber || '', deposit: item.depositStatus === 'deposited' ? 'Deposited' : item.depositStatus === 'undeposited' ? 'Not deposited' : item.depositStatus || '', depositAccount: accountName(item.sourceAccountId), incomeAccount: accountName(item.offsetAccountId), category: item.category || pledge?.category || '', campaign: campaigns.get(String(pledge?.campaignId || ''))?.name || '', pledgeDate: pledge ? day(pledge.date) : '', project: projects.get(String(item.projectId || ''))?.name || '', sponsor: item.sponsor || '', recurring: item.scheduleId ? 'Yes' : 'No', receiptNumber: receipt?.receiptNumber || '', receiptStatus: receipt ? (receipt.status === 'sent' ? 'Sent' : receipt.status === 'void' ? 'Void' : 'Made') : '', declineReason: item.declineReason || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
+      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: cad(item), method: method(item.method), status: STATUS[item.type] || item.type || '', checkNumber: item.checkNumber || item.referenceNumber || '', deposit: item.depositStatus === 'deposited' ? 'Deposited' : item.depositStatus === 'undeposited' ? 'Not deposited' : item.depositStatus || '', depositAccount: accountName(item.sourceAccountId), incomeAccount: accountName(item.offsetAccountId), category: item.category || pledge?.category || '', campaign: campaigns.get(String(pledge?.campaignId || ''))?.name || '', pledgeDate: pledge ? day(pledge.date) : '', project: projects.get(String(item.projectId || ''))?.name || '', sponsor: item.sponsor || '', pledgeTags: pledgeTagsOf(item).join(', '), recurring: item.scheduleId ? 'Yes' : 'No', receiptNumber: receipt?.receiptNumber || '', receiptStatus: receipt ? (receipt.status === 'sent' ? 'Sent' : receipt.status === 'void' ? 'Void' : 'Made') : '', declineReason: item.declineReason || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
     });
   }
   if (source === 'pledges') {
+    const pledgeTagById = new Map(list('pledges').map(item => [String(item.id), item.tags]));
     return pledgeFinancials().map(item => {
       const balance = round(num(item.balance)); const periodEnd = day(item.periodEnd); const overdue = balance > 0.005 ? daysBetween(periodEnd, today) : 0;
-      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', phone: donors.get(String(item.donorId))?.phone || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: num(item.amountCAD ?? item.amount), paid: round(num(item.paid)), pending: round(num(item.pending)), scheduled: round(num(item.scheduled)), balance, open: balance > 0.005 ? 'Open' : 'Paid up', periodEnd, daysPastPeriod: Math.max(0, overdue), aging: balance > 0.005 ? agingBucket(overdue) : '', category: item.category || '', campaign: campaigns.get(String(item.campaignId || ''))?.name || '', sponsor: item.sponsor || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
+      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', phone: donors.get(String(item.donorId))?.phone || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: num(item.amountCAD ?? item.amount), paid: round(num(item.paid)), pending: round(num(item.pending)), scheduled: round(num(item.scheduled)), balance, open: balance > 0.005 ? 'Open' : 'Paid up', tags: tagList(pledgeTagById.get(String(item.id))).join(', '), periodEnd, daysPastPeriod: Math.max(0, overdue), aging: balance > 0.005 ? agingBucket(overdue) : '', category: item.category || '', campaign: campaigns.get(String(item.campaignId || ''))?.name || '', sponsor: item.sponsor || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
     });
   }
   if (source === 'donors') {
@@ -124,6 +130,12 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
 
 export const registerReportDataRoutes = (app: any) => {
   const allowed = (c: any) => ((c.get('userRoles') || []) as string[]).includes('administrator');
+  // Every tag already used on a pledge, for the pledge window.
+  app.get('/v3/pledge-tags', async (c: any) => {
+    const result = await c.env.DB.prepare("SELECT DISTINCT t.value AS tag FROM sync_records r, json_each(CASE WHEN json_type(r.data,'$.tags')='array' THEN json_extract(r.data,'$.tags') ELSE '[]' END) t WHERE r.type='pledges' AND r.is_deleted=0").all();
+    const tags = [...new Set(((result.results || []) as any[]).map(row => String(row.tag || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return c.json({ success: true, tags });
+  });
   app.get('/v3/report-data', async (c: any) => {
     if (!allowed(c)) return c.json({ success: false, error: 'Forbidden: Missing permission reports.read' }, 403);
     const source = String(c.req.query('source') || '');

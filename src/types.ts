@@ -123,6 +123,8 @@ export interface Pledge {
   notes?: string;
   fundraiserId?: string;
   projectId?: string;
+  /** Tags on the pledge, like in DonorFuse (e.g. "2026 campaign", "Pledge 2026"). */
+  tags?: string[];
 }
 
 export interface RecurringPayment {

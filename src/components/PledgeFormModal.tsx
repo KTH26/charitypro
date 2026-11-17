@@ -4,11 +4,12 @@ import { FundraiserAllocationEditor, type FundraiserAllocationDraft } from './Fu
 import { DonorPicker, type PickedDonor } from './DonorPicker';
 import { HebrewCalendarPicker } from './HebrewCalendar';
 import { OnlinePaymentForm } from './OnlinePaymentForm';
+import { PledgeTagPicker } from './PledgeTagPicker';
 import { type CalendarSlot, type Dedication, slotId, slotLabel } from '../utils/hebrewCalendar';
 
-export type PledgeForEdit = { id: string; revision: number; donorId: string; donorName: string; campaignId?: string; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string; followUpDate?: string; followUpNote?: string; fundraiserGroupId?: string; fundraiserAllocations?: FundraiserAllocationDraft[] };
+export type PledgeForEdit = { id: string; revision: number; donorId: string; donorName: string; campaignId?: string; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string; followUpDate?: string; followUpNote?: string; fundraiserGroupId?: string; fundraiserAllocations?: FundraiserAllocationDraft[]; tags?: string[] };
 type Campaign = { id: string; name: string; year: number; startDate: string; endDate: string };
-type PledgeForm = { id: string; revision: number; amount: string; currency: 'CAD' | 'USD'; date: string; notes: string; followUpDate: string; followUpNote: string; fundraiserGroupId: string; fundraiserAllocations: FundraiserAllocationDraft[] };
+type PledgeForm = { id: string; revision: number; amount: string; currency: 'CAD' | 'USD'; date: string; notes: string; followUpDate: string; followUpNote: string; fundraiserGroupId: string; fundraiserAllocations: FundraiserAllocationDraft[]; tags: string[] };
 
 const localToday = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
 const postJson = async (url: string, body: any, method = 'POST') => { const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save.'); return data; };
@@ -26,8 +27,8 @@ export const PledgeFormModal: React.FC<{
   onSaved: (item: any, isNew: boolean) => void;
 }> = ({ pledge, defaultDonor, defaults, onClose, onSaved }) => {
   const [form, setForm] = useState<PledgeForm>(() => pledge
-    ? { id: pledge.id, revision: pledge.revision, amount: String(pledge.amount), currency: pledge.currency, date: pledge.date, notes: pledge.notes || '', followUpDate: pledge.followUpDate || '', followUpNote: pledge.followUpNote || '', fundraiserGroupId: pledge.fundraiserGroupId || '', fundraiserAllocations: pledge.fundraiserAllocations || [] }
-    : { id: '', revision: 0, amount: '', currency: 'CAD', date: defaults?.date || localToday(), notes: defaults?.notes || '', followUpDate: '', followUpNote: '', fundraiserGroupId: '', fundraiserAllocations: defaults?.fundraiserAllocations || [] });
+    ? { id: pledge.id, revision: pledge.revision, amount: String(pledge.amount), currency: pledge.currency, date: pledge.date, notes: pledge.notes || '', followUpDate: pledge.followUpDate || '', followUpNote: pledge.followUpNote || '', fundraiserGroupId: pledge.fundraiserGroupId || '', fundraiserAllocations: pledge.fundraiserAllocations || [], tags: Array.isArray(pledge.tags) ? pledge.tags : [] }
+    : { id: '', revision: 0, amount: '', currency: 'CAD', date: defaults?.date || localToday(), notes: defaults?.notes || '', followUpDate: '', followUpNote: '', fundraiserGroupId: '', fundraiserAllocations: defaults?.fundraiserAllocations || [], tags: [] });
   const fixedDonor: PickedDonor | null = pledge ? { id: pledge.donorId, name: pledge.donorName } : defaultDonor || null;
   const [donor, setDonor] = useState<PickedDonor | null>(fixedDonor);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -66,7 +67,7 @@ export const PledgeFormModal: React.FC<{
       // First make sure the dates are still free, so nothing is saved when one is taken.
       if (newSlots.length) await postJson('/api/v3/dedications', { checkOnly: true, items: newSlots });
       const key = requestId.current || crypto.randomUUID(); requestId.current = key;
-      const data = { ...(form.id ? { id: form.id } : {}), donorId: donor.id, amount, currency: form.currency, date: form.date, notes: form.notes.trim(), followUpDate: form.followUpDate, followUpNote: form.followUpNote.trim(), fundraiserGroupId: form.fundraiserGroupId, fundraiserAllocations: form.fundraiserAllocations };
+      const data = { ...(form.id ? { id: form.id } : {}), donorId: donor.id, amount, currency: form.currency, date: form.date, notes: form.notes.trim(), followUpDate: form.followUpDate, followUpNote: form.followUpNote.trim(), fundraiserGroupId: form.fundraiserGroupId, fundraiserAllocations: form.fundraiserAllocations, tags: form.tags };
       const response = await fetch(form.id ? `/api/v3/records/pledges/${encodeURIComponent(form.id)}` : '/api/v3/records/pledges', { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ revision: form.revision, data }) });
       const result = await response.json();
       if (!response.ok || !result.success) { requestId.current = ''; throw new Error(result.error || 'Unable to save pledge.'); }
@@ -126,6 +127,7 @@ export const PledgeFormModal: React.FC<{
         <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Saved fundraiser team</span><select value={form.fundraiserGroupId} onChange={event => { const group = groups.find(item => item.id === event.target.value); setForm(current => ({ ...current, fundraiserGroupId: event.target.value, fundraiserAllocations: group?.allocations || current.fundraiserAllocations })); }}><option value="">— Custom fundraiser split —</option>{groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
         <FundraiserAllocationEditor fundraisers={fundraisers} value={form.fundraiserAllocations} onChange={fundraiserAllocations => setForm(current => ({ ...current, fundraiserGroupId: '', fundraiserAllocations }))} />
         {!!form.fundraiserAllocations.length && <button type="button" className="btn btn-secondary btn-sm" style={{ gridColumn: '1 / -1', justifySelf: 'start' }} onClick={() => void saveGroup()}>Save this split as a team</button>}
+        <PledgeTagPicker value={form.tags} onChange={tags => setForm(current => ({ ...current, tags }))} />
         <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Notes</span><textarea value={form.notes} onChange={event => setForm(current => ({ ...current, notes: event.target.value }))} /></label>
         {!pledge && <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontWeight: 800, padding: 12, borderRadius: 10, background: 'var(--bg-input)' }}><input type="checkbox" checked={payNow} onChange={event => setPayNow(event.target.checked)} /> He already paid (or pays now) – open the payment after saving</label>}
       </div>
