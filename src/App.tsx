@@ -24,6 +24,7 @@ import { NotFound } from './pages/NotFound';
 const OnlineReminders = React.lazy(() => import('./pages/OnlineReminders').then(module => ({ default: module.OnlineReminders })));
 const OnlineReceipts = React.lazy(() => import('./pages/OnlineReceipts').then(module => ({ default: module.OnlineReceipts })));
 const OnlineCalendar = React.lazy(() => import('./pages/OnlineCalendar').then(module => ({ default: module.OnlineCalendar })));
+const SponsorSheet = React.lazy(() => import('./pages/SponsorSheet').then(module => ({ default: module.SponsorSheet })));
 const OnlinePayroll = React.lazy(() => import('./pages/OnlinePayroll').then(module => ({ default: module.OnlinePayroll })));
 const OnlineReconciliation = React.lazy(() => import('./pages/OnlineReconciliation').then(module => ({ default: module.OnlineReconciliation })));
 const OnlineReports = React.lazy(() => import('./pages/OnlineReportCenter').then(module => ({ default: module.OnlineReportCenter })));
@@ -53,6 +54,7 @@ function App() {
         <Route path="/expenses" element={cloudPage(<OnlineExpenses />)} />
         <Route path="/chart-of-accounts" element={cloudPage(<OnlineAccounts />)} />
         <Route path="/bank-feed" element={cloudPage(<OnlineBank />)} />
+        <Route path="/calendar/sponsor-sheet" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading sponsor list...</div>}><SponsorSheet /></React.Suspense>)} />
         <Route path="/calendar" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading calendar...</div>}><OnlineCalendar /></React.Suspense>)} />
         <Route path="/pledges" element={cloudPage(<OnlinePledges />)} />
         <Route path="/campaigns" element={cloudPage(<OnlineCampaigns />)} />

@@ -136,6 +136,26 @@ export const registerReportDataRoutes = (app: any) => {
     const tags = [...new Set(((result.results || []) as any[]).map(row => String(row.tag || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     return c.json({ success: true, tags });
   });
+  // The monthly sponsor list: the day and month sponsors of one Hebrew month, with the donor's titles.
+  app.get('/v3/sponsor-sheet', async (c: any) => {
+    const hebYear = Number(c.req.query('hebYear') || 0); const hebMonth = Number(c.req.query('hebMonth') || 0);
+    if (!hebYear || !hebMonth) return c.json({ success: false, error: 'Choose the month.' }, 400);
+    const rows = await c.env.DB.prepare("SELECT r.id, r.data, d.data AS donor FROM sync_records r LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') WHERE r.type='dedications' AND r.is_deleted=0 AND json_extract(r.data,'$.hebYear')=? AND json_extract(r.data,'$.hebMonth')=?").bind(hebYear, hebMonth).all();
+    const parse = (raw: unknown) => { try { return JSON.parse(String(raw || '{}')); } catch { return {}; } };
+    const items = ((rows.results || []) as any[]).map(row => {
+      const item = parse(row.data); const donor = parse(row.donor);
+      return { id: String(row.id), kind: item.kind, day: Number(item.hebDay || 0), donorId: String(item.donorId || ''), honoree: String(item.honoree || ''), notes: String(item.notes || ''), donorName: String(donor.name || ''), preTitle: String(donor.preTitle || ''), hebFirstName: String(donor.hebFirstName || ''), hebLastName: String(donor.hebLastName || ''), title: String(donor.title || ''), postTitle: String(donor.postTitle || '') };
+    });
+    const settingsRow: any = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sponsor_sheet_settings'").first();
+    return c.json({ success: true, items, settings: parse(settingsRow?.value) });
+  });
+  // The fixed text on the sheet (who to call to take a day). Saved once for everyone.
+  app.put('/v3/sponsor-sheet/settings', async (c: any) => {
+    const body = await c.req.json().catch(() => ({}));
+    const settings = { contactTitle: String(body.contactTitle ?? '').slice(0, 60), contactName: String(body.contactName ?? '').slice(0, 120), contactEnd: String(body.contactEnd ?? '').slice(0, 30), contactPhone: String(body.contactPhone ?? '').slice(0, 40) };
+    await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sponsor_sheet_settings',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify(settings), Date.now()).run();
+    return c.json({ success: true, settings });
+  });
   app.get('/v3/report-data', async (c: any) => {
     if (!allowed(c)) return c.json({ success: false, error: 'Forbidden: Missing permission reports.read' }, 403);
     const source = String(c.req.query('source') || '');

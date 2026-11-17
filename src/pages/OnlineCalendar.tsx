@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Plus, Trash2, X } from 'lucide-react';
+import { CalendarDays, Plus, Printer, Trash2, X } from 'lucide-react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { HebrewCalendarPicker, HebrewMonthGrid, MonthNav, useDedications } from '../components/HebrewCalendar';
 import { DonorPicker, type PickedDonor } from '../components/DonorPicker';
@@ -39,12 +39,12 @@ const BookModal: React.FC<{ initial: CalendarSlot[]; onClose: () => void; onSave
 
 /** A booked day or month: who, for whom, change the name or remove it. */
 const DetailsModal: React.FC<{ item: Dedication; onClose: () => void; onSaved: () => void }> = ({ item, onClose, onSaved }) => {
-  const [honoree, setHonoree] = useState(item.honoree || ''); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
+  const [honoree, setHonoree] = useState(item.honoree || ''); const [notes, setNotes] = useState(item.notes || ''); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
   const call = async (method: 'PUT' | 'DELETE') => {
     if (method === 'DELETE' && !window.confirm(`Remove the booking of ${item.label} for ${name(item)}? The date becomes free again.`)) return;
     setSaving(true); setError('');
     try {
-      const response = await fetch(`/api/v3/dedications/${encodeURIComponent(item.id)}`, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'PUT' ? JSON.stringify({ honoree, notes: item.notes || '' }) : undefined });
+      const response = await fetch(`/api/v3/dedications/${encodeURIComponent(item.id)}`, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'PUT' ? JSON.stringify({ honoree, notes }) : undefined });
       const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save.');
       onSaved();
     } catch (reason: any) { setError(reason.message); } finally { setSaving(false); }
@@ -56,6 +56,7 @@ const DetailsModal: React.FC<{ item: Dedication; onClose: () => void; onSaved: (
       <div><strong style={{ fontSize: 18 }} dir="rtl">{name(item)}</strong>{item.donorYiddishName && <div style={{ color: 'var(--text-muted)' }}>{item.donorName}</div>}</div>
       <div style={{ color: 'var(--text-muted)' }}>{item.kind === 'month' ? 'Whole month' : `English date: ${item.date}`}{item.pledgeId ? ' · Booked with a pledge' : ''}</div>
       <label className="form-group" style={{ margin: 0 }}><span>Name to show (in honor / in memory of)</span><input dir="auto" value={honoree} onChange={event => setHonoree(event.target.value)} maxLength={300} /></label>
+      <label className="form-group" style={{ margin: 0 }}><span>Second line on the sponsor list (e.g. יארצייט כ"ד אלול)</span><input dir="auto" value={notes} onChange={event => setNotes(event.target.value)} maxLength={300} /></label>
     </div>
     <div className="modal-footer"><button className="btn btn-secondary" style={{ marginRight: 'auto', color: 'var(--red)' }} disabled={saving} onClick={() => void call('DELETE')}><Trash2 size={15} /> Remove booking</button><button className="btn btn-secondary" onClick={onClose}>Close</button><button className="btn btn-primary" disabled={saving} onClick={() => void call('PUT')}>Save</button></div>
   </div></div>;
@@ -82,7 +83,7 @@ export const OnlineCalendar: React.FC = () => {
   return <div style={{ padding: 28, maxWidth: 1400, margin: '0 auto' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 18, flexWrap: 'wrap' }}>
       <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ margin: '4px 0', color: 'var(--navy)' }}>Calendar <span dir="rtl">{hebYearText(view.year)}</span></h1><div style={{ color: 'var(--text-muted)' }}>{daysBooked} of {totalDays} days taken · {items.filter(item => item.kind === 'month').length} of {months.length} months sponsored</div></div>
-      <button className="btn btn-primary" onClick={() => setBooking([])}><Plus size={16} /> Book dates</button>
+      <div style={{ display: 'flex', gap: 8 }}><a className="btn btn-secondary" href={`/calendar/sponsor-sheet?year=${view.year}&month=${view.month}`}><Printer size={16} /> Print sponsor list</a><button className="btn btn-primary" onClick={() => setBooking([])}><Plus size={16} /> Book dates</button></div>
     </div>
     {error && <div className="card pay-error" style={{ padding: 14 }}>{error}</div>}
     <div className="hcal-page">
