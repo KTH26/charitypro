@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculatePledgeFinancials } from '../functions/api/server-data';
+import { addUtc, calculatePledgeFinancials } from '../functions/api/server-data';
 import { balanceLines } from '../functions/api/sms';
 
 const donorId = 'd1';
@@ -29,6 +29,19 @@ describe('balance text message', () => {
   it('shows cents only when there are cents, and an overpayment in words', () => {
     const lines = balanceLines(calculatePledgeFinancials([{ id: 'p', donorId, amount: 100, date: '2026-01-05' }], [pay('x', '2026-02-01', 150.5, 'p')], []), 2026);
     expect(lines).toEqual(['2026 pledge: $100, paid on it: $150.50', 'Paid $50.50 more than the pledge.']);
+  });
+
+  it('counts a Sola plan of "every 92 days" right: only Jan 2 is still to come', () => {
+    const every92 = [{ id: 's', donorId, amount: 300, frequency: 'daily', intervalCount: 92, nextDate: '2027-01-02', endDate: '2027-01-02', active: true }];
+    const lines = balanceLines(calculatePledgeFinancials(pledges, payments, every92), 2026);
+    expect(lines[2]).toBe('Card will still charge: $300');
+  });
+
+  it('steps dates by the count: every 4 weeks, every 92 days', () => {
+    expect(addUtc('2026-10-29', 'weekly', 4)).toBe('2026-11-26');
+    expect(addUtc('2026-10-02', 'daily', 92)).toBe('2027-01-02');
+    expect(addUtc('2026-01-31', 'monthly')).toBe('2026-03-03');
+    expect(addUtc('2026-01-15', 'monthly', 3)).toBe('2026-04-15');
   });
 
   it('says when there is no pledge this year', () => {

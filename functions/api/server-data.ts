@@ -313,12 +313,15 @@ const normalizeExternalDate = (value: unknown) => {
   if (candidate.getUTCFullYear() !== year || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) return '';
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 };
-const addUtc = (value: string, frequency: string) => {
-  const date = new Date(`${value}T00:00:00Z`);
-  if (frequency === 'weekly') date.setUTCDate(date.getUTCDate() + 7);
-  else if (frequency === 'quarterly') date.setUTCMonth(date.getUTCMonth() + 3);
-  else if (frequency === 'yearly') date.setUTCFullYear(date.getUTCFullYear() + 1);
-  else date.setUTCMonth(date.getUTCMonth() + 1);
+/** The next date. `every` = how many of that period between charges (Sola "every 28 days" = daily, 28). */
+export const addUtc = (value: string, frequency: string, every: unknown = 1) => {
+  const date = new Date(`${value}T00:00:00Z`); const count = Math.max(1, Math.floor(Number(every) || 1));
+  if (frequency === 'daily') date.setUTCDate(date.getUTCDate() + count);
+  else if (frequency === 'weekly') date.setUTCDate(date.getUTCDate() + 7 * count);
+  else if (frequency === 'biweekly') date.setUTCDate(date.getUTCDate() + 14 * count);
+  else if (frequency === 'quarterly') date.setUTCMonth(date.getUTCMonth() + 3 * count);
+  else if (frequency === 'yearly') date.setUTCFullYear(date.getUTCFullYear() + count);
+  else date.setUTCMonth(date.getUTCMonth() + count);
   return date.toISOString().slice(0, 10);
 };
 const addYear = (value: string) => addUtc(value, 'yearly');
@@ -456,10 +459,10 @@ export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: an
       let occurrence = isoDate(schedule.nextDate);
       const scheduleEnd = isoDate(schedule.endDate);
       let guard = 0;
-      while (occurrence && occurrence < start && guard++ < 500) occurrence = addUtc(occurrence, String(schedule.frequency || 'monthly'));
+      while (occurrence && occurrence < start && guard++ < 500) occurrence = addUtc(occurrence, String(schedule.frequency || 'monthly'), schedule.intervalCount);
       while (occurrence && occurrence < end && (!scheduleEnd || occurrence <= scheduleEnd) && guard++ < 500) {
         scheduled += Number(schedule.amountCAD ?? schedule.amount ?? 0);
-        occurrence = addUtc(occurrence, String(schedule.frequency || 'monthly'));
+        occurrence = addUtc(occurrence, String(schedule.frequency || 'monthly'), schedule.intervalCount);
       }
     }
     const amount = Number(pledge.amountCAD ?? pledge.amount ?? 0);
@@ -1351,7 +1354,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         const expectationId = `expected-payment-${schedule.id}-${occurrence}`;
         const existing = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='transactions' AND id=? LIMIT 1").bind(id).first();
         if (!existing) pending.push({ id, expectationId, donorId: schedule.donorId, ...(schedule.pledgeId ? { pledgeId: schedule.pledgeId } : {}), amount: Number(schedule.amount || 0), ...(schedule.amountCAD ? { amountCAD: Number(schedule.amountCAD) } : {}), currency: schedule.currency || 'CAD', date: occurrence, type: 'pending', method: schedule.method || 'credit_card', notes: 'Scheduled payment date reached; awaiting Sola verification.', scheduleId: schedule.id });
-        occurrence = addUtc(occurrence, String(schedule.frequency || 'monthly'));
+        occurrence = addUtc(occurrence, String(schedule.frequency || 'monthly'), schedule.intervalCount);
       }
       if (!occurrence || occurrence === schedule.nextDate) continue;
       const now = Date.now(); const nextRevision = Number(row.revision) + 1;
@@ -2470,11 +2473,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const summary={due:due.results.length,approved:0,declined:0,skipped:0,exhausted:0,errors:[] as string[]};
     const reviewTask=(scheduleId:string,donorId:string,occurrence:string,title:string,notes:string)=>{const taskId=`recurring-review-${scheduleId}-${occurrence}`;const now=Date.now();return c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?) ON CONFLICT(type,id) DO NOTHING").bind(taskId,JSON.stringify({id:taskId,donorId,title,notes,dueDate:today,priority:'high',type:'declined_payment',completed:false,linkedScheduleId:scheduleId}),now,`${taskId}-insert`);};
     for(const row of due.results as any[]){
-      const schedule=parseSetting(row.data,{});const frequency=String(schedule.frequency||'monthly');
+      const schedule=parseSetting(row.data,{});const frequency=String(schedule.frequency||'monthly');const every=schedule.intervalCount;
       const inRetry=schedule.retryState?.occurrence===schedule.nextDate;
       let occurrence=String(schedule.nextDate||'');const missed:string[]=[];
       // Catch-up: if the runner missed periods, charge only the most recent one.
-      if(!inRetry){let guard=0;while(addUtc(occurrence,frequency)<=today&&guard<120&&(!schedule.endDate||addUtc(occurrence,frequency)<=schedule.endDate)){missed.push(occurrence);occurrence=addUtc(occurrence,frequency);guard++;}}
+      if(!inRetry){let guard=0;while(addUtc(occurrence,frequency,every)<=today&&guard<120&&(!schedule.endDate||addUtc(occurrence,frequency,every)<=schedule.endDate)){missed.push(occurrence);occurrence=addUtc(occurrence,frequency,every);guard++;}}
       const state=inRetry?schedule.retryState:{occurrence,cardIndex:0,attempt:1};
       const cards:string[]=Array.isArray(schedule.paymentMethodIds)?schedule.paymentMethodIds.map(String):schedule.paymentMethodId?[String(schedule.paymentMethodId)]:[];
       // Skip cards that are paused, deleted, or expired.
@@ -2498,9 +2501,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const transaction={id:transactionId,donorId:schedule.donorId,amount,amountCAD,currency,...(currency==='USD'?{exchangeRate:amountCAD/amount,exchangeRateSource:'settings'}:{}),date:today,type:approved?'approved':'declined',method:'credit_card',sourceAccountId:schedule.sourceAccountId,offsetAccountId:schedule.offsetAccountId,depositStatus:'direct',scheduleId:row.id,scheduledDate:occurrence,paymentMethodId:cardId||'',solaRef:String(gateway.xRefNum||''),gatewayResult:String(gateway.xResult||''),...(schedule.pledgeId?{pledgeId:schedule.pledgeId}:{}),...(!approved?{declineReason:String(gateway.xError||gateway.xErrorMessage||'Declined')}:{})};
       // What changes on the schedule (applied on top of the latest saved version below).
       let changes:any;let exhausted=false;
-      if(approved){changes={nextDate:addUtc(occurrence,frequency),retryState:undefined,...(missed.length?{lastMissedOccurrences:missed}:{})};}
+      if(approved){changes={nextDate:addUtc(occurrence,frequency,every),retryState:undefined,...(missed.length?{lastMissedOccurrences:missed}:{})};}
       else{const retryDays=Math.max(1,Math.min(30,Number(schedule.retryDays||2)));const maxAttempts=Math.max(1,Math.min(10,Number(schedule.maxAttempts||3)));let nextCard=cardIndex;let nextAttempt=attempt+1;if(nextAttempt>maxAttempts||!charged){nextCard++;nextAttempt=1;}while(nextCard<cards.length&&!usable(cards[nextCard])){nextCard++;nextAttempt=1;}
-        if(nextCard>=cards.length){exhausted=true;changes={nextDate:addUtc(occurrence,frequency),retryState:undefined,lastFailedOccurrence:occurrence,lastFailureReason:transaction.declineReason};}
+        if(nextCard>=cards.length){exhausted=true;changes={nextDate:addUtc(occurrence,frequency,every),retryState:undefined,lastFailedOccurrence:occurrence,lastFailureReason:transaction.declineReason};}
         else{const retryDate=new Date(`${today}T00:00:00Z`);retryDate.setUTCDate(retryDate.getUTCDate()+(charged?retryDays:0));changes={nextDate:occurrence,retryState:{occurrence,cardIndex:nextCard,attempt:nextAttempt,nextRetryDate:retryDate.toISOString().slice(0,10),lastFailureReason:transaction.declineReason}};}}
       // Only record a declined row when a real charge was attempted.
       const final={success:approved,approved,scheduleId:row.id,transactionId:charged?transactionId:'',exhausted,occurrence};
@@ -2591,6 +2594,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         amount: Number(value.Amount || value.amount || 0),
         active,
         frequency: String(value.IntervalType || value.Frequency || value.frequency || ''),
+        intervalCount: Math.max(1, Math.floor(Number(value.IntervalCount ?? value.intervalCount ?? 1) || 1)),
         startDate: String(value.StartDate || value.InitialRunTime || value.startDate || '').slice(0, 10),
         endDate: String(value.LastProjectedPaymentDate || value.EndDate || value.endDate || '').slice(0, 10),
         nextDate: String(value.NextScheduledRunTime || value.NextRunTime || '').slice(0, 10),
@@ -2645,7 +2649,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
     const imported: any[] = []; const unmatched: any[] = []; const ambiguous: any[] = []; const inactive: any[] = []; const existing: any[] = [];
     const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
-    const frequencyMap: Record<string, string> = { daily: 'daily', weekly: 'weekly', biweekly: 'biweekly', 'bi-weekly': 'biweekly', monthly: 'monthly', quarterly: 'quarterly', yearly: 'yearly', annually: 'yearly', annual: 'yearly' };
+    const frequencyMap: Record<string, string> = { daily: 'daily', weekly: 'weekly', biweekly: 'biweekly', 'bi-weekly': 'biweekly', monthly: 'monthly', quarterly: 'quarterly', yearly: 'yearly', annually: 'yearly', annual: 'yearly', day: 'daily', days: 'daily', week: 'weekly', weeks: 'weekly', month: 'monthly', months: 'monthly', year: 'yearly', years: 'yearly' };
     const statements: any[] = []; const mappedNames = new Set<string>(); const seenScheduleIds = new Set<string>();
     for (const source of schedules) {
       const scheduleId = String(source?.scheduleId || '').trim().slice(0, 200);
@@ -2686,13 +2690,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const amount = Number(source?.amount);
       const nextDate = String(source?.nextDate || source?.startDate || '').slice(0, 10);
       if (!Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { unmatched.push({ scheduleId, name, reason: 'Missing a valid amount or next payment date.' }); continue; }
+      // Sola says "every N days/weeks/months/years" (IntervalType + IntervalCount).
       const frequency = frequencyMap[String(source?.frequency || '').trim().toLowerCase()] || 'monthly';
+      const intervalCount = Math.max(1, Math.min(400, Math.floor(Number(source?.intervalCount || 1) || 1)));
       const paymentsRemaining = Math.max(0, Math.min(500, Number.parseInt(String(source?.paymentsRemaining || '0'), 10) || 0));
       const totalPayments = Math.max(0, Math.min(10000, Number.parseInt(String(source?.totalPayments || '0'), 10) || 0));
       let calculatedEndDate = isoDate(source?.endDate);
-      if (!calculatedEndDate && paymentsRemaining > 0) { calculatedEndDate = nextDate; for (let payment = 1; payment < paymentsRemaining; payment++) calculatedEndDate = addUtc(calculatedEndDate, frequency); }
-      const previous = found ? parseSetting(found.data, {}) : {};
-      const record = { ...previous, id, donorId: selectedDonor.id, amount, currency: previous.currency || 'CAD', frequency, nextDate, ...(calculatedEndDate ? { endDate: calculatedEndDate } : {}), ...(paymentsRemaining ? { paymentsRemaining } : {}), ...(totalPayments ? { totalPayments } : {}), ...(Number(source?.paymentsProcessed || 0) ? { paymentsProcessed: Number(source.paymentsProcessed) } : {}), method: previous.method || 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
+      if (!calculatedEndDate && paymentsRemaining > 0) { calculatedEndDate = nextDate; for (let payment = 1; payment < paymentsRemaining; payment++) calculatedEndDate = addUtc(calculatedEndDate, frequency, intervalCount); }
+      const { intervalCount: _oldCount, ...previous } = found ? parseSetting(found.data, {}) : {} as any;
+      const record = { ...previous, id, donorId: selectedDonor.id, amount, currency: previous.currency || 'CAD', frequency, ...(intervalCount > 1 ? { intervalCount } : {}), nextDate, ...(calculatedEndDate ? { endDate: calculatedEndDate } : {}), ...(paymentsRemaining ? { paymentsRemaining } : {}), ...(totalPayments ? { totalPayments } : {}), ...(Number(source?.paymentsProcessed || 0) ? { paymentsProcessed: Number(source.paymentsProcessed) } : {}), method: previous.method || 'credit_card', active: true, solaScheduleId: scheduleId, solaCustomerId: String(source?.customerId || '').slice(0, 200), importedFromSola: true };
       const data = JSON.stringify(record); const operationId = `${mutationId}-${scheduleId}`;
       if (found) {
         const nextRevision = Number(found.revision) + 1;

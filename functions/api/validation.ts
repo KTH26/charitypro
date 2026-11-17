@@ -41,7 +41,8 @@ export const RecurringPaymentSchema = z.object({
   donorId: z.string().min(1),
   amount: MoneyAmountSchema.positive(),
   currency: z.enum(['CAD', 'USD']),
-  frequency: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
+  frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly']),
+  intervalCount: z.number().int().min(1).max(400).optional(),
   nextDate: z.string().min(1),
   method: z.enum(['credit_card', 'check', 'cash', 'e_transfer', 'vouchers', 'eizer', 'bnei_leivy', 'other']),
   active: z.boolean()
