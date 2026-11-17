@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { buildReportRows, registerReportDataRoutes } from '../functions/api/report-data';
 import { groupRows, presetSetup, PRESETS, rangeDates, runReport, defaultSetup, totalsOf } from '../src/utils/reportSources';
 import { buildWorkbook } from '../src/utils/excel';
+import { moneyText } from '../src/utils/money';
 
 const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
 class MockStatement {
@@ -27,7 +28,7 @@ afterEach(() => { while (databases.length) databases.pop()!.close(); });
 const seed = () => {
   const db = new MockD1(); databases.push(db);
   const put = (type: string, data: any) => db.database.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES(?,?,?,1,1,0)").run(data.id, type, JSON.stringify(data));
-  put('donors', { id: 'd1', name: 'Moshe Cohen', hebFirstName: 'משה', hebLastName: 'כהן', phone: '514-555-1111', email: 'm@example.com', displayId: '101' });
+  put('donors', { id: 'd1', name: 'Moshe Cohen', hebFirstName: 'משה', hebLastName: 'כהן', phone: '514-555-1111', email: 'm@example.com', displayId: '101', title: 'מו"ץ' });
   put('donors', { id: 'd2', name: 'Yaakov Klein', phone: '' });
   put('accounts', { id: '203', name: 'Donations CAD', type: 'income' });
   put('pledges', { id: 'p1', donorId: 'd1', amount: 1000, date: '2026-01-01', currency: 'CAD', category: 'General' });
@@ -46,12 +47,15 @@ describe('reports', () => {
     const payments = await buildReportRows(db, 'payments', today);
     expect(payments.map(row => row.id).sort()).toEqual(['t1', 't2', 't3']);
     const t1 = payments.find(row => row.id === 't1')!;
-    expect(t1).toMatchObject({ donor: 'Moshe Cohen', hebrewName: 'משה כהן', method: 'Check', status: 'Approved', deposit: 'Not deposited', incomeAccount: 'Donations CAD', pledgeDate: '2026-01-01', month: '2026-02' });
+    expect(t1).toMatchObject({ donor: 'Moshe Cohen', hebrewName: 'משה כהן מו"ץ', method: 'Check', status: 'Approved', deposit: 'Not deposited', incomeAccount: 'Donations CAD', pledgeDate: '2026-01-01', month: '2026-02' });
     expect(payments.find(row => row.id === 't2')!.amountCAD).toBe(135);
     const pledges = await buildReportRows(db, 'pledges', today);
     expect(pledges[0]).toMatchObject({ donor: 'Moshe Cohen', amount: 1000, paid: 300, balance: 700, open: 'Open' });
     const donors = await buildReportRows(db, 'donors', today);
-    expect(donors.find(row => row.id === 'd1')).toMatchObject({ totalGiven: 435, givenThisYear: 300, givenLastYear: 135, gifts: 2, lastGift: '2026-02-01', balanceOwed: 700 });
+    expect(donors.find(row => row.id === 'd1')).toMatchObject({ totalGiven: 435, givenThisYear: 300, givenLastYear: 135, gifts: 2, lastGift: '2026-02-01', balanceOwed: 700, pledges: 1, openPledges: 1, tag: 'מו"ץ', firstName: 'Moshe', lastName: 'Cohen', hebFirstName: 'משה', hebLastName: 'כהן' });
+    expect(t1).toMatchObject({ firstName: 'Moshe', lastName: 'Cohen', hebFirstName: 'משה', hebLastName: 'כהן', tag: 'מו"ץ' });
+    expect(pledges[0]).toMatchObject({ tag: 'מו"ץ', lastName: 'Cohen' });
+    expect(groupRows(pledges, { ...defaultSetup('pledges'), groupBy: 'tag' }).map(group => [group.key, group.sums.balance])).toEqual([['מו"ץ', 700]]);
     const bills = await buildReportRows(db, 'bills', today);
     expect(bills.find(row => row.id === 'b1')).toMatchObject({ status: 'Unpaid', daysOverdue: 75, aging: '61-90 days' });
     expect(bills.find(row => row.id === 'b2')).toMatchObject({ status: 'Paid', amountCAD: 140 });
@@ -95,6 +99,15 @@ describe('reports', () => {
     expect(text).toContain('משה &lt;&amp;&gt; &quot;x&quot;');
     expect(text).toContain('<v>46054</v>'); // 2026-02-01 as an Excel date
   });
+
+  it('shows cents only when there are cents', async () => {
+    expect([moneyText(100), moneyText(100.67), moneyText(1234.5), moneyText(-5.5), moneyText(0.1 + 0.2)]).toEqual(['$100', '$100.67', '$1,234.50', '-$5.50', '$0.30']);
+    const blob = buildWorkbook([{ name: 'S', columns: [{ key: 'amount', header: 'Amount', type: 'money' }], rows: [{ amount: 100 }, { amount: 100.67 }], totals: { amount: 200.67 } }]);
+    const text = new TextDecoder().decode(new Uint8Array(await blob.arrayBuffer()));
+    expect(text).toContain('s="7"><v>100</v>'); // whole dollars: $100
+    expect(text).toContain('s="2"><v>100.67</v>'); // with cents: $100.67
+    expect(text).toContain('s="4"><v>200.67</v>');
+  });
 });
 
 import { buildMonthlyGiving, howText, monthlyGivingSheet, monthsBetween } from '../src/utils/monthlyGiving';
@@ -124,7 +137,7 @@ describe('monthly giving by donor', () => {
     expect(buildMonthlyGiving(payments, donors, '2026-01', '2026-03', { sort: 'total' }).rows[0].donor).toBe('Aaron Adler');
     expect(howText({ Cash: 10.5, Check: 20 })).toBe('Check $20 + Cash $10.50');
     const sheet = monthlyGivingSheet(report, 'T');
-    expect(sheet.columns.map(column => column.header).slice(4, 7)).toEqual(['Jan 2026 total', 'Jan 2026 how paid', 'Feb 2026 total']);
+    expect(sheet.columns.map(column => column.header).slice(0, 10)).toEqual(['Donor #', 'First name', 'Last name', 'Hebrew first name', 'Hebrew last name', 'Tag (title)', 'Phone', 'Jan 2026 total', 'Jan 2026 how paid', 'Feb 2026 total']);
     expect(sheet.rows[1]['2026-01-how']).toBe('Cash $100 + Credit card $100 + Vouchers $100');
     expect(sheet.rows[0]['2026-01-amount']).toBe('');
   });
@@ -134,7 +147,7 @@ describe('monthly giving sort orders', () => {
   const donors = [
     { id: 'a', name: 'Aaron Zeller', firstName: 'Aaron', lastName: 'Zeller', hebFirstName: 'אהרן', hebLastName: 'צעלער' },
     { id: 'b', name: 'Zev Adler', firstName: 'Zev', lastName: 'Adler', hebFirstName: 'זאב', hebLastName: 'אדלער' },
-    { id: 'c', name: 'Moshe Klein', firstName: 'Moshe', lastName: 'Klein', hebFirstName: 'משה', hebLastName: '' },
+    { id: 'c', name: 'Moshe Klein', firstName: 'Moshe', lastName: 'Klein', hebFirstName: 'משה', hebLastName: '', tag: 'משב"ק' },
   ];
   const payments = donors.map((donor, index) => ({ donorId: donor.id, date: '2026-01-02', status: 'Approved', method: 'Cash', amountCAD: (index + 1) * 10 }));
   const order = (sort: any) => buildMonthlyGiving(payments, donors, '2026-01', '2026-01', { sort }).rows.map(row => row.donorId).join('');
@@ -144,5 +157,6 @@ describe('monthly giving sort orders', () => {
     expect(order('hebLast')).toBe('bac'); // אדלער, צעלער, then the donor with no Hebrew last name
     expect(order('hebFirst')).toBe('abc'); // אהרן, זאב, משה
     expect(order('total')).toBe('cba');
+    expect(order('tag')).toBe('cba'); // the donor with a tag first, then by last name
   });
 });

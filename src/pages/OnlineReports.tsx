@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
+import { moneyNumber } from '../utils/money';
 import { AlertCircle, BarChart3, FileText, Folder, TrendingUp, Users } from 'lucide-react';
 import { CloudDonorProfileModal } from '../components/CloudDonorProfileModal';
 import { CloudProjectDetailsModal } from '../components/CloudProjectDetailsModal';
 
 type Tab='monthly'|'open_pledges'|'by_fundraiser'|'by_category'|'by_donor'|'by_project'|'tax_summary'|'donor_contacts';
-const money=(value:any)=>Number(value||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const money=(value:any)=>moneyNumber(value);
 const tabs:[Tab,string,React.ElementType][]=[['monthly','Monthly Income',TrendingUp],['open_pledges','Open Pledges',AlertCircle],['by_fundraiser','By Fundraiser',Users],['donor_contacts','Campaign Contacts',Users],['by_category','By Category',BarChart3],['by_donor','Donor History',FileText],['by_project','Project Costs',Folder],['tax_summary','Tax Summary',FileText]];
 
 export const OnlineReports:React.FC=()=>{const[tab,setTab]=useState<Tab>('monthly');const[items,setItems]=useState<any[]>([]);const[page,setPage]=useState(1);const[totalPages,setTotalPages]=useState(1);const[grandTotal,setGrandTotal]=useState(0);const[loading,setLoading]=useState(true);const[error,setError]=useState('');const[donorId,setDonorId]=useState<string|null>(null);

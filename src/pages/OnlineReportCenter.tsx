@@ -3,10 +3,11 @@ import { BarChart3, ChevronDown, ChevronRight, Download, FileSpreadsheet, Plus, 
 import { OnlineReports } from './OnlineReports';
 import { MonthlyDonorReport } from './MonthlyDonorReport';
 import { downloadExcel } from '../utils/excel';
+import { moneyNumber } from '../utils/money';
 import { fetchReportRows, reportSheets, torontoToday } from '../utils/reportExport';
 import { PRESETS, RANGES, REPORT_SOURCES, defaultSetup, groupRows, presetSetup, runReport, sourceByKey, totalsOf, type Operator, type ReportSetup } from '../utils/reportSources';
 
-const money = (value: unknown) => Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (value: unknown) => moneyNumber(value);
 const OPS: [Operator, string][] = [['contains', 'contains'], ['is', 'is'], ['is_not', 'is not'], ['more', 'more than'], ['less', 'less than'], ['empty', 'is empty'], ['not_empty', 'is not empty']];
 const SHOW_LIMIT = 500;
 export const OnlineReportCenter: React.FC = () => {
