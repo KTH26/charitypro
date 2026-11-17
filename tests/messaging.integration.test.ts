@@ -218,9 +218,9 @@ describe('balance text number', () => {
     expect((await text('+15145550001', '2163')).text).toBe(''); // not on the list
     const one = await text('+15145559999', '2163');
     expect(one.text).toContain('משה קליין (Moshe Klein)');
-    expect(one.text).toContain(`Balance ${year}: $1,300.00 (pledged $1,800.00, paid $500.00)`);
+    expect(one.text).toContain(`${year} pledge: $1,800, paid on it: $500\nStill owes: $1,300`);
     const payments = await text('+15145559999', 'p');
-    expect(payments.text).toContain(`${year}-02-01: $500.00 check #77`);
+    expect(payments.text).toContain(`${year}-02-01: $500 check #77`);
     const two = await text('+15145559999', '1111');
     expect(two.text).toContain('2 donors have a phone ending 1111');
     expect((await text('+15145559999', '2')).text).toContain('יואל ווייס (Yoel Weiss)');

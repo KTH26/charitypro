@@ -13,7 +13,36 @@ type Deps = {
   donorDisplayName: (donor: any) => string;
 };
 const parse = (raw: unknown, fallback: any) => { try { return JSON.parse(String(raw)); } catch { return fallback; } };
-const cad = (value: number) => '$' + Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** "$100", "$100.67", "-$5.50": cents only when there are cents. */
+const cad = (value: number) => { const amount = Math.round(Number(value || 0) * 100) / 100; const whole = Number.isInteger(amount); const text = Math.abs(amount).toLocaleString('en-CA', { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }); return `${amount < 0 ? '-' : ''}$${text}`; };
+/**
+ * The balance part of the text, from the pledges (each already has paid, pending and scheduled worked out).
+ * "Still owes" is the pledge minus what is paid (and pending). Card charges planned for later are shown on their own line,
+ * so a planned charge never makes the balance look negative.
+ */
+export const balanceLines = (pledges: any[], year: number) => {
+  const pledgeYear = (pledge: any) => Number(String(pledge.periodStart || pledge.date || '').slice(0, 4));
+  const owes = (pledge: any) => Number(pledge.amountCAD ?? pledge.amount ?? 0) - Number(pledge.paid || 0) - Number(pledge.pending || 0);
+  const thisYear = pledges.filter(pledge => pledgeYear(pledge) === year);
+  const lines: string[] = [];
+  if (!thisYear.length) lines.push(`No pledge for ${year}.`);
+  else {
+    const pledged = thisYear.reduce((sum, pledge) => sum + Number(pledge.amountCAD ?? pledge.amount ?? 0), 0);
+    const paid = thisYear.reduce((sum, pledge) => sum + Number(pledge.paid || 0), 0);
+    const pending = thisYear.reduce((sum, pledge) => sum + Number(pledge.pending || 0), 0);
+    const scheduled = thisYear.reduce((sum, pledge) => sum + Number(pledge.scheduled || 0), 0);
+    const left = Math.round(thisYear.reduce((sum, pledge) => sum + owes(pledge), 0) * 100) / 100;
+    lines.push(`${year} pledge: ${cad(pledged)}, paid on it: ${cad(paid)}${pending > 0.005 ? `, waiting: ${cad(pending)}` : ''}`);
+    lines.push(left < -0.005 ? `Paid ${cad(-left)} more than the pledge.` : `Still owes: ${cad(left)}`);
+    if (scheduled > 0.005) {
+      const extra = Math.round((scheduled - Math.max(left, 0)) * 100) / 100;
+      lines.push(`Card will still charge: ${cad(scheduled)}${extra > 0.005 ? ` (${cad(extra)} more than he owes)` : extra < -0.005 ? ` (${cad(-extra)} still not covered)` : ''}`);
+    }
+  }
+  const all = Math.round(pledges.reduce((sum, pledge) => sum + owes(pledge), 0) * 100) / 100;
+  if (pledges.some(pledge => pledgeYear(pledge) !== year)) lines.push(`All years still owes: ${cad(all)}`);
+  return lines;
+};
 const METHODS: Record<string, string> = { credit_card: 'card', check: 'check', cash: 'cash', e_transfer: 'e-transfer', wire: 'wire', vouchers: 'vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'other', ach: 'ACH' };
 const xml = (text: string) => text.replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[ch]);
 const twiml = (text: string) => new Response(`<?xml version="1.0" encoding="UTF-8"?><Response>${text ? `<Message>${xml(text.slice(0, 1550))}</Message>` : ''}</Response>`, { headers: { 'Content-Type': 'text/xml' } });
@@ -35,7 +64,7 @@ export const smsReply = async (db: any, deps: Deps, from: string, rawBody: strin
     const account = await deps.loadDonorAccount(db, donorId); if (!account) return 'That donor was not found.';
     await saveSession({ donorId });
     const name = deps.donorDisplayName(account.donor); const english = String(account.donor.name || '');
-    return `${name}${english && english !== name ? ` (${english})` : ''}\nBalance ${account.year}: ${cad(account.balanceThisYear)} (pledged ${cad(account.pledgedThisYear)}, paid ${cad(account.paidThisYear)})\nAll years: ${cad(account.balanceTotal)}\nReply P = payments ${account.year}, A = all payments, L = pledges.`;
+    return `${name}${english && english !== name ? ` (${english})` : ''}\n${balanceLines(account.pledges || [], account.year).join('\n')}\nReply P = payments ${account.year}, A = all payments, L = pledges.`;
   };
   if (!body || /^(\?|help|h)$/i.test(body)) return HELP;
   if (/^\d{4}$/.test(body)) {
