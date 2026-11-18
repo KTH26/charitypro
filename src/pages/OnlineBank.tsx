@@ -559,19 +559,12 @@ export const OnlineBank: React.FC = () => {
   const transferAccounts = allAccounts.filter((account) => account.id !== selectedBank && ["asset", "liability", "equity"].includes(account.type));
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "var(--bg)",
-        padding: 28,
-        fontFamily: "Inter, sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: 1400, margin: "0 auto" }}>
-        <div style={{ marginBottom: 22 }}>
-          <div style={{ color: "var(--green)", fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div>
-          <h1 style={{ color: "var(--navy)", margin: "4px 0" }}>Bank Matching</h1>
-          <div style={{ color: "var(--text-muted)" }}>Plaid feed with cloud-owned match history. Match state updates automatically every 3 seconds.</div>
+    <main className="page">
+      <div className="page-inner">
+        <div className="page-intro">
+          <div className="page-eyebrow">CHARITYPRO CLOUD</div>
+          <h1 className="page-title">Bank Matching</h1>
+          <div className="page-sub">Plaid feed with cloud-owned match history. Match state updates automatically every 3 seconds.</div>
         </div>
         {accounts.length === 0 && !loading && (
           <div className="card" style={{ padding: 24, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>

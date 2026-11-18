@@ -156,14 +156,14 @@ export const OnlinePayments: React.FC = () => {
   };
 
   return (
-    <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: '28px', fontFamily: 'Inter, sans-serif' }}>
-      <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'center', marginBottom: 22 }}>
+    <main className="page">
+      <div className="page-inner">
+        <div className="page-head">
           <div>
-            <div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13, letterSpacing: 0.6 }}>CHARITYPRO CLOUD</div>
-            <h1 style={{ margin: '4px 0', color: 'var(--navy)' }}>Donor Payments ({total.toLocaleString()})</h1>
+            <div className="page-eyebrow">CHARITYPRO CLOUD</div>
+            <h1 className="page-title">Donor Payments ({total.toLocaleString()})</h1>
             <div style={{ color: 'var(--green)', fontWeight: 700 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 3 }}>Live cloud data — updates automatically every 3 seconds</div>
+            <div className="page-sub">Live cloud data — updates automatically every 3 seconds</div>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <input ref={reviewedImportRef} type="file" accept="application/json,.json" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void importReviewedPayments(file); }} />

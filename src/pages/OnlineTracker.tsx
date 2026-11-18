@@ -33,9 +33,9 @@ export const OnlineTracker: React.FC = () => {
   useEffect(() => { const timer = window.setTimeout(() => void load(), search ? 250 : 0); return () => window.clearTimeout(timer); }, [load, search]);
   useEffect(() => startLiveRefresh(() => void load(true)), [load]);
 
-  return <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}><div style={{ maxWidth: 1400, margin: '0 auto' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
-      <div><h1 style={{ color: 'var(--navy)', margin: 0 }}>Call Tracker</h1><div style={{ color: 'var(--text-muted)', marginTop: 4 }}>Every call to a donor. Each call is also saved in that donor’s pop-up.</div></div>
+  return <main className="page"><div className="page-inner">
+    <div className="page-head">
+      <div><h1 className="page-title">Call Tracker</h1><div className="page-sub">Every call to a donor. Each call is also saved in that donor’s pop-up.</div></div>
       <button type="button" className="btn btn-primary call-start-button" onClick={() => setRecording(true)}><PhoneCall size={18} /> Record a Call</button>
     </div>
     <section className="card" style={{ padding: 16, marginBottom: 18 }}><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>

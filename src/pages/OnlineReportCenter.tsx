@@ -13,8 +13,8 @@ const SHOW_LIMIT = 500;
 export const OnlineReportCenter: React.FC = () => {
   const [view, setView] = useState<'builder' | 'monthly' | 'classic'>('builder');
   return <div>
-    <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-      {([['builder', 'Report builder'], ['monthly', 'Monthly giving by donor'], ['classic', 'Classic reports']] as const).map(([key, label]) => <button key={key} type="button" className={`btn btn-sm ${view === key ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView(key)}>{label}</button>)}
+    <div className="tabs">
+      {([['builder', 'Report builder'], ['monthly', 'Monthly giving by donor'], ['classic', 'Classic reports']] as const).map(([key, label]) => <button key={key} type="button" className={`tab ${view === key ? 'active' : ''}`} onClick={() => setView(key)}>{label}</button>)}
     </div>
     {view === 'builder' ? <ReportBuilder onMonthly={() => setView('monthly')} /> : view === 'monthly' ? <MonthlyDonorReport /> : <OnlineReports />}
   </div>;

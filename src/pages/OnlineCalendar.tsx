@@ -80,9 +80,9 @@ export const OnlineCalendar: React.FC = () => {
   const onDay = (day: number) => { const id = slotId({ kind: 'day', hebYear: view.year, hebMonth: view.month, hebDay: day }); const found = byId.get(id); if (found) setDetails(found); else setBooking([{ kind: 'day', hebYear: view.year, hebMonth: view.month, hebDay: day }]); };
   const onMonth = () => { const found = byId.get(slotId({ kind: 'month', hebYear: view.year, hebMonth: view.month })); if (found) setDetails(found); else setBooking([{ kind: 'month', hebYear: view.year, hebMonth: view.month }]); };
 
-  return <div style={{ padding: 28, maxWidth: 1400, margin: '0 auto' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 18, flexWrap: 'wrap' }}>
-      <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ margin: '4px 0', color: 'var(--navy)' }}>Calendar <span dir="rtl">{hebYearText(view.year)}</span></h1><div style={{ color: 'var(--text-muted)' }}>{daysBooked} of {totalDays} days taken · {items.filter(item => item.kind === 'month').length} of {months.length} months sponsored</div></div>
+  return <div className="page page-inner">
+    <div className="page-head">
+      <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Calendar <span dir="rtl">{hebYearText(view.year)}</span></h1><div className="page-sub">{daysBooked} of {totalDays} days taken · {items.filter(item => item.kind === 'month').length} of {months.length} months sponsored</div></div>
       <div style={{ display: 'flex', gap: 8 }}><a className="btn btn-secondary" href={`/calendar/sponsor-sheet?year=${view.year}&month=${view.month}`}><Printer size={16} /> Print sponsor list</a><button className="btn btn-primary" onClick={() => setBooking([])}><Plus size={16} /> Book dates</button></div>
     </div>
     {error && <div className="card pay-error" style={{ padding: 14 }}>{error}</div>}

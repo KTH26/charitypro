@@ -86,14 +86,14 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
     finally { setRunning(false); }
   };
 
-  return <div className="page-container">
-    <div className="page-header"><div><div className="eyebrow">CHARITYPRO CLOUD</div><h1>DonorFuse Pledge Reconciliation</h1><p className="muted">Guarded administrator tool for restoring the old system's exact pledge allocations.</p></div></div>
+  return <div className="page"><div className="page-inner">
+    <div className="page-head"><div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">DonorFuse Pledge Reconciliation</h1><p className="page-sub">Guarded administrator tool for restoring the old system's exact pledge allocations.</p></div></div>
     <div className="card" style={{ maxWidth: 850, padding: 28 }}>
       <label className="form-label" htmlFor="donorfuse-plan">Reconciliation file</label>
       <input id="donorfuse-plan" type="file" accept="application/json,.json" onChange={event => chooseFile(event.target.files?.[0])} />
       {fileName && <p className="muted" style={{ marginTop: 10 }}>{fileName}</p>}
       {operations.length > 0 && <>
-        <div className="card" style={{ marginTop: 20, padding: 18, background: '#f5f7fa' }}>
+        <div className="card" style={{ marginTop: 20, padding: 18, background: 'var(--surface-2)' }}>
           <strong>{operations.length.toLocaleString()} guarded changes ready</strong>
           <ul>{Object.entries(counts).map(([key, value]) => <li key={key}>{value.toLocaleString()} — {key}</li>)}</ul>
           <p className="muted">Every change checks the current cloud revision first. If any record changed since the backup, that batch stops without changing anything.</p>
@@ -105,5 +105,5 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
       {complete && conflicts.length === 0 && <div className="alert alert-success" style={{ marginTop: 18 }}>All verified DonorFuse pledge and payment links were applied successfully.</div>}
       {conflicts.length > 0 && <div className="alert alert-error" style={{ marginTop: 18 }}>{conflicts.length.toLocaleString()} changed records were safely skipped and need a fresh backup before they can be reconciled.</div>}
     </div>
-  </div>;
+  </div></div>;
 };

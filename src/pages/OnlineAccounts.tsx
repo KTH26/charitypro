@@ -55,10 +55,10 @@ export const OnlineAccounts: React.FC = () => {
   }, {});
 
   return (
-    <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
-          <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Chart of Accounts</h1><div style={{ color: 'var(--text-muted)' }}>Balances calculated directly from cloud payments, bills, and transfers. Updates automatically.</div></div>
+    <main className="page">
+      <div className="page-inner">
+        <div className="page-head">
+          <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Chart of Accounts</h1><div className="page-sub">Balances calculated directly from cloud payments, bills, and transfers. Updates automatically.</div></div>
           <div className="page-actions"><button className="btn btn-secondary" onClick={() => setShowTransfer(true)}><ArrowLeftRight size={16} /> New Transfer</button><button className="btn btn-primary" onClick={() => setShowAdd(true)}><Plus size={16} /> {isCategories ? 'New Category' : 'New Account'}</button></div>
         </div>
         {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 700, marginBottom: 16 }}>{notice}</div>}

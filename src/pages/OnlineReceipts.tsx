@@ -111,9 +111,9 @@ export const OnlineReceipts: React.FC = () => {
   const toggle = (id: string) => setSelected(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const pager = <div className="receipt-pager"><span>Page {page} of {totals.totalPages} · {totals.total.toLocaleString()} {tab === 'waiting' ? 'payments' : 'receipts'} · {money(totals.totalAmount)}</span><div style={{ display: 'flex', gap: 6 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(1)}>First</button><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totals.totalPages} onClick={() => setPage(value => value + 1)}>Next</button><button className="btn btn-secondary btn-sm" disabled={page >= totals.totalPages} onClick={() => setPage(totals.totalPages)}>Last</button></div></div>;
 
-  return <div style={{ padding: 28, maxWidth: 1300, margin: '0 auto', display: 'grid', gap: 16 }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ margin: '4px 0', color: 'var(--navy)' }}><FileCheck2 size={24} /> Official Receipts</h1><div style={{ color: 'var(--text-muted)' }}>Tax receipts in the Hatzolah design, sent by email as a PDF. Email must be connected in <Link to="/settings">Settings</Link>.</div></div>
+  return <div className="page page-inner" style={{ display: 'grid', gap: 16 }}>
+    <div className="page-head">
+      <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title"><FileCheck2 size={24} /> Official Receipts</h1><div className="page-sub">Tax receipts in the Hatzolah design, sent by email as a PDF. Email must be connected in <Link to="/settings">Settings</Link>.</div></div>
       <button className="btn btn-secondary" onClick={() => setShowSettings(value => !value)}><Settings2 size={15} /> Receipt settings</button>
     </div>
     {showSettings && <ReceiptSettingsBox onClose={() => setShowSettings(false)} />}

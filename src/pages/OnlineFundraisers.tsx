@@ -89,9 +89,9 @@ export const OnlineFundraisers: React.FC = () => {
     catch (reason: any) { setError(reason.message); }
   };
 
-  return <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28 }}><div style={{ maxWidth: 1200, margin: '0 auto' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
-      <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Fundraisers</h1><div style={{ color: 'var(--text-muted)' }}>Fundraisers, their commission %, teams, and how much we owe each one.</div></div>
+  return <main className="page"><div className="page-inner">
+    <div className="page-head">
+      <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Fundraisers</h1><div className="page-sub">Fundraisers, their commission %, teams, and how much we owe each one.</div></div>
       <div className="page-actions">{tab === 'fundraisers' ? <button className="btn btn-primary" onClick={() => { setError(''); setEditing({ percentage: 10 }); }}><UserPlus size={16} /> New Fundraiser</button> : <button className="btn btn-primary" disabled={!fundraisers.length} onClick={() => { setError(''); setEditingTeam({ allocations: [] }); }}><Plus size={16} /> New Team</button>}</div>
     </div>
     <div className="fundraiser-totals">

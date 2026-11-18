@@ -75,9 +75,9 @@ export const OnlineReminders: React.FC = () => {
   const daysInMonth = new Date(month.year, month.month + 1, 0).getDate();
   const byDay = useMemo(() => { const map = new Map<string, Task[]>(); for (const task of tasks) map.set(task.dueDate, [...(map.get(task.dueDate) || []), task]); return map; }, [tasks]);
 
-  return <div style={{ padding: 28, maxWidth: 1200, margin: '0 auto', display: 'grid', gap: 18 }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ margin: '4px 0', color: 'var(--navy)' }}><Bell size={24} /> Reminders</h1><div style={{ color: 'var(--text-muted)' }}>All scheduled reminders by date. Add or edit them in <Link to="/tasks">Tasks</Link>, a pledge, or a call.</div></div>
+  return <div className="page page-inner" style={{ display: 'grid', gap: 16 }}>
+    <div className="page-head">
+      <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title"><Bell size={24} /> Reminders</h1><div className="page-sub">All scheduled reminders by date. Add or edit them in <Link to="/tasks">Tasks</Link>, a pledge, or a call.</div></div>
       <div className="pay-toggle"><button type="button" className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={14} /> List</button><button type="button" className={view === 'month' ? 'active' : ''} onClick={() => setView('month')}><CalendarDays size={14} /> Month</button></div>
     </div>
 

@@ -58,7 +58,7 @@ export const OnlineStripeSync: React.FC = () => {
   const btn = (label: React.ReactNode, onClick: () => void, key: string, kind = 'btn-secondary') => <button type="button" className={`btn btn-sm ${kind}`} disabled={Boolean(busy)} onClick={onClick} style={{ whiteSpace: 'nowrap' }}>{busy === key ? '…' : label}</button>;
   const linkChoices = (amount: number, currency: string, list: Pay[]) => list.filter(p => close(Number(p.amount), amount) && String(p.currency || 'CAD') === currency);
   const chargeChoices = (p: Pay) => (data?.onlyStripe || []).filter(ch => close(ch.amount, Number(p.amount)) && ch.currency === String(p.currency || 'CAD'));
-  return <div style={{ padding: 28, display: 'grid', gap: 16 }}>
+  return <div className="page page-inner" style={{ display: 'grid', gap: 16 }}>
     <div className="card" style={{ display: 'grid', gap: 12 }}>
       <div><h2 style={{ margin: 0, color: 'var(--navy)' }}>Stripe Sync (US-dollar cards)</h2><p style={{ margin: '4px 0 0', color: 'var(--text-muted)' }}>Your Stripe charges next to the US-dollar payments in CharityPro. Add a missing charge for a donor, link it to a payment that is already there, ignore it, or delete a payment that should not be there.</p></div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>

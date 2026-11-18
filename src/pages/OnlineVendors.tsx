@@ -22,8 +22,8 @@ export const OnlineVendors: React.FC = () => {
     finally { if (!silent) setLoading(false); }
   }, [page, search, sort, direction]);
   useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
-  return <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28 }}><div style={{ maxWidth: 1400, margin: '0 auto' }}>
-    <div style={{ marginBottom: 22 }}><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Vendors ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Shared vendor totals calculated from cloud bills · 50 vendors per page</div></div>
+  return <main className="page"><div className="page-inner">
+    <div className="page-intro"><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Vendors ({total.toLocaleString()})</h1><div className="page-sub">Shared vendor totals calculated from cloud bills · 50 vendors per page</div></div>
     <section className="filter-strip"><div className="search-box" style={{ maxWidth: 420 }}><Search className="search-icon" size={18} /><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search vendors..." /></div></section>
     {error && <div className="card" style={{ padding: 14, color: 'var(--red)', fontWeight: 700, marginBottom: 16 }}>{error}</div>}
     <section className="card" style={{ padding: 0, overflow: 'hidden' }}>{loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading vendors...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%' }}><thead><tr>

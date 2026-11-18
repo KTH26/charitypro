@@ -58,10 +58,10 @@ export const OnlineDonors: React.FC = () => {
   };
 
   return (
-    <main style={{ minHeight: '100vh', background: 'var(--bg)', padding: 28, fontFamily: 'Inter, sans-serif' }}>
-      <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'center', marginBottom: 22 }}>
-          <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ color: 'var(--navy)', margin: '4px 0' }}>Donors ({total.toLocaleString()})</h1><div style={{ color: 'var(--text-muted)' }}>Cloud records and calculated giving totals. Updates automatically every 3 seconds.</div></div>
+    <main className="page">
+      <div className="page-inner">
+        <div className="page-head">
+          <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Donors ({total.toLocaleString()})</h1><div className="page-sub">Cloud records and calculated giving totals. Updates automatically every 3 seconds.</div></div>
           <div style={{ display: 'flex', gap: 10 }}><button className="btn btn-secondary" onClick={() => { setSheetSyncOpen(true); setNotice(''); }}>Sync Google Sheet</button><button className="btn btn-primary" onClick={() => { setEditing('new'); setNotice(''); }}>Add Donor</button></div>
         </div>
 
