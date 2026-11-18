@@ -325,7 +325,12 @@ export const addUtc = (value: string, frequency: string, every: unknown = 1) => 
   return date.toISOString().slice(0, 10);
 };
 const addYear = (value: string) => addUtc(value, 'yearly');
-const solaReference = (payment: any) => String(payment.notes || '').match(/\bRef:\s*([^\s]+)/i)?.[1] || '';
+/**
+ * The Sola reference of a card charge (so the same charge is never counted twice).
+ * Only a real Sola number counts: notes like "Ref: Check" or "Ref: Credit Office" (from DonorFuse) are not references,
+ * otherwise every such payment would look like the same payment and only one would be counted.
+ */
+export const solaReference = (payment: any) => String(payment.solaRef || '').trim() || String(payment.notes || '').match(/\bRef:\s*(\d{6,})\b/i)?.[1] || '';
 const uniquePaymentsForAccounting = (payments: any[]) => {
   const unique = new Map<string, any>();
   for (const payment of payments) {
@@ -421,6 +426,25 @@ const resolveCoveredDeclines = async (db: any) => {
   return matches.length;
 };
 
+/**
+ * Payments under one donor that are linked to another donor's pledge (one check split between brothers).
+ * Pages that load one donor's own payments add these, so the brothers' pledges show as paid.
+ * Returns: donor id (the pledge's donor) → those payments.
+ */
+export const paymentsFromOtherDonors = async (db: any, donorIds: string[]) => {
+  const wanted = new Set(donorIds.map(String).filter(Boolean)); const byDonor = new Map<string, Map<string, any>>();
+  if (!wanted.size) return new Map<string, any[]>();
+  const [split, single] = await db.batch([
+    db.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(p.data,'$.donorId') AS pledge_donor FROM sync_records t, json_each(json_extract(t.data,'$.pledgeAllocations')) a JOIN sync_records p ON p.type='pledges' AND p.is_deleted=0 AND p.id=json_extract(a.value,'$.pledgeId') WHERE t.type='transactions' AND t.is_deleted=0 AND json_type(t.data,'$.pledgeAllocations')='array' AND COALESCE(json_extract(t.data,'$.donorId'),'')<>COALESCE(json_extract(p.data,'$.donorId'),'')"),
+    db.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(p.data,'$.donorId') AS pledge_donor FROM sync_records t JOIN sync_records p ON p.type='pledges' AND p.is_deleted=0 AND p.id=json_extract(t.data,'$.pledgeId') WHERE t.type='transactions' AND t.is_deleted=0 AND COALESCE(json_type(t.data,'$.pledgeAllocations'),'')<>'array' AND COALESCE(json_extract(t.data,'$.donorId'),'')<>COALESCE(json_extract(p.data,'$.donorId'),'')")
+  ]);
+  for (const row of [...(split.results || []), ...(single.results || [])] as any[]) {
+    const donorId = String(row.pledge_donor || ''); if (!wanted.has(donorId)) continue;
+    const list = byDonor.get(donorId) || new Map<string, any>(); list.set(String(row.id), parseRecord(row)); byDonor.set(donorId, list);
+  }
+  return new Map([...byDonor].map(([donorId, list]) => [donorId, [...list.values()]]));
+};
+
 export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: any[], schedulesInput: any[]) => {
   const pledges = [...pledgesInput].filter(item => isoDate(item.date)).sort((left, right) => String(left.date).localeCompare(String(right.date)) || String(left.id).localeCompare(String(right.id)));
   const uniquePayments = uniquePaymentsForAccounting(paymentsInput);
@@ -429,21 +453,24 @@ export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: an
     const nextStart = isoDate(pledges[index + 1]?.date);
     const yearlyEnd = addYear(start);
     const end = nextStart && nextStart < yearlyEnd ? nextStart : yearlyEnd;
+    // A payment linked to this pledge counts even when it is under another donor (one check split between brothers).
+    // A payment with no pledge link counts by its date, only for the same donor.
     const approvedParts = uniquePayments.flatMap(payment => {
-      if (String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
       const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations : [];
       if (allocations.length) return allocations.filter((allocation: any) => String(allocation.pledgeId || '') === String(pledge.id)).map((allocation: any) => ({ ...payment, allocationId: allocation.id, allocatedAmount: Number(allocation.amount || 0), allocatedAmountCAD: Number(allocation.amountCAD ?? allocation.amount ?? 0) }));
       if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
+      if (String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
       const date = isoDate(payment.date);
       return date && date >= start && date < end ? [payment] : [];
     });
     const appliedPayments = approvedParts.filter(Boolean);
     const paid = appliedPayments.reduce((total, payment: any) => total + Number(payment.allocatedAmountCAD ?? payment.amountCAD ?? payment.amount ?? 0), 0);
     const pendingPayments = paymentsInput.flatMap(payment => {
-      if (payment.type !== 'pending' || payment.method === 'check' || payment.isBatch || String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
+      if (payment.type !== 'pending' || payment.method === 'check' || payment.isBatch) return [];
       const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations : [];
       if (allocations.length) return allocations.filter((allocation: any) => String(allocation.pledgeId || '') === String(pledge.id)).map((allocation: any) => ({ ...payment, allocationId: allocation.id, allocatedAmount: Number(allocation.amount || 0), allocatedAmountCAD: Number(allocation.amountCAD ?? allocation.amount ?? 0) }));
       if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
+      if (String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
       const date = isoDate(payment.date);
       return date && date >= start && date < end ? [payment] : [];
     });
@@ -575,7 +602,8 @@ export const loadDonorAccount = async (db: any, donorId: string, today = toronto
   const row = donorRow.results?.[0]; if (!row) return null;
   const donor = parseRecord(row);
   const paymentItems = (payments.results || []).map(parseRecord); const pledgeItems = (pledges.results || []).map(parseRecord);
-  const calculations = calculatePledgeFinancials(pledgeItems, paymentItems, (recurring.results || []).map(parseRecord));
+  const fromOthers = (await paymentsFromOtherDonors(db, [donorId])).get(donorId) || [];
+  const calculations = calculatePledgeFinancials(pledgeItems, [...paymentItems, ...fromOthers], (recurring.results || []).map(parseRecord));
   const year = Number(today.slice(0, 4));
   const pledgeYear = (pledge: any) => Number(String(pledge.periodStart || pledge.date || '').slice(0, 4));
   const thisYear = calculations.filter(pledge => pledgeYear(pledge) === year);
@@ -1219,9 +1247,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (donorIds.length) {
       const placeholders = donorIds.map(() => '?').join(',');
       const related = await c.env.DB.prepare(`SELECT id,type,data,revision,updated_at FROM sync_records WHERE type IN ('pledges','transactions','recurringPayments') AND is_deleted=0 AND json_extract(data,'$.donorId') IN (${placeholders})`).bind(...donorIds).all();
+      const fromOthers = await paymentsFromOtherDonors(c.env.DB, donorIds);
       for (const donorId of donorIds) {
         const donorRecords = related.results.filter((row: any) => String(parseSetting(row.data, {})?.donorId || '') === donorId);
-        const financials = calculatePledgeFinancials(donorRecords.filter((row: any) => row.type === 'pledges').map(parseRecord), donorRecords.filter((row: any) => row.type === 'transactions').map(parseRecord), donorRecords.filter((row: any) => row.type === 'recurringPayments').map(parseRecord));
+        const financials = calculatePledgeFinancials(donorRecords.filter((row: any) => row.type === 'pledges').map(parseRecord), [...donorRecords.filter((row: any) => row.type === 'transactions').map(parseRecord), ...(fromOthers.get(donorId) || [])], donorRecords.filter((row: any) => row.type === 'recurringPayments').map(parseRecord));
         for (const calculation of financials) calculationsById.set(String(calculation.id), calculation);
       }
     }
@@ -1239,7 +1268,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(donorId),
       c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(donorId)
     ]);
-    const financials = calculatePledgeFinancials(pledgeRows.results.map(parseRecord), paymentRows.results.map(parseRecord), scheduleRows.results.map(parseRecord));
+    const fromOthers = (await paymentsFromOtherDonors(c.env.DB, [donorId])).get(donorId) || [];
+    const financials = calculatePledgeFinancials(pledgeRows.results.map(parseRecord), [...paymentRows.results.map(parseRecord), ...fromOthers], scheduleRows.results.map(parseRecord));
     return c.json({ success: true, items: financials.map(({ appliedPayments: _appliedPayments, pendingPayments: _pendingPayments, ...item }) => item).sort((left, right) => Number(left.balance <= 0) - Number(right.balance <= 0) || String(right.date).localeCompare(String(left.date))) });
   });
 
@@ -1261,7 +1291,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(donorId),
       c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(donorId)
     ]);
-    const calculations = calculatePledgeFinancials(allPledges.results.map(parseRecord), allPayments.results.map(parseRecord), allSchedules.results.map(parseRecord));
+    const fromOthers = (await paymentsFromOtherDonors(c.env.DB, [donorId])).get(donorId) || [];
+    const calculations = calculatePledgeFinancials(allPledges.results.map(parseRecord), [...allPayments.results.map(parseRecord), ...fromOthers], allSchedules.results.map(parseRecord));
     const calculation: any = calculations.find(item => String(item.id) === id);
     const item = { ...pledgeData, donorName: pledge.donor_name || 'Unknown Donor' };
     const appliedPayments = [...(calculation?.appliedPayments || [])].sort((left, right) => String(right.date).localeCompare(String(left.date)) || String(right.id).localeCompare(String(left.id)));
@@ -2865,7 +2896,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         if (row.type === 'pledges') group.pledges.push(value); else if (row.type === 'transactions') group.payments.push(value); else group.schedules.push(value);
       }
     }
-    const items = listResult.results.map((row: any) => { const group = recordsByDonor.get(String(row.id)) || { pledges: [], payments: [], schedules: [] }; const openBalance = calculatePledgeFinancials(group.pledges, group.payments, group.schedules).reduce((sum, pledge) => sum + Math.max(0, Number(pledge.balance || 0)), 0); return { ...parseRecord(row), totalGiven: Number(row.total_given || 0), openBalance }; });
+    const fromOthers = await paymentsFromOtherDonors(c.env.DB, donorIds);
+    const items = listResult.results.map((row: any) => { const group = recordsByDonor.get(String(row.id)) || { pledges: [], payments: [], schedules: [] }; const openBalance = calculatePledgeFinancials(group.pledges, [...group.payments, ...(fromOthers.get(String(row.id)) || [])], group.schedules).reduce((sum, pledge) => sum + Math.max(0, Number(pledge.balance || 0)), 0); return { ...parseRecord(row), totalGiven: Number(row.total_given || 0), openBalance }; });
     return c.json({ success: true, items, page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
@@ -2965,7 +2997,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const recurringItems = recurring.results.map(parseRecord);
     const approvedPayments = uniquePaymentsForAccounting(paymentItems);
     const approvedTotal = approvedPayments.reduce((total, payment) => total + Number(payment.amountCAD ?? payment.amount ?? 0), 0);
-    const calculations = calculatePledgeFinancials(pledgeItems, paymentItems, recurringItems);
+    const fromOthers = (await paymentsFromOtherDonors(c.env.DB, [id])).get(id) || [];
+    const calculations = calculatePledgeFinancials(pledgeItems, [...paymentItems, ...fromOthers], recurringItems);
     const calculationsById = new Map(calculations.map(item => [String(item.id), item]));
     const enrichedPledges = pledgeItems.map(pledge => {
       const calculation: any = calculationsById.get(String(pledge.id));

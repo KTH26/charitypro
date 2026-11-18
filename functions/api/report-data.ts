@@ -59,6 +59,13 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
     const pledgesByDonor = new Map<string, any[]>(); const paymentsByDonor = new Map<string, any[]>(); const schedulesByDonor = new Map<string, any[]>();
     const add = (map: Map<string, any[]>, item: any) => { const key = String(item.donorId || ''); map.set(key, [...(map.get(key) || []), item]); };
     list('pledges').forEach(item => add(pledgesByDonor, item)); list('transactions').forEach(item => add(paymentsByDonor, item)); list('recurringPayments').forEach(item => add(schedulesByDonor, item));
+    // A payment linked to another donor's pledge (one check split between brothers) also goes to that donor.
+    const pledgeDonor = new Map(list('pledges').map(item => [String(item.id), String(item.donorId || '')]));
+    for (const item of list('transactions')) {
+      const linked = Array.isArray(item.pledgeAllocations) && item.pledgeAllocations.length ? item.pledgeAllocations.map((entry: any) => String(entry.pledgeId || '')) : item.pledgeId ? [String(item.pledgeId)] : [];
+      const others = new Set(linked.map((id: string) => pledgeDonor.get(id) || '').filter((donorId: string) => donorId && donorId !== String(item.donorId || '')));
+      for (const donorId of others) paymentsByDonor.set(donorId as string, [...(paymentsByDonor.get(donorId as string) || []), item]);
+    }
     const result: any[] = [];
     for (const [donorId, pledges] of pledgesByDonor) result.push(...calculatePledgeFinancials(pledges, paymentsByDonor.get(donorId) || [], schedulesByDonor.get(donorId) || []));
     return result;
