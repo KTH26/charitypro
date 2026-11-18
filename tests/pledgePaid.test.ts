@@ -48,6 +48,13 @@ describe('what a pledge counts as paid', () => {
     expect(calculatePledgeFinancials([pledge('z', 'zalmen', 6000)], [pay('loose', 'moishe', 500)], [])[0].paid).toBe(0);
   });
 
+  it('a payment marked "not for a pledge" (a plain gift) is not counted by its date, but a link by hand still counts', () => {
+    const pledges = [pledge('x', 'd', 5000, '2023-03-01')];
+    expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20', noPledge: true })], [])[0].paid).toBe(0);
+    expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20' })], [])[0].paid).toBe(13000);
+    expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20', noPledge: true, pledgeId: 'x' })], [])[0].paid).toBe(13000);
+  });
+
   it('finds the split check for the brother\'s own page and balance', async () => {
     const db = new MockD1(); databases.push(db);
     put(db, 'donors', { id: 'moishe', name: 'Moishe' }); put(db, 'donors', { id: 'zalmen', name: 'Zalmen' });
