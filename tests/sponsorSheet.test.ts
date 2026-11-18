@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayLabel, dayLetters, defaultLayout, endLine, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, splitBox, titleLine } from '../src/utils/sponsorSheet';
+import { dayLabel, dayLetters, defaultLayout, endLine, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, titleLine } from '../src/utils/sponsorSheet';
 
 const rowsOf = (layout: ReturnType<typeof defaultLayout>) => { const { placed } = placeBoxes(layout); const rows: string[][] = []; for (const box of placed) (rows[box.row] ||= []).push(box.days.map(day => dayLabel(layout, day)).join(',')); return rows; };
 
@@ -33,6 +33,16 @@ describe('monthly sponsor list layout', () => {
     expect(() => mergeBoxes(defaultLayout(30), [0, 1, 2, 3, 4, 5, 6, 7])).toThrow();
     const fixed = normalizeLayout({ boxes: [[1, 1, 2], [40], 'x'] }, 29);
     expect(fixed.boxes.flat().sort((a, b) => a - b)).toEqual(Array.from({ length: 29 }, (_, i) => i + 1));
+  });
+
+  it('text typed by hand goes over the system text, and is kept when the layout is saved', () => {
+    const sponsor = { donorId: 'd', preTitle: "ר'", hebFirstName: 'משה', hebLastName: 'כהן', honoree: 'לע"נ אביו' };
+    expect(shownText(sponsor)).toMatchObject({ title: 'הר"ר', first: 'משה', last: 'כהן', end: 'הי"ו', honoree: 'לע"נ אביו' });
+    expect(shownText(sponsor, { last: 'כהן ובניו', honoree: '' })).toMatchObject({ first: 'משה', last: 'כהן ובניו', honoree: '' });
+    expect(hasText(shownText(null, { first: 'משפחת גרין' }))).toBe(true);
+    expect(hasText(shownText(null))).toBe(false);
+    const saved = normalizeLayout({ boxes: [[1]], texts: { '1': { first: 'אחר', bad: 'x' }, '99': { first: 'no' } }, patronText: { notes: 'יארצייט' } }, 29);
+    expect(saved.texts).toEqual({ '1': { first: 'אחר' } }); expect(saved.patronText).toEqual({ notes: 'יארצייט' });
   });
 
   it('writes the titles like the sheet', () => {

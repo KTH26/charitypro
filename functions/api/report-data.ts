@@ -156,7 +156,10 @@ export const registerReportDataRoutes = (app: any) => {
     const body = await c.req.json().catch(() => ({}));
     const boxes = (Array.isArray(body.boxes) ? body.boxes : []).slice(0, 40).map((box: any) => (Array.isArray(box) ? box : []).map(Number).filter((day: number) => Number.isInteger(day) && day >= 1 && day <= 30).slice(0, 7));
     const labels: Record<string, string> = {}; for (const [key, value] of Object.entries(body.labels || {})) { const text = String(value || '').trim().slice(0, 12); if (text && Number(key) >= 1 && Number(key) <= 30) labels[key] = text; }
-    const layout = { boxes, labels, monthTitle: String(body.monthTitle || '').trim().slice(0, 40), bandMonth: String(body.bandMonth || '').trim().slice(0, 40) };
+    // Text typed by hand over the system text (per box and for the month patron).
+    const cleanText = (raw: any) => { if (!raw || typeof raw !== 'object') return undefined; const out: Record<string, string> = {}; for (const field of ['title', 'first', 'last', 'end', 'honoree', 'notes']) if (typeof raw[field] === 'string') out[field] = raw[field].slice(0, field === 'honoree' ? 400 : 120); return Object.keys(out).length ? out : undefined; };
+    const texts: Record<string, any> = {}; for (const [key, value] of Object.entries(body.texts || {})) { const text = cleanText(value); if (text && Number(key) >= 1 && Number(key) <= 30) texts[key] = text; }
+    const layout = { boxes, labels, monthTitle: String(body.monthTitle || '').trim().slice(0, 40), bandMonth: String(body.bandMonth || '').trim().slice(0, 40), texts, patronText: cleanText(body.patronText) };
     if (body.reset) { await c.env.DB.prepare('DELETE FROM sync_metadata WHERE key=?').bind(`sponsor_sheet_layout_${hebYear}_${hebMonth}`).run(); return c.json({ success: true, layout: null }); }
     await c.env.DB.prepare('INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind(`sponsor_sheet_layout_${hebYear}_${hebMonth}`, JSON.stringify(layout), Date.now()).run();
     return c.json({ success: true, layout });

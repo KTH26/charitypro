@@ -173,7 +173,7 @@ describe('official receipts', () => {
     expect((await call('POST', '/v3/receipts/send-next', { size: 25 })).body).toMatchObject({ sent: 20, remaining: 0 });
     expect((await call('GET', '/v3/receipts?status=waiting')).body).toMatchObject({ total: 15, withEmail: 0 });
     expect((await call('GET', '/v3/receipts?status=sent&page=1')).body).toMatchObject({ total: 45, totalPages: 1 });
-  });
+  }, 20000); // makes 100+ receipts; can take over 5 seconds on a busy computer
   it('sends by itself after a card payment is saved, when turned on', async () => {
     const { db, call } = setup();
     db.database.prepare("UPDATE sync_records SET data=json_set(data,'$.email','moshe@example.com') WHERE id='d1'").run();

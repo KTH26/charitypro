@@ -10,8 +10,14 @@ export type SheetSponsor = {
   donorName?: string; honoree?: string; notes?: string;
 };
 export type SheetDay = SheetSponsor & { day: number };
-/** boxes: the days of each box, in the order they are shown. labels: a day's text on its tab when it was changed. */
-export type SheetLayout = { boxes: number[][]; labels?: Record<string, string>; monthTitle?: string; bandMonth?: string };
+/** The text written in a box (or in the patron box). Any part can be typed over by hand. */
+export type SheetText = { title?: string; first?: string; last?: string; end?: string; honoree?: string; notes?: string };
+export const TEXT_FIELDS = ['title', 'first', 'last', 'end', 'honoree', 'notes'] as const;
+/**
+ * boxes: the days of each box, in the order they are shown. labels: a day's text on its tab when it was changed.
+ * texts: text typed by hand for a box (by the box's first day); patronText: the same for the month patron.
+ */
+export type SheetLayout = { boxes: number[][]; labels?: Record<string, string>; monthTitle?: string; bandMonth?: string; texts?: Record<string, SheetText>; patronText?: SheetText };
 export type PlacedBox = { index: number; days: number[]; row: number; col: number; span: number };
 
 export const PER_ROW = 7;
@@ -32,6 +38,18 @@ export const nameLine = (sponsor: SheetSponsor) => [firstLine(sponsor), lastLine
 /** הי"ו or שליט"א. Default הי"ו. */
 export const endLine = (sponsor: SheetSponsor) => String(sponsor.postTitle || '').trim() || 'הי"ו';
 
+/** The text the system fills in from the booking and the donor. */
+export const systemText = (sponsor: SheetSponsor | null): SheetText => sponsor ? { title: titleLine(sponsor), first: firstLine(sponsor), last: lastLine(sponsor) || (firstLine(sponsor) ? '' : String(sponsor.donorName || '')), end: endLine(sponsor), honoree: String(sponsor.honoree || ''), notes: String(sponsor.notes || '') } : {};
+/** Keeps only the parts typed by hand (an empty part means "leave it empty"). */
+export const cleanText = (raw: any): SheetText | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined; const out: SheetText = {};
+  for (const field of TEXT_FIELDS) if (typeof raw[field] === 'string') out[field] = raw[field].slice(0, field === 'honoree' ? 400 : 120);
+  return Object.keys(out).length ? out : undefined;
+};
+/** What is shown: the system text with the hand-typed parts on top. */
+export const shownText = (sponsor: SheetSponsor | null, typed?: SheetText): SheetText => ({ ...systemText(sponsor), ...(cleanText(typed) || {}) });
+export const hasText = (text: SheetText) => TEXT_FIELDS.some(field => String(text[field] || '').trim());
+
 export const defaultLayout = (daysInMonth: number): SheetLayout => ({ boxes: Array.from({ length: daysInMonth }, (_, index) => [index + 1]) });
 
 /** Makes a saved layout safe: every day once, boxes of at most 7 days, missing days added at the end. */
@@ -45,7 +63,9 @@ export const normalizeLayout = (raw: any, daysInMonth: number): SheetLayout => {
   for (let day = 1; day <= daysInMonth; day++) if (!seen.has(day)) boxes.push([day]);
   const labels: Record<string, string> = {};
   for (const [key, value] of Object.entries(raw?.labels || {})) { const text = String(value || '').trim().slice(0, 12); if (text && Number(key) >= 1 && Number(key) <= daysInMonth) labels[key] = text; }
-  return { boxes, labels, monthTitle: String(raw?.monthTitle || '').trim().slice(0, 40) || undefined, bandMonth: String(raw?.bandMonth || '').trim().slice(0, 40) || undefined };
+  const texts: Record<string, SheetText> = {};
+  for (const [key, value] of Object.entries(raw?.texts || {})) { const text = cleanText(value); if (text && Number(key) >= 1 && Number(key) <= daysInMonth) texts[key] = text; }
+  return { boxes, labels, monthTitle: String(raw?.monthTitle || '').trim().slice(0, 40) || undefined, bandMonth: String(raw?.bandMonth || '').trim().slice(0, 40) || undefined, texts, patronText: cleanText(raw?.patronText) };
 };
 
 /** One box over all the chosen boxes' days, at the place of the first one. At most 7 days in a box. */
