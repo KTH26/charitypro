@@ -6,17 +6,16 @@ export const NotFound: React.FC = () => (
   <div className="page-container" style={{ textAlign: 'center', paddingTop: 80, paddingBottom: 80 }}>
     <div style={{
       fontSize: '6rem',
-      fontFamily: 'Outfit, sans-serif',
-      fontWeight: 800,
+      fontWeight: 600,
       color: 'var(--navy)',
       lineHeight: 1,
-      marginBottom: 16,
+      marginBottom: 12,
       opacity: 0.15,
     }}>
       404
     </div>
     <h1 className="page-title" style={{ marginBottom: 12 }}>Page not found</h1>
-    <p className="page-subtitle" style={{ marginBottom: 32, maxWidth: 400, margin: '0 auto 32px' }}>
+    <p className="page-subtitle" style={{ marginBottom: 20, maxWidth: 400, margin: '0 auto 32px' }}>
       The page you're looking for doesn't exist or may have been moved.
     </p>
     <Link

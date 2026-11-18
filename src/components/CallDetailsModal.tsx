@@ -44,8 +44,8 @@ export const CallDetailsModal: React.FC<{ call: CallRecord; onClose: () => void;
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 680, width: '94%', maxHeight: '92vh', overflowY: 'auto' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>Call with <span dir="auto">{call.donorYiddishName || call.donorName}</span></h2><button type="button" className="modal-close" onClick={onClose}><X size={20} /></button></div>
     <div className="modal-body">
-      {error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
-      <div style={{ display: 'grid', gap: 2, marginBottom: 16 }}>
+      {error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'grid', gap: 2, marginBottom: 12 }}>
         {row('Donor', <>{onOpenDonor ? <button type="button" className="link-button" onClick={() => onOpenDonor(call.donorId)}>{call.donorName}</button> : call.donorName}{call.donorPhone && <> · <a href={`tel:${call.donorPhone}`}>{call.donorPhone}</a></>}</>)}
         {row('Date', call.date)}
         {row('Fundraiser', call.fundraiserName)}
@@ -61,7 +61,7 @@ export const CallDetailsModal: React.FC<{ call: CallRecord; onClose: () => void;
       {editing ? <div style={{ display: 'grid', gap: 12 }}>
         <label className="form-group" style={{ margin: 0 }}><span>Answer</span><select value={outcome} onChange={event => setOutcome(event.target.value)}>{[...CALL_OUTCOMES.map(item => item.value), ...(CALL_OUTCOMES.some(item => item.value === call.outcome) ? [] : [call.outcome])].map(value => <option key={value}>{value}</option>)}</select></label>
         <label className="form-group" style={{ margin: 0 }}><span>Discussion and notes</span><textarea rows={8} value={notes} onChange={event => setNotes(event.target.value)} /></label>
-      </div> : <div><div style={{ fontWeight: 800, color: 'var(--navy)', marginBottom: 6 }}>Discussion and notes</div><div className="call-notes">{call.notes || <span style={{ color: 'var(--text-muted)' }}>No notes.</span>}</div></div>}
+      </div> : <div><div style={{ fontWeight: 600, color: 'var(--navy)', marginBottom: 6 }}>Discussion and notes</div><div className="call-notes">{call.notes || <span style={{ color: 'var(--text-muted)' }}>No notes.</span>}</div></div>}
     </div>
     <div className="modal-footer">{editing ? <><button type="button" className="btn btn-secondary" disabled={saving} onClick={() => { setEditing(false); setOutcome(call.outcome); setNotes(call.notes || ''); }}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save'}</button></> : <>{onDeleted && <button type="button" className="btn btn-danger" disabled={saving} onClick={() => void remove()} style={{ marginRight: 'auto' }}>{saving ? 'Deleting…' : 'Delete call'}</button>}<button type="button" className="btn btn-secondary" onClick={() => setEditing(true)}>Edit notes</button><button type="button" className="btn btn-primary" onClick={onClose}>Close</button></>}</div>
   </div></div>;

@@ -75,7 +75,7 @@ export const OnlineReminders: React.FC = () => {
   const daysInMonth = new Date(month.year, month.month + 1, 0).getDate();
   const byDay = useMemo(() => { const map = new Map<string, Task[]>(); for (const task of tasks) map.set(task.dueDate, [...(map.get(task.dueDate) || []), task]); return map; }, [tasks]);
 
-  return <div className="page page-inner" style={{ display: 'grid', gap: 16 }}>
+  return <div className="page page-inner" style={{ display: 'grid', gap: 12 }}>
     <div className="page-head">
       <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title"><Bell size={24} /> Reminders</h1><div className="page-sub">All scheduled reminders by date. Add or edit them in <Link to="/tasks">Tasks</Link>, a pledge, or a call.</div></div>
       <div className="pay-toggle"><button type="button" className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={14} /> List</button><button type="button" className={view === 'month' ? 'active' : ''} onClick={() => setView('month')}><CalendarDays size={14} /> Month</button></div>
@@ -86,11 +86,11 @@ export const OnlineReminders: React.FC = () => {
         <div><h2 style={{ margin: 0, color: 'var(--navy)' }}>This morning's message</h2><small style={{ color: 'var(--text-muted)' }}>Sent every morning by email and/or text. Choose who gets it in <Link to="/settings">Settings → Email & text messages</Link>.</small></div>
         <button type="button" className="btn btn-primary" disabled={sending || !digest?.items.length} onClick={() => void sendNow()}><Send size={15} /> {sending ? 'Sending…' : 'Send it now'}</button>
       </div>
-      {message && <div style={{ fontWeight: 700, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
+      {message && <div style={{ fontWeight: 600, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
       <pre className="rem-preview">{digest ? (digest.text || 'Nothing for today.') : 'Loading…'}</pre>
     </section>
 
-    {view === 'list' ? <section className="card" style={{ display: 'grid', gap: 14 }}>
+    {view === 'list' ? <section className="card" style={{ display: 'grid', gap: 10 }}>
       {groups.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No reminders in the next 90 days.</div>}
       {groups.map(([key, items]) => <div key={key} className="rem-group"><h3 className={key === 'overdue' ? 'rem-late-title' : key === today ? 'rem-today-title' : ''}>{key === 'overdue' ? `Not done yet (from before today) – ${items.length}` : key === today ? `Today – ${nice(key)}` : nice(key)}</h3>{items.map(row)}</div>)}
     </section> : <section className="card" style={{ display: 'grid', gap: 10 }}>

@@ -41,7 +41,7 @@ export const StripeCardBox: React.FC<{ onReady: (handle: StripeHandle | null) =>
     <div ref={mount} className="stripe-card-box" />
     {state === 'loading' && <small className="pay-note">Loading the secure Stripe card box…</small>}
     {testMode && <small className="pay-note" style={{ color: '#b45309' }}>Stripe test mode: no real money is charged.</small>}
-    {message && <small style={{ color: 'var(--red)', fontWeight: 700 }}>{message}</small>}
+    {message && <small style={{ color: 'var(--red)', fontWeight: 600 }}>{message}</small>}
     <small className="pay-note">Charged in US dollars through Stripe. The card number goes straight to Stripe and is not saved.</small>
   </div>;
 };
@@ -63,7 +63,7 @@ export const StripeSettingsPanel: React.FC = () => {
       <label className="form-group"><span>Publishable key</span><input value={publishableKey} onChange={event => setPublishableKey(event.target.value)} placeholder="pk_live_…" /></label>
       <label className="form-group"><span>Secret key {status?.secretSaved && <small>(saved)</small>}</span><input type="password" autoComplete="off" value={secretKey} onChange={event => setSecretKey(event.target.value)} placeholder="sk_live_…" /></label>
     </div>
-    {message && <div style={{ fontWeight: 700, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
+    {message && <div style={{ fontWeight: 600, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
     <div><button className="btn btn-primary" onClick={() => void save()}>Save Stripe</button></div>
   </section>;
 };

@@ -36,7 +36,7 @@ export const SendStatementModal: React.FC<{ donorId: string; onClose: () => void
 
   return <div className="modal-overlay" onClick={onClose} style={{ zIndex: 1200 }}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 820, width: '96%', maxHeight: '96vh', overflowY: 'auto' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>Send statement{statement ? ` – ${statement.name}` : ''}</h2><button className="modal-close" onClick={onClose}><X size={20} /></button></div>
-    <div className="modal-body" style={{ display: 'grid', gap: 14 }}>
+    <div className="modal-body" style={{ display: 'grid', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div className="pay-toggle">{([['year', `This year (${year})`], ['dates', 'From a date'], ['all', 'All years']] as const).map(([value, label]) => <button type="button" key={value} className={period === value ? 'active' : ''} onClick={() => setPeriod(value)}>{label}</button>)}</div>
         {period === 'dates' && <><label className="form-group" style={{ margin: 0 }}><span>From</span><input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label className="form-group" style={{ margin: 0 }}><span>To</span><input type="date" value={to} onChange={event => setTo(event.target.value)} /></label></>}
@@ -53,7 +53,7 @@ export const SendStatementModal: React.FC<{ donorId: string; onClose: () => void
         <label className="msg-check"><input type="checkbox" checked={attachPdf} onChange={event => setAttachPdf(event.target.checked)} /> Also attach it as a PDF</label>
         {statement && <iframe title="Statement preview" className="stmt-preview" srcDoc={statement.html} />}
       </> : <label className="form-group" style={{ margin: 0 }}><span>Text (you can change it)</span><textarea rows={4} value={text} onChange={event => setText(event.target.value)} maxLength={1500} /></label>}
-      {message && <div style={{ fontWeight: 700, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
+      {message && <div style={{ fontWeight: 600, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
     </div>
     <div className="modal-footer"><button className="btn btn-secondary" onClick={onClose}>Close</button><button className="btn btn-primary" disabled={sending || !statement || !recipient.trim()} onClick={() => void send()}>{sending ? 'Sending…' : channel === 'email' ? 'Send email' : 'Send text'}</button></div>
   </div></div>;

@@ -47,14 +47,14 @@ export const CloudNewTransferModal: React.FC<{ onClose: () => void; onSaved: (tr
   };
   return <div className="modal-overlay" onClick={onClose}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={save} style={{ maxWidth: 600, width: '94%' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>New Transfer Between Accounts</h2><button type="button" className="modal-close" onClick={onClose}><X size={20} /></button></div>
-    <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
+    <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}
       <div className="form-grid-2">
         <label className="form-group" style={{ margin: 0 }}><span>From account *</span><select value={form.fromAccountId} onChange={event => set('fromAccountId', event.target.value)}><option value="">Money comes out of…</option>{options(form.toAccountId)}</select></label>
         <label className="form-group" style={{ margin: 0 }}><span>To account *</span><select value={form.toAccountId} onChange={event => set('toAccountId', event.target.value)}><option value="">Money goes into…</option>{options(form.fromAccountId)}</select></label>
         <label className="form-group" style={{ margin: 0 }}><span>Amount {from ? `(${from.currency})` : ''} *</span><input type="number" min="0.01" step="0.01" value={form.amount} onChange={event => set('amount', event.target.value)} /></label>
         <label className="form-group" style={{ margin: 0 }}><span>Date *</span><input type="date" value={form.date} onChange={event => set('date', event.target.value)} /></label>
         <div style={{ gridColumn: '1 / -1' }}><LoanDueDateField account={from} value={form.loanDueDate} onChange={value => set('loanDueDate', value)} /></div>
-        {to && isLoanAccount(to) && <div style={{ gridColumn: '1 / -1', padding: '10px 12px', borderRadius: 10, background: 'var(--bg-input)', color: 'var(--green)', fontWeight: 700, fontSize: 13 }}>This pays back the loan “{to.name}”. It goes toward the earliest amount owed first.</div>}
+        {to && isLoanAccount(to) && <div style={{ gridColumn: '1 / -1', padding: '10px 12px', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--green)', fontWeight: 600, fontSize: 13 }}>This pays back the loan “{to.name}”. It goes toward the earliest amount owed first.</div>}
         <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Notes</span><textarea rows={2} maxLength={2000} value={form.notes} onChange={event => set('notes', event.target.value)} placeholder="Optional" /></label>
       </div>
     </div>

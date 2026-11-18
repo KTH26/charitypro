@@ -103,34 +103,34 @@ export const OnlineFundraisers: React.FC = () => {
       <button type="button" role="tab" aria-selected={tab === 'fundraisers'} className={tab === 'fundraisers' ? 'active' : ''} onClick={() => setTab('fundraisers')}>Fundraisers ({fundraisers.length})<small>Name, commission %, and balance</small></button>
       <button type="button" role="tab" aria-selected={tab === 'teams'} className={tab === 'teams' ? 'active' : ''} onClick={() => setTab('teams')}>Teams ({teams.length})<small>Fundraisers who share a pledge</small></button>
     </div>
-    {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 700, marginBottom: 14 }}>{notice}</div>}
-    {error && !editing && !editingTeam && !paying && <div className="card" style={{ padding: 14, color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
+    {notice && <div className="card" style={{ padding: 12, color: 'var(--green)', fontWeight: 600, marginBottom: 10 }}>{notice}</div>}
+    {error && !editing && !editingTeam && !paying && <div className="card" style={{ padding: 12, color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}
 
     {tab === 'fundraisers' && <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: 14, borderBottom: '1px solid var(--border)' }}><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search fundraisers" /></div>
-      {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading fundraisers…</div> : <div className="table-container"><table><thead><tr><th>Name</th><th>Phone</th><th style={{ textAlign: 'right' }}>Commission</th><th style={{ textAlign: 'right' }}>Raised</th><th style={{ textAlign: 'right' }}>Earned</th><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>We owe</th><th /></tr></thead><tbody>
+      <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search fundraisers" /></div>
+      {loading ? <div style={{ padding: 24, textAlign: 'center' }}>Loading fundraisers…</div> : <div className="table-container"><table><thead><tr><th>Name</th><th>Phone</th><th style={{ textAlign: 'right' }}>Commission</th><th style={{ textAlign: 'right' }}>Raised</th><th style={{ textAlign: 'right' }}>Earned</th><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>We owe</th><th /></tr></thead><tbody>
         {shown.map(item => <tr key={item.id}>
-          <td style={{ fontWeight: 800 }}>{item.name}</td><td>{item.phone ? <a href={`tel:${item.phone}`}>{item.phone}</a> : '—'}</td>
+          <td style={{ fontWeight: 600 }}>{item.name}</td><td>{item.phone ? <a href={`tel:${item.phone}`}>{item.phone}</a> : '—'}</td>
           <td style={{ textAlign: 'right' }}>{Number(item.percentage || 0)}%</td><td style={{ textAlign: 'right' }}>{money(item.totalRaised)}</td><td style={{ textAlign: 'right' }}>{money(item.commissionEarned)}</td><td style={{ textAlign: 'right' }}>{money(item.commissionPaid)}</td>
-          <td style={{ textAlign: 'right', fontWeight: 900, color: Number(item.balanceOwed || 0) > 0.005 ? 'var(--red)' : 'var(--green)' }}>{money(item.balanceOwed)}</td>
+          <td style={{ textAlign: 'right', fontWeight: 600, color: Number(item.balanceOwed || 0) > 0.005 ? 'var(--red)' : 'var(--green)' }}>{money(item.balanceOwed)}</td>
           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><button className="btn btn-secondary btn-sm" onClick={() => { setError(''); setEditing(item); }}>Edit</button> <button className="btn btn-primary btn-sm" disabled={Number(item.balanceOwed || 0) < 0.005} onClick={() => { setError(''); setPaying(item); }}>Pay</button></td>
         </tr>)}
-        {!shown.length && <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center' }}>{fundraisers.length ? 'No fundraiser matches this search.' : 'No fundraisers yet. Click "New Fundraiser" to add the first one.'}</td></tr>}
+        {!shown.length && <tr><td colSpan={8} style={{ padding: 20, textAlign: 'center' }}>{fundraisers.length ? 'No fundraiser matches this search.' : 'No fundraisers yet. Click "New Fundraiser" to add the first one.'}</td></tr>}
       </tbody></table></div>}
     </section>}
 
     {tab === 'teams' && <section className="card" style={{ padding: 0, overflow: 'hidden' }}><div className="table-container"><table><thead><tr><th>Team</th><th>Fundraisers and their share</th><th style={{ textAlign: 'right' }}>Total</th><th /></tr></thead><tbody>
       {teams.map(team => { const total = team.allocations.reduce((sum, item) => sum + Number(item.percentage || 0), 0); return <tr key={team.id}>
-        <td style={{ fontWeight: 800 }}>{team.name}</td><td>{team.allocations.map(item => `${nameOf(item.fundraiserId)} ${Number(item.percentage)}%`).join(' · ') || '—'}</td><td style={{ textAlign: 'right', fontWeight: 800 }}>{total}%</td>
+        <td style={{ fontWeight: 600 }}>{team.name}</td><td>{team.allocations.map(item => `${nameOf(item.fundraiserId)} ${Number(item.percentage)}%`).join(' · ') || '—'}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{total}%</td>
         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><button className="btn btn-secondary btn-sm" onClick={() => { setError(''); setEditingTeam({ ...team, allocations: team.allocations.map(item => ({ ...item })) }); }}>Edit</button> <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => void deleteTeam(team)}>Delete</button></td>
       </tr>; })}
-      {!teams.length && <tr><td colSpan={4} style={{ padding: 30, textAlign: 'center' }}>No teams yet. A team is a group of fundraisers who share a pledge, for example Yossi 5% and Moshe 5%.</td></tr>}
+      {!teams.length && <tr><td colSpan={4} style={{ padding: 20, textAlign: 'center' }}>No teams yet. A team is a group of fundraisers who share a pledge, for example Yossi 5% and Moshe 5%.</td></tr>}
     </tbody></table></div></section>}
     </div>
 
     {editing && <div className="modal-overlay" onClick={() => setEditing(null)}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={saveFundraiser} style={{ maxWidth: 560, width: '94%' }}>
       <div className="modal-header"><h2 style={{ margin: 0 }}>{editing.id ? 'Edit Fundraiser' : 'New Fundraiser'}</h2><button type="button" className="modal-close" onClick={() => setEditing(null)}><X size={20} /></button></div>
-      <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}<div className="form-grid-2">
+      <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}<div className="form-grid-2">
         <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Name *</span><input autoFocus value={editing.name || ''} onChange={event => setEditing({ ...editing, name: event.target.value })} /></label>
         <label className="form-group" style={{ margin: 0 }}><span>Phone</span><input value={editing.phone || ''} onChange={event => setEditing({ ...editing, phone: event.target.value })} /></label>
         <label className="form-group" style={{ margin: 0 }}><span>Email</span><input type="email" value={editing.email || ''} onChange={event => setEditing({ ...editing, email: event.target.value })} /></label>
@@ -142,7 +142,7 @@ export const OnlineFundraisers: React.FC = () => {
 
     {editingTeam && <div className="modal-overlay" onClick={() => setEditingTeam(null)}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={saveTeam} style={{ maxWidth: 620, width: '94%' }}>
       <div className="modal-header"><h2 style={{ margin: 0 }}><Users size={18} style={{ verticalAlign: -3 }} /> {editingTeam.id ? 'Edit Team' : 'New Team'}</h2><button type="button" className="modal-close" onClick={() => setEditingTeam(null)}><X size={20} /></button></div>
-      <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}<div style={{ display: 'grid', gap: 14 }}>
+      <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}<div style={{ display: 'grid', gap: 10 }}>
         <label className="form-group" style={{ margin: 0 }}><span>Team name *</span><input autoFocus value={editingTeam.name || ''} onChange={event => setEditingTeam({ ...editingTeam, name: event.target.value })} placeholder="For example: Yossi and Moshe" /></label>
         <FundraiserAllocationEditor fundraisers={fundraisers} value={editingTeam.allocations || []} onChange={allocations => setEditingTeam({ ...editingTeam, allocations })} />
       </div></div>
@@ -177,14 +177,14 @@ const PayFundraiserModal: React.FC<{ fundraiser: Fundraiser; accounts: Account[]
   };
   return <div className="modal-overlay" onClick={onClose}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={save} style={{ maxWidth: 580, width: '94%' }}>
     <div className="modal-header"><div><h2 style={{ margin: 0 }}>Pay {fundraiser.name}</h2><div style={{ color: 'var(--text-muted)', fontSize: 13 }}>We owe him <strong style={{ color: 'var(--red)' }}>{money(owed)}</strong></div></div><button type="button" className="modal-close" onClick={onClose}><X size={20} /></button></div>
-    <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}<div className="form-grid-2">
+    <div className="modal-body">{error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}<div className="form-grid-2">
       <label className="form-group" style={{ margin: 0 }}><span>Amount *</span><input type="number" min="0.01" step="0.01" value={form.amount} onChange={event => setForm({ ...form, amount: event.target.value })} /></label>
       <label className="form-group" style={{ margin: 0 }}><span>Date *</span><input type="date" value={form.date} onChange={event => setForm({ ...form, date: event.target.value })} /></label>
       <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Paid from *</span><select value={form.sourceAccountId} onChange={event => setForm({ ...form, sourceAccountId: event.target.value })}><option value="">Choose an account</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.name} ({account.currency})</option>)}</select></label>
       <div style={{ gridColumn: '1 / -1' }}><LoanDueDateField account={source} value={form.loanDueDate} onChange={value => setForm({ ...form, loanDueDate: value })} /></div>
       <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Memo</span><input value={form.memo} onChange={event => setForm({ ...form, memo: event.target.value })} placeholder="Optional, for example check number" /></label>
     </div>
-    {history.length > 0 && <div style={{ marginTop: 16 }}><div style={{ fontWeight: 800, color: 'var(--navy)', marginBottom: 6 }}>Earlier payments</div>{history.slice(0, 8).map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid var(--border)' }}><span>{item.date}{item.memo ? ` · ${item.memo}` : ''}</span><strong>{money(item.amount)}</strong></div>)}</div>}
+    {history.length > 0 && <div style={{ marginTop: 12 }}><div style={{ fontWeight: 600, color: 'var(--navy)', marginBottom: 6 }}>Earlier payments</div>{history.slice(0, 8).map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid var(--border)' }}><span>{item.date}{item.memo ? ` · ${item.memo}` : ''}</span><strong>{money(item.amount)}</strong></div>)}</div>}
     </div>
     <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Payment'}</button></div>
   </form></div>;

@@ -25,7 +25,7 @@ const BookModal: React.FC<{ initial: CalendarSlot[]; onClose: () => void; onSave
   };
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 640, width: '94%' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>Book calendar dates</h2><button className="modal-close" onClick={onClose}><X size={20} /></button></div>
-    <div className="modal-body" style={{ display: 'grid', gap: 14 }}>
+    <div className="modal-body" style={{ display: 'grid', gap: 10 }}>
       {error && <div className="pay-error">{error}</div>}
       <div className="form-group" style={{ margin: 0 }}><span>Donor</span><DonorPicker value={donor} onChange={setDonor} autoFocus /></div>
       <div className="form-group" style={{ margin: 0 }}><span>Dates</span><div className="hcal-chips">{slots.map(slot => <span key={slotId(slot)} className="hcal-chip" dir="rtl">{slotLabel(slot)}</span>)}{!slots.length && <small style={{ color: 'var(--text-muted)' }}>No dates yet.</small>}</div><button type="button" className="btn btn-secondary btn-sm" style={{ justifySelf: 'start', marginTop: 6 }} onClick={() => setPicking(true)}><CalendarDays size={14} /> Choose dates…</button></div>
@@ -53,7 +53,7 @@ const DetailsModal: React.FC<{ item: Dedication; onClose: () => void; onSaved: (
     <div className="modal-header"><h2 style={{ margin: 0 }} dir="rtl">{slotLabel(item)}</h2><button className="modal-close" onClick={onClose}><X size={20} /></button></div>
     <div className="modal-body" style={{ display: 'grid', gap: 12 }}>
       {error && <div className="pay-error">{error}</div>}
-      <div><strong style={{ fontSize: 18 }} dir="rtl">{name(item)}</strong>{item.donorYiddishName && <div style={{ color: 'var(--text-muted)' }}>{item.donorName}</div>}</div>
+      <div><strong style={{ fontSize: 15 }} dir="rtl">{name(item)}</strong>{item.donorYiddishName && <div style={{ color: 'var(--text-muted)' }}>{item.donorName}</div>}</div>
       <div style={{ color: 'var(--text-muted)' }}>{item.kind === 'month' ? 'Whole month' : `English date: ${item.date}`}{item.pledgeId ? ' · Booked with a pledge' : ''}</div>
       <label className="form-group" style={{ margin: 0 }}><span>Name to show (in honor / in memory of)</span><input dir="auto" value={honoree} onChange={event => setHonoree(event.target.value)} maxLength={300} /></label>
       <label className="form-group" style={{ margin: 0 }}><span>Second line on the sponsor list (e.g. יארצייט כ"ד אלול)</span><input dir="auto" value={notes} onChange={event => setNotes(event.target.value)} maxLength={300} /></label>
@@ -85,16 +85,16 @@ export const OnlineCalendar: React.FC = () => {
       <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Calendar <span dir="rtl">{hebYearText(view.year)}</span></h1><div className="page-sub">{daysBooked} of {totalDays} days taken · {items.filter(item => item.kind === 'month').length} of {months.length} months sponsored</div></div>
       <div style={{ display: 'flex', gap: 8 }}><a className="btn btn-secondary" href={`/calendar/sponsor-sheet?year=${view.year}&month=${view.month}`}><Printer size={16} /> Print sponsor list</a><button className="btn btn-primary" onClick={() => setBooking([])}><Plus size={16} /> Book dates</button></div>
     </div>
-    {error && <div className="card pay-error" style={{ padding: 14 }}>{error}</div>}
+    {error && <div className="card pay-error" style={{ padding: 12 }}>{error}</div>}
     <div className="hcal-page">
-      <section className="card" style={{ padding: 18 }}>
+      <section className="card" style={{ padding: 12 }}>
         <MonthNav year={view.year} month={view.month} onChange={(month, year) => setView({ month, year })} />
         <HebrewMonthGrid big year={view.year} month={view.month} booked={byId} onDay={onDay} onMonth={onMonth} />
-        <div style={{ marginTop: 16 }}><h3 style={{ margin: '0 0 8px', color: 'var(--navy)' }}>Days taken this month ({inMonth.length})</h3>
+        <div style={{ marginTop: 12 }}><h3 style={{ margin: '0 0 8px', color: 'var(--navy)' }}>Days taken this month ({inMonth.length})</h3>
           {inMonth.length ? <div className="hcal-list">{inMonth.map(item => <button key={item.id} type="button" onClick={() => setDetails(item)}><span dir="rtl" className="hcal-list-date">{slotLabel(item)}</span><strong dir="rtl">{name(item)}</strong><small dir="auto">{item.honoree}</small></button>)}</div> : <small style={{ color: 'var(--text-muted)' }}>No days taken yet. Click a day to book it.</small>}
         </div>
       </section>
-      <aside className="card" style={{ padding: 18 }}>
+      <aside className="card" style={{ padding: 12 }}>
         <h3 style={{ margin: '0 0 10px', color: 'var(--navy)' }}>Month sponsors <span dir="rtl">{hebYearText(view.year)}</span></h3>
         <div className="hcal-sponsors">{months.map(month => { const sponsor = byId.get(slotId({ kind: 'month', hebYear: view.year, hebMonth: month.month })); const daysTaken = items.filter(item => item.kind === 'day' && item.hebMonth === month.month).length; return <button key={month.month} type="button" className={month.month === view.month ? 'active' : ''} onClick={() => setView({ month: month.month, year: view.year })}>
           <span dir="rtl" className="hcal-sponsor-month">{month.he}</span>

@@ -36,7 +36,7 @@ export const MessagingSettingsPanel: React.FC = () => {
   return <section className="card msg-settings" style={{ gridColumn: '1 / -1' }}>
     <h2 style={{ margin: 0, color: 'var(--navy)' }}><Send size={20} /> Email & text messages</h2>
     <p style={{ margin: 0, color: 'var(--text-muted)' }}>Used for reminders, statements, official receipts and the balance text number.</p>
-    {message && <div style={{ fontWeight: 700, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
+    {message && <div style={{ fontWeight: 600, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
 
     <div className="msg-grid">
       <div className="msg-box">

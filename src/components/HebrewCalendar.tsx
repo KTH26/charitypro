@@ -113,7 +113,7 @@ export const HebrewCalendarPicker: React.FC<{
       <div className="hcal-chips">{chosen.length ? chosen.map(slot => <span key={slotId(slot)} className="hcal-chip" dir="rtl">{slotLabel(slot)}<button type="button" onClick={() => setChosen(currentSlots => currentSlots.filter(item => slotId(item) !== slotId(slot)))}>×</button></span>) : <small style={{ color: 'var(--text-muted)' }}>Nothing chosen yet.</small>}</div>
       <label className="form-group" style={{ margin: 0 }}><span>Name to show on these dates (in honor / in memory of)</span><input dir="auto" value={honoree} onChange={event => setHonoree(event.target.value)} placeholder="לעילוי נשמת ר׳ ... בן ..." maxLength={300} /></label>
     </div>
-    <div className="modal-footer"><span style={{ marginRight: 'auto', color: 'var(--text-muted)', fontWeight: 700 }}>{days} day{days === 1 ? '' : 's'}{months ? `, ${months} month${months === 1 ? '' : 's'}` : ''}</span><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" onClick={() => onDone(chosen, honoree.trim())}>Done</button></div>
+    <div className="modal-footer"><span style={{ marginRight: 'auto', color: 'var(--text-muted)', fontWeight: 600 }}>{days} day{days === 1 ? '' : 's'}{months ? `, ${months} month${months === 1 ? '' : 's'}` : ''}</span><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" onClick={() => onDone(chosen, honoree.trim())}>Done</button></div>
   </div></div>;
 };
 

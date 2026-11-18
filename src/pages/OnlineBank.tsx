@@ -567,7 +567,7 @@ export const OnlineBank: React.FC = () => {
           <div className="page-sub">Plaid feed with cloud-owned match history. Match state updates automatically every 3 seconds.</div>
         </div>
         {accounts.length === 0 && !loading && (
-          <div className="card" style={{ padding: 24, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+          <div className="card" style={{ padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <span>No connected cloud bank was found.</span>
             <button className="btn btn-primary" onClick={() => void beginBankConnection("add")}>
               + Add New Bank
@@ -575,14 +575,14 @@ export const OnlineBank: React.FC = () => {
           </div>
         )}
         {accounts.length > 0 && (
-          <section className="card" style={{ padding: 18, marginBottom: 18 }}>
+          <section className="card" style={{ padding: 12, marginBottom: 12 }}>
             <div
               style={{
                 display: "flex",
                 gap: 8,
                 overflowX: "auto",
                 paddingBottom: 14,
-                marginBottom: 14,
+                marginBottom: 10,
                 borderBottom: "1px solid var(--border)",
               }}
             >
@@ -614,7 +614,7 @@ export const OnlineBank: React.FC = () => {
               ))}
               <button className="btn btn-secondary" style={{whiteSpace:'nowrap'}} disabled={loading} onClick={()=>void beginBankConnection('add')}>+ Add New Bank</button>
             </div>
-            {selectedAccount&&!selectedAccount.bankConnected&&<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,padding:14,marginBottom:14,border:'1px solid var(--red)',borderRadius:10,background:'var(--red-bg)'}}><div><strong style={{color:'var(--red)'}}>This bank is disconnected.</strong><div style={{fontSize:13,color:'var(--text-muted)'}}>Reconnect it securely before syncing new transactions.</div></div><button className="btn btn-primary" disabled={loading} onClick={()=>void beginBankConnection('reconnect',selectedAccount.id)}>{loading&&connectionMode==='reconnect'&&connectionAccountId===selectedAccount.id?'Opening Plaid...':'Reconnect Bank'}</button></div>}
+            {selectedAccount&&!selectedAccount.bankConnected&&<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,padding:12,marginBottom:10,border:'1px solid var(--red)',borderRadius:8,background:'var(--red-bg)'}}><div><strong style={{color:'var(--red)'}}>This bank is disconnected.</strong><div style={{fontSize:13,color:'var(--text-muted)'}}>Reconnect it securely before syncing new transactions.</div></div><button className="btn btn-primary" disabled={loading} onClick={()=>void beginBankConnection('reconnect',selectedAccount.id)}>{loading&&connectionMode==='reconnect'&&connectionAccountId===selectedAccount.id?'Opening Plaid...':'Reconnect Bank'}</button></div>}
             <div
               style={{
                 display: "grid",
@@ -648,7 +648,7 @@ export const OnlineBank: React.FC = () => {
               className="card"
               onClick={(event) => event.stopPropagation()}
               style={{
-                padding: 22,
+                padding: 14,
                 border: "2px solid var(--green)",
                 width: "min(920px,94vw)",
                 maxHeight: "90vh",
@@ -661,7 +661,7 @@ export const OnlineBank: React.FC = () => {
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  gap: 16,
+                  gap: 12,
                 }}
               >
                 <div>
@@ -680,7 +680,7 @@ export const OnlineBank: React.FC = () => {
                   Close
                 </button>
               </div>
-              <label className="form-group" style={{ marginTop: 16 }}>
+              <label className="form-group" style={{ marginTop: 12 }}>
                 <span>What is this deposit?</span>
                 <select
                   value={depositAction}
@@ -700,7 +700,7 @@ export const OnlineBank: React.FC = () => {
               </label>
               {depositAction === "payments" && (
                 <>
-                  <div className="pay-toggle" style={{ marginTop: 14 }} role="group" aria-label="Match to">
+                  <div className="pay-toggle" style={{ marginTop: 10 }} role="group" aria-label="Match to">
                     {([["cards", "Card payments (Sola)"], ["checks", "Checks, E-Transfers & Wires"]] as const).map(([value, label]) => (
                       <button key={value} type="button" className={depositSource === value ? "active" : ""} onClick={() => { setDepositSource(value); setSelectedIds([]); setCandidates([]); if (matching) void loadDepositCandidates(matching, undefined, undefined, value).catch((reason) => setError(reason.message)); }}>{label}</button>
                     ))}
@@ -714,7 +714,7 @@ export const OnlineBank: React.FC = () => {
                       margin: "16px 0",
                       padding: 12,
                       background: "var(--bg-input)",
-                      borderRadius: 10,
+                      borderRadius: 8,
                     }}
                   >
                     <label className="form-group" style={{ margin: 0 }}>
@@ -774,7 +774,7 @@ export const OnlineBank: React.FC = () => {
                       maxHeight: 390,
                       overflow: "auto",
                       border: "1px solid var(--border)",
-                      borderRadius: 10,
+                      borderRadius: 8,
                     }}
                   >
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -798,7 +798,7 @@ export const OnlineBank: React.FC = () => {
                             <td>{candidate.date}</td>
                             <td>{candidate.donorName}</td>
                             <td>{candidate.checkState ? <>{({ check: "Check", e_transfer: "E-Transfer", wire: "Wire", ach: "ACH" } as Record<string, string>)[candidate.method] || candidate.method}{candidate.checkNumber ? ` #${candidate.checkNumber}` : ""} <span className={`badge ${candidate.checkState === "waiting" ? "badge-yellow" : "badge-green"}`}>{candidate.checkState === "waiting" ? "waiting" : "in bank"}</span></> : candidate.method}</td>
-                            <td style={{ textAlign: "right", fontWeight: 800 }}>${Number(candidate.amountCAD ?? candidate.amount).toFixed(2)}</td>
+                            <td style={{ textAlign: "right", fontWeight: 600 }}>${Number(candidate.amountCAD ?? candidate.amount).toFixed(2)}</td>
                           </tr>
                         ))}
                         {candidates.length === 0 && (
@@ -819,7 +819,7 @@ export const OnlineBank: React.FC = () => {
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      marginTop: 16,
+                      marginTop: 12,
                     }}
                   >
                     <button className="btn btn-secondary" onClick={() => setShowMissingPayment(true)}>
@@ -857,7 +857,7 @@ export const OnlineBank: React.FC = () => {
                 const money = (value: number) => "$" + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 const shown = [...refundSelected, ...refundCandidates.filter((bill) => !selectedIds.has(bill.id))];
                 return (
-                  <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
+                  <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span>Find the expenses this refund is for</span>
                       <input value={refundSearch} onChange={(event) => setRefundSearch(event.target.value)} placeholder="Search by vendor, category, memo, amount, or date" autoFocus />
@@ -870,7 +870,7 @@ export const OnlineBank: React.FC = () => {
                           <span className="refund-pick-amount">{bill.currency || "CAD"} {money(Math.abs(Number(bill.amount)))}{Math.abs(bill.refundableAmount - Math.abs(Number(bill.amount))) >= 0.005 && <small>{money(bill.refundableAmount)} left to refund</small>}</span>
                         </label>
                       ))}
-                      {!shown.length && <div style={{ padding: 16, color: "var(--text-muted)" }}>{refundLoading ? "Searching..." : "No paid expense matches this search."}</div>}
+                      {!shown.length && <div style={{ padding: 12, color: "var(--text-muted)" }}>{refundLoading ? "Searching..." : "No paid expense matches this search."}</div>}
                     </div>
                     <div className={"refund-pick-total" + (ready ? " ok" : "")}>
                       <div><span>Selected ({refundSelected.length})</span><strong>{money(selectedTotal)}</strong></div>
@@ -878,7 +878,7 @@ export const OnlineBank: React.FC = () => {
                       <div><span>{short >= 0.005 ? "Still missing" : short <= -0.005 ? "Selected more by" : "Difference"}</span><strong>{money(Math.abs(short))}</strong></div>
                     </div>
                     {short <= -0.005 && extra.length === 0 && <small style={{ color: "var(--text-muted)" }}>The selected expenses add up to more than the refund. The last one you checked will be only partly refunded.</small>}
-                    {extra.length > 0 && <small style={{ color: "var(--red)", fontWeight: 700 }}>The refund is already covered without {extra.join(", ")}. Uncheck it.</small>}
+                    {extra.length > 0 && <small style={{ color: "var(--red)", fontWeight: 600 }}>The refund is already covered without {extra.join(", ")}. Uncheck it.</small>}
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
                       <button className="btn btn-secondary" onClick={() => setMatching(null)}>Cancel</button>
                       <button className="btn btn-primary" disabled={!ready || saving} onClick={() => void confirmRefund()}>
@@ -892,7 +892,7 @@ export const OnlineBank: React.FC = () => {
                 const source = transferAccounts.find((account) => account.id === transferInSourceId);
                 const groups: [string, string][] = [["liability", "Loans & credit cards"], ["asset", "Bank & cash"], ["equity", "Equity"]];
                 return (
-                  <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
+                  <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span>Money came from *</span>
                       <select value={transferInSourceId} onChange={(event) => setTransferInSourceId(event.target.value)}>
@@ -913,7 +913,7 @@ export const OnlineBank: React.FC = () => {
                   </div>
                 );
               })()}
-              {depositAction === "transfer"&&<div style={{display:'grid',gap:16,marginTop:16}}><label className="form-group" style={{margin:0}}><span>Payment made from bank account *</span><select value={incomingTransferId} onChange={event=>setIncomingTransferId(event.target.value)}><option value="">Select matching bank payment from any account</option>{incomingTransferCandidates.map(item=><option key={item.id} value={item.id}>{item.sourceName} — ${Number(item.amount).toFixed(2)} — {item.date}{(item.notes||item.description)?` — ${item.notes||item.description}`:''}{item.candidateKind==='bankFeed'?' — Unmatched bank transaction':''}</option>)}</select></label>{!incomingTransferCandidates.length&&<div style={{color:'var(--text-muted)'}}>No unmatched outgoing payment with this exact amount was found in any saved bank feed, and no existing transfer to this card was found.</div>}<div style={{display:'flex',justifyContent:'flex-end',gap:10}}><button className="btn btn-secondary" onClick={()=>setMatching(null)}>Cancel</button><button className="btn btn-primary" disabled={!incomingTransferId||saving} onClick={()=>void confirmIncomingTransfer()}>{saving?'Matching securely...':'Match Credit-Card Payment'}</button></div></div>}
+              {depositAction === "transfer"&&<div style={{display:'grid',gap:12,marginTop:12}}><label className="form-group" style={{margin:0}}><span>Payment made from bank account *</span><select value={incomingTransferId} onChange={event=>setIncomingTransferId(event.target.value)}><option value="">Select matching bank payment from any account</option>{incomingTransferCandidates.map(item=><option key={item.id} value={item.id}>{item.sourceName} — ${Number(item.amount).toFixed(2)} — {item.date}{(item.notes||item.description)?` — ${item.notes||item.description}`:''}{item.candidateKind==='bankFeed'?' — Unmatched bank transaction':''}</option>)}</select></label>{!incomingTransferCandidates.length&&<div style={{color:'var(--text-muted)'}}>No unmatched outgoing payment with this exact amount was found in any saved bank feed, and no existing transfer to this card was found.</div>}<div style={{display:'flex',justifyContent:'flex-end',gap:10}}><button className="btn btn-secondary" onClick={()=>setMatching(null)}>Cancel</button><button className="btn btn-primary" disabled={!incomingTransferId||saving} onClick={()=>void confirmIncomingTransfer()}>{saving?'Matching securely...':'Match Credit-Card Payment'}</button></div></div>}
             </section>
           </div>
         )}
@@ -953,7 +953,7 @@ export const OnlineBank: React.FC = () => {
               className="card"
               onClick={(event) => event.stopPropagation()}
               style={{
-                padding: 22,
+                padding: 14,
                 border: "2px solid var(--green)",
                 width: "min(760px,94vw)",
                 maxHeight: "90vh",
@@ -966,8 +966,8 @@ export const OnlineBank: React.FC = () => {
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  gap: 16,
-                  marginBottom: 16,
+                  gap: 12,
+                  marginBottom: 12,
                 }}
               >
                 <div>
@@ -1029,7 +1029,7 @@ export const OnlineBank: React.FC = () => {
                   display: "flex",
                   justifyContent: "flex-end",
                   gap: 10,
-                  marginTop: 18,
+                  marginTop: 12,
                 }}
               >
                 <button className="btn btn-secondary" onClick={() => setOutgoing(null)}>
@@ -1094,10 +1094,10 @@ export const OnlineBank: React.FC = () => {
           <div
             className="card"
             style={{
-              padding: 14,
+              padding: 12,
               color: "var(--green)",
-              fontWeight: 800,
-              marginBottom: 16,
+              fontWeight: 600,
+              marginBottom: 12,
             }}
           >
             {notice}
@@ -1107,10 +1107,10 @@ export const OnlineBank: React.FC = () => {
           <div
             className="card"
             style={{
-              padding: 14,
+              padding: 12,
               color: "var(--red)",
-              fontWeight: 700,
-              marginBottom: 16,
+              fontWeight: 600,
+              marginBottom: 12,
             }}
           >
             {error}
@@ -1121,7 +1121,7 @@ export const OnlineBank: React.FC = () => {
             style={{
               display: "flex",
               gap: 8,
-              padding: 16,
+              padding: 12,
               borderBottom: "1px solid var(--border)",
               alignItems: "center",
               flexWrap: "wrap",
@@ -1206,12 +1206,12 @@ export const OnlineBank: React.FC = () => {
                 {visibleFeed.map((transaction) => (
                   <tr key={transaction.id}>
                     <td>{transaction.date}</td>
-                    <td style={{ fontWeight: 700 }}>{transaction.description}{transaction.pending && <span className="feed-pending-tag">Pending</span>}</td>
+                    <td style={{ fontWeight: 600 }}>{transaction.description}{transaction.pending && <span className="feed-pending-tag">Pending</span>}</td>
                     <td>{transaction.amount > 0 ? "Money in" : "Money out"}</td>
                     <td
                       style={{
                         textAlign: "right",
-                        fontWeight: 800,
+                        fontWeight: 600,
                         color: transaction.amount > 0 ? "var(--green)" : "var(--red)",
                       }}
                     >
@@ -1228,7 +1228,7 @@ export const OnlineBank: React.FC = () => {
                         {transaction.amount < 0 && <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Match Transaction</button>}
                         <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"dismiss")}>Dismiss</button>
                       </div>}
-                      {tab === "matched" && <span style={{ color: "var(--green)", fontWeight: 700 }}>Matched</span>}
+                      {tab === "matched" && <span style={{ color: "var(--green)", fontWeight: 600 }}>Matched</span>}
                       {state === "dismissed" && <>
                         <button className="btn btn-primary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"restore")}>Restore to Unmatched</button>
                         <button className="btn btn-danger btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"delete")}>Delete forever</button>
@@ -1240,7 +1240,7 @@ export const OnlineBank: React.FC = () => {
                 ))}
                 {visibleFeed.length === 0 && (
                   <tr>
-                    <td colSpan={5} style={{ padding: 30, textAlign: "center" }}>
+                    <td colSpan={5} style={{ padding: 20, textAlign: "center" }}>
                       No bank transactions match these filters.
                     </td>
                   </tr>
@@ -1253,7 +1253,7 @@ export const OnlineBank: React.FC = () => {
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                padding: 14,
+                padding: 12,
                 borderTop: "1px solid var(--border)",
               }}
             >

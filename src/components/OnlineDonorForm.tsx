@@ -74,13 +74,13 @@ export const OnlineDonorForm: React.FC<{
   return (
     <div className="modal-overlay" onClick={onCancel}>
     <section className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 900, width: '92%', maxHeight: '90vh', overflowY: 'auto' }}>
-      <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'start' }}>
+      <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
         <div><h2 style={{ color: 'var(--navy)', margin: 0 }}>{donor ? `Edit ${donor.name}` : 'Add donor to the cloud'}</h2><div style={{ color: 'var(--text-muted)', marginTop: 4 }}>Changes are shared immediately with every signed-in user.</div></div>
         <button className="btn btn-ghost" type="button" onClick={onCancel}>Close</button>
       </div>
       <form className="modal-body" onSubmit={submit}>
-        {error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
+        {error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
           <label className="form-group" style={{ margin: 0 }}><span>First name *</span><input value={form.firstName} onChange={e => set('firstName', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Last name *</span><input value={form.lastName} onChange={e => set('lastName', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Phone *</span><input value={form.phone} onChange={e => set('phone', e.target.value)} /></label>
@@ -90,7 +90,7 @@ export const OnlineDonorForm: React.FC<{
         </div>
         <label className="form-group" style={{ margin: '14px 0 0' }}><span>Notes</span><textarea rows={3} maxLength={2000} value={form.notes} onChange={e => set('notes', e.target.value)} /></label>
         <button type="button" className="btn btn-ghost" style={{ marginTop: 10 }} onClick={() => setAdvanced(value => !value)}>{advanced ? 'Hide additional fields' : 'Show Hebrew and additional phone fields'}</button>
-        {advanced && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginTop: 12, padding: 16, background: 'var(--bg-input)', borderRadius: 12 }}>
+        {advanced && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10, marginTop: 12, padding: 12, background: 'var(--bg-input)', borderRadius: 8 }}>
           <label className="form-group" style={{ margin: 0 }}><span>Pre-title</span><input value={form.preTitle} onChange={e => set('preTitle', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Hebrew first name</span><input dir="rtl" value={form.hebFirstName} onChange={e => set('hebFirstName', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Hebrew last name</span><input dir="rtl" value={form.hebLastName} onChange={e => set('hebLastName', e.target.value)} /></label>

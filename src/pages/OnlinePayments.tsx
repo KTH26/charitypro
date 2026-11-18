@@ -162,7 +162,7 @@ export const OnlinePayments: React.FC = () => {
           <div>
             <div className="page-eyebrow">CHARITYPRO CLOUD</div>
             <h1 className="page-title">Donor Payments ({total.toLocaleString()})</h1>
-            <div style={{ color: 'var(--green)', fontWeight: 700 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
+            <div style={{ color: 'var(--green)', fontWeight: 600 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
             <div className="page-sub">Live cloud data — updates automatically every 3 seconds</div>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -184,9 +184,9 @@ export const OnlinePayments: React.FC = () => {
           // current filter; pending checks remain available under Pending checks.
           if (status === createdStatus) void load();
         }} /></div></div>}
-        {notice && <div className="card" style={{ padding: 14, color: 'var(--green)', fontWeight: 800, marginBottom: 16 }}>{notice}</div>}
+        {notice && <div className="card" style={{ padding: 12, color: 'var(--green)', fontWeight: 600, marginBottom: 12 }}>{notice}</div>}
 
-        <section className="card" style={{ padding: 18, marginBottom: 18 }}>
+        <section className="card" style={{ padding: 12, marginBottom: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 160px 145px 145px 145px', gap: 10 }}>
             <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Live search: donor, amount, notes or account" />
             <select value={status} onChange={e => setStatus(e.target.value as 'approved' | 'pending')}><option value="approved">Received</option><option value="pending">Pending checks</option></select>
@@ -199,10 +199,10 @@ export const OnlinePayments: React.FC = () => {
           </div>
         </section>
 
-        {error && <div className="card" style={{ padding: 16, color: 'var(--red)', marginBottom: 16 }}>{error}</div>}
+        {error && <div className="card" style={{ padding: 12, color: 'var(--red)', marginBottom: 12 }}>{error}</div>}
         <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {loading ? (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading 50 payments from the cloud…</div>
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>Loading 50 payments from the cloud…</div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -211,20 +211,20 @@ export const OnlinePayments: React.FC = () => {
                   {items.map(payment => (
                     <tr key={payment.id} onClick={() => setSelectedPayment(payment)} style={{ cursor: 'pointer' }}>
                       <td>{payment.date}</td>
-                      <td style={{ fontWeight: 700 }}>{payment.donorName}</td>
+                      <td style={{ fontWeight: 600 }}>{payment.donorName}</td>
                       <td>{payment.type === 'pending' ? 'Pending' : 'Received'}</td>
                       <td>{methodLabel[payment.method] || payment.method}</td>
                       <td style={{ color: 'var(--text-muted)', maxWidth: 420 }}>{payment.notes || ''}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 800 }}>{payment.currency} ${payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{payment.currency} ${payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={event => { event.stopPropagation(); void removePayment(payment); }}>Delete</button></td>
                     </tr>
                   ))}
-                  {items.length === 0 && <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center' }}>No matching payments.</td></tr>}
+                  {items.length === 0 && <tr><td colSpan={7} style={{ padding: 20, textAlign: 'center' }}>No matching payments.</td></tr>}
                 </tbody>
               </table>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderTop: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderTop: '1px solid var(--border)' }}>
             <span>Page {page} of {totalPages}</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</button>

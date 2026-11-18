@@ -48,7 +48,7 @@ export const MonthlyDonorReport: React.FC = () => {
     const result = everyone ? report : buildMonthlyGiving((tagged || []).filter(item => ids.has(String(item.donorId || ''))), donors.filter(item => ids.has(String(item.id))), from, to, { onlyGivers, sort });
     downloadExcel(`Monthly giving by donor ${from} to ${to}`, [monthlyGivingSheet(result, heading)]);
   };
-  return <section style={{ display: 'grid', gap: 14 }}>
+  return <section style={{ display: 'grid', gap: 10 }}>
     <div className="card" style={{ display: 'grid', gap: 12 }}>
       <div><h2 style={{ margin: 0, color: 'var(--navy)' }}>Monthly giving by donor</h2><p style={{ margin: '4px 0 0', color: 'var(--text-muted)' }}>Every donor in a row. For each month: how much he gave, and how (cash, card, vouchers …). Approved payments only, in CAD.</p></div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}>
@@ -70,16 +70,16 @@ export const MonthlyDonorReport: React.FC = () => {
     </div>
     {error && <div className="card" style={{ color: 'var(--red)' }}>{error}</div>}
     <div className="card" style={{ minWidth: 0 }}>
-      {loading && !payments ? <div style={{ padding: 40, textAlign: 'center' }}>Loading…</div> : report && <div className="table-container" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+      {loading && !payments ? <div style={{ padding: 24, textAlign: 'center' }}>Loading…</div> : report && <div className="table-container" style={{ maxHeight: '70vh', overflow: 'auto' }}>
         <table style={{ fontSize: 13.5 }}>
           <thead><tr>{NAME_COLUMNS.map((column, index) => <th key={column.key} rowSpan={2} onClick={() => setSort(column.sort)} style={stick(index, { zIndex: 3, cursor: 'pointer', verticalAlign: 'bottom' })}>{column.label}{sort === column.sort ? ' ▲' : ''}</th>)}<th rowSpan={2} onClick={() => setSort('title')} style={{ cursor: 'pointer', verticalAlign: 'bottom', whiteSpace: 'nowrap' }}>Title{sort === 'title' ? ' ▲' : ''}</th>{report.months.map(month => <th key={month} colSpan={2} style={{ textAlign: 'center', borderLeft: '1px solid var(--border)' }}>{monthLabel(month)}</th>)}<th style={{ textAlign: 'right', borderLeft: '1px solid var(--border)' }}>Total</th></tr>
             <tr>{report.months.map(month => <React.Fragment key={month}><th style={{ textAlign: 'right', borderLeft: '1px solid var(--border)' }}>Total</th><th>How paid</th></React.Fragment>)}<th /></tr></thead>
           <tbody>{shown.slice(0, 400).map(row => <tr key={row.donorId}>
             {NAME_COLUMNS.map((column, index) => <td key={column.key} dir="auto" title={String(row[column.key] || '')} style={stick(index, { fontWeight: index === 1 || index === 3 ? 700 : 500 })}>{String(row[column.key] || '')}</td>)}<td dir="auto" style={{ whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{row.title}</td>
             {report.months.map(month => { const cell = row.months[month]; return <React.Fragment key={month}><td style={{ textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '1px solid var(--border)' }}>{cell ? money(cell.amount) : ''}</td><td style={{ fontSize: 12.5, color: 'var(--text-secondary)', minWidth: 110 }}>{cell?.how || ''}</td></React.Fragment>; })}
-            <td style={{ textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', borderLeft: '1px solid var(--border)' }}>{money(row.total)}</td>
+            <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap', borderLeft: '1px solid var(--border)' }}>{money(row.total)}</td>
           </tr>)}</tbody>
-          <tfoot><tr style={{ fontWeight: 800 }}><td style={stick(0)}>Total</td>{NAME_COLUMNS.slice(1).map((column, index) => <td key={column.key} style={stick(index + 1)} />)}<td />{report.months.map(month => <React.Fragment key={month}><td style={{ textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '1px solid var(--border)' }}>{money(everyone ? report.totals[month].amount : monthTotal(month))}</td><td style={{ fontSize: 12, fontWeight: 600 }}>{everyone ? report.totals[month].how : ''}</td></React.Fragment>)}<td style={{ textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '1px solid var(--border)' }}>{money(shownTotal)}</td></tr></tfoot>
+          <tfoot><tr style={{ fontWeight: 600 }}><td style={stick(0)}>Total</td>{NAME_COLUMNS.slice(1).map((column, index) => <td key={column.key} style={stick(index + 1)} />)}<td />{report.months.map(month => <React.Fragment key={month}><td style={{ textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '1px solid var(--border)' }}>{money(everyone ? report.totals[month].amount : monthTotal(month))}</td><td style={{ fontSize: 12, fontWeight: 600 }}>{everyone ? report.totals[month].how : ''}</td></React.Fragment>)}<td style={{ textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '1px solid var(--border)' }}>{money(shownTotal)}</td></tr></tfoot>
         </table>
         {shown.length > 400 && <div style={{ padding: 10, color: 'var(--text-muted)', textAlign: 'center' }}>Showing the first 400 donors here. The Excel file has all {shown.length.toLocaleString()}.</div>}
       </div>}

@@ -38,29 +38,29 @@ export const OnlineTracker: React.FC = () => {
       <div><h1 className="page-title">Call Tracker</h1><div className="page-sub">Every call to a donor. Each call is also saved in that donor’s pop-up.</div></div>
       <button type="button" className="btn btn-primary call-start-button" onClick={() => setRecording(true)}><PhoneCall size={18} /> Record a Call</button>
     </div>
-    <section className="card" style={{ padding: 16, marginBottom: 18 }}><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+    <section className="card" style={{ padding: 12, marginBottom: 12 }}><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
       <div className="search-box" style={{ flex: '1 1 220px', maxWidth: 320 }}><Search className="search-icon" size={18} /><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search donor or notes" /></div>
       <select value={outcome} onChange={event => { setOutcome(event.target.value); setPage(1); }} style={{ width: 170 }}><option value="">All answers</option>{CALL_OUTCOMES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
       <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>From <input type="date" value={from} onChange={event => { setFrom(event.target.value); setPage(1); }} /></label>
       <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>To <input type="date" value={to} onChange={event => { setTo(event.target.value); setPage(1); }} /></label>
       <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>{total} call{total === 1 ? '' : 's'}</span>
     </div></section>
-    {error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
+    {error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}
     <section className="card" style={{ padding: 0, overflow: 'hidden' }}><div className="table-container"><table>
       <thead><tr><th>Date</th><th>Donor</th><th>Answer</th><th>Short note</th><th>Fundraiser</th></tr></thead>
       <tbody>
-        {loading && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center' }}>Loading calls…</td></tr>}
+        {loading && <tr><td colSpan={5} style={{ padding: 20, textAlign: 'center' }}>Loading calls…</td></tr>}
         {!loading && items.map(item => <tr key={item.id} onClick={() => setSelected(item)} style={{ cursor: 'pointer' }}>
           <td style={{ whiteSpace: 'nowrap' }}>{item.date}</td>
-          <td style={{ fontWeight: 700 }}>{item.donorYiddishName ? <><div dir="rtl" style={{ textAlign: 'left' }}>{item.donorYiddishName}</div><small style={{ color: 'var(--text-muted)', fontWeight: 500 }}>{item.donorName}</small></> : item.donorName}</td>
-          <td><span className={`call-badge call-badge-${item.outcome.toLowerCase().replace(/\s+/g, '-')}`}>{item.outcome}</span>{item.followUpDate && item.outcome === 'Call back' && <small style={{ display: 'block', color: 'var(--text-muted)' }}>on {item.followUpDate}</small>}{item.pickupStatus === 'open' && <small style={{ display: 'block', color: 'var(--yellow)', fontWeight: 700 }}>to pick up</small>}</td>
+          <td style={{ fontWeight: 600 }}>{item.donorYiddishName ? <><div dir="rtl" style={{ textAlign: 'left' }}>{item.donorYiddishName}</div><small style={{ color: 'var(--text-muted)', fontWeight: 500 }}>{item.donorName}</small></> : item.donorName}</td>
+          <td><span className={`call-badge call-badge-${item.outcome.toLowerCase().replace(/\s+/g, '-')}`}>{item.outcome}</span>{item.followUpDate && item.outcome === 'Call back' && <small style={{ display: 'block', color: 'var(--text-muted)' }}>on {item.followUpDate}</small>}{item.pickupStatus === 'open' && <small style={{ display: 'block', color: 'var(--yellow)', fontWeight: 600 }}>to pick up</small>}</td>
           <td style={{ color: 'var(--text-secondary)' }}>{shortText(item.notes || '')}</td>
           <td>{item.fundraiserName || '—'}</td>
         </tr>)}
-        {!loading && items.length === 0 && <tr><td colSpan={5} style={{ padding: 30, textAlign: 'center' }}>No calls yet. Click “Record a Call” to add the first one.</td></tr>}
+        {!loading && items.length === 0 && <tr><td colSpan={5} style={{ padding: 20, textAlign: 'center' }}>No calls yet. Click “Record a Call” to add the first one.</td></tr>}
       </tbody>
     </table></div></section>
-    {totalPages > 1 && <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 14, alignItems: 'center' }}><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button className="btn btn-secondary btn-sm" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>Next</button></div>}
+    {totalPages > 1 && <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 10, alignItems: 'center' }}><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button className="btn btn-secondary btn-sm" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>Next</button></div>}
 
     {recording && <RecordCallModal onClose={() => setRecording(false)} onSaved={() => void load(true)} />}
     {selected && <CallDetailsModal call={selected} onClose={() => setSelected(null)} onSaved={call => { setSelected(call); void load(true); }} onDeleted={() => { setSelected(null); void load(true); }} onOpenDonor={donorId => { setSelected(null); setProfileId(donorId); }} />}

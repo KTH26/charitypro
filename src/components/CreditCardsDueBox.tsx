@@ -31,21 +31,21 @@ export const CreditCardsDueBox: React.FC = () => {
   const totals = items.filter(item => !item.needsSetup).reduce<Record<string, number>>((sum, item) => ({ ...sum, [item.currency]: (sum[item.currency] || 0) + item.amountDue }), {});
   return <section className="card loans-box" style={{ padding: 0, overflow: 'hidden' }}>
     <div className="loans-box-header"><div>
-      <h2 style={{ margin: 0, color: 'var(--navy)', fontSize: 19, display: 'flex', alignItems: 'center', gap: 8 }}><CreditCard size={20} /> Credit Cards Due Next</h2>
+      <h2 style={{ margin: 0, color: 'var(--navy)', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}><CreditCard size={20} /> Credit Cards Due Next</h2>
       <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{Object.keys(totals).length ? Object.entries(totals).map(([currency, total]) => `${money(total, currency)} to pay`).join(' · ') : 'Nothing to pay'}</div>
     </div></div>
-    {error && <div style={{ padding: '12px 22px', color: 'var(--red)', fontWeight: 700 }}>{error}</div>}
-    {loading ? <div style={{ padding: 34, textAlign: 'center', color: 'var(--text-muted)' }}>Loading credit cards…</div>
-      : items.length === 0 ? <div style={{ padding: 34, textAlign: 'center', color: 'var(--text-muted)' }}>No credit card accounts yet. To add one, open Chart of Accounts → New Account → Liability → Credit card.</div>
+    {error && <div style={{ padding: '12px 22px', color: 'var(--red)', fontWeight: 600 }}>{error}</div>}
+    {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Loading credit cards…</div>
+      : items.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>No credit card accounts yet. To add one, open Chart of Accounts → New Account → Liability → Credit card.</div>
       : <div className="loans-box-scroll"><table className="loans-table">
         <thead><tr><th>Credit card</th><th style={{ textAlign: 'right' }}>Amount</th><th>Due date</th></tr></thead>
         <tbody>{items.map(item => {
-          if (item.needsSetup) return <tr key={item.id}><td style={{ fontWeight: 700 }}>{item.name}</td><td colSpan={2}><a href="/chart-of-accounts" style={{ color: 'var(--red)', fontWeight: 800 }}>Set the statement day and due day</a></td></tr>;
+          if (item.needsSetup) return <tr key={item.id}><td style={{ fontWeight: 600 }}>{item.name}</td><td colSpan={2}><a href="/chart-of-accounts" style={{ color: 'var(--red)', fontWeight: 600 }}>Set the statement day and due day</a></td></tr>;
           const days = daysUntil(item.dueDate);
           const tone = item.amountDue <= 0 ? '' : days <= 3 ? 'is-late' : days <= 7 ? 'is-soon' : '';
           return <tr key={item.id}>
-            <td style={{ fontWeight: 700 }}>{item.name}<small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 600 }}>Statement {shortDate(item.periodStart)} – {shortDate(item.statementDate)}</small></td>
-            <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 800 }}>{item.amountDue > 0 ? money(item.amountDue, item.currency) : <span className="card-due-paid">Paid ✓</span>}</td>
+            <td style={{ fontWeight: 600 }}>{item.name}<small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 600 }}>Statement {shortDate(item.periodStart)} – {shortDate(item.statementDate)}</small></td>
+            <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{item.amountDue > 0 ? money(item.amountDue, item.currency) : <span className="card-due-paid">Paid ✓</span>}</td>
             <td><span className={`loan-due ${tone}`}>{niceDate(item.dueDate)}<small>{days === 0 ? 'Due today' : `in ${days} day${days === 1 ? '' : 's'}`}</small></span></td>
           </tr>;
         })}</tbody>

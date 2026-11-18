@@ -67,14 +67,14 @@ const ReportBuilder: React.FC<{ onMonthly: () => void }> = ({ onMonthly }) => {
     ...PRESETS.map(group => ({ group: group.group, items: group.items.map(item => ({ title: item.title, description: item.description, setup: presetSetup(item) })) })),
   ];
 
-  return <div className="report-center" style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 270px) minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
+  return <div className="report-center" style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 270px) minmax(0, 1fr)', gap: 12, alignItems: 'start' }}>
     <aside className="card" style={{ padding: 12, maxHeight: 'calc(100vh - 140px)', overflowY: 'auto', position: 'sticky', top: 12 }}>
       <h3 style={{ margin: '4px 6px 10px', color: 'var(--navy)', fontSize: 15 }}><BarChart3 size={16} /> Ready-made reports</h3>
       {groupsWithSaved.map(group => <div key={group.group} style={{ marginBottom: 6 }}>
-        <button type="button" onClick={() => setOpen(current => ({ ...current, [group.group]: !current[group.group] }))} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 800, fontSize: 13, color: 'var(--text-secondary)', padding: '6px' }}>
+        <button type="button" onClick={() => setOpen(current => ({ ...current, [group.group]: !current[group.group] }))} style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 600, fontSize: 13, color: 'var(--text-secondary)', padding: '6px' }}>
           {open[group.group] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{group.group === 'My saved reports' && <Star size={13} />} {group.group}
         </button>
-        {open[group.group] && group.group === 'Donations' && <button type="button" onClick={onMonthly} style={{ all: 'unset', cursor: 'pointer', display: 'block', padding: '6px 8px 6px 24px', fontSize: 13.5, fontWeight: 700, color: 'var(--navy)' }}>Monthly giving by donor ★</button>}
+        {open[group.group] && group.group === 'Donations' && <button type="button" onClick={onMonthly} style={{ all: 'unset', cursor: 'pointer', display: 'block', padding: '6px 8px 6px 24px', fontSize: 13.5, fontWeight: 600, color: 'var(--navy)' }}>Monthly giving by donor ★</button>}
         {open[group.group] && group.items.map(item => <div key={item.title} style={{ display: 'flex', alignItems: 'center' }}>
           <button type="button" onClick={() => setSetup({ ...item.setup })} title={item.description} style={{ all: 'unset', cursor: 'pointer', flex: 1, padding: '6px 8px 6px 24px', borderRadius: 8, fontSize: 13.5, background: setup.name === item.title ? 'var(--bg-input)' : undefined, fontWeight: setup.name === item.title ? 700 : 500, color: 'var(--navy)' }}>{item.title}</button>
           {item.saved && <button type="button" className="btn btn-secondary btn-sm" style={{ padding: 4 }} title="Remove" onClick={() => void removeSaved(item.title)}><Trash2 size={13} /></button>}
@@ -82,7 +82,7 @@ const ReportBuilder: React.FC<{ onMonthly: () => void }> = ({ onMonthly }) => {
       </div>)}
     </aside>
 
-    <section style={{ display: 'grid', gap: 14, minWidth: 0 }}>
+    <section style={{ display: 'grid', gap: 10, minWidth: 0 }}>
       <div className="card" style={{ display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}>
           <label className="form-group" style={{ margin: 0, minWidth: 220 }}><span>Report on</span>
@@ -126,7 +126,7 @@ const ReportBuilder: React.FC<{ onMonthly: () => void }> = ({ onMonthly }) => {
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => void saveReport()}><Save size={15} /> Save this report</button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => void load(setup.source, true)} disabled={loading}><RefreshCw size={15} /> Refresh</button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => setSetup({ ...defaultSetup(setup.source), name: '' })}>Clear</button>
-          {notice && <span style={{ color: 'var(--green)', fontWeight: 700, fontSize: 13 }}>{notice}</span>}
+          {notice && <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: 13 }}>{notice}</span>}
         </div>
       </div>
 
@@ -137,14 +137,14 @@ const ReportBuilder: React.FC<{ onMonthly: () => void }> = ({ onMonthly }) => {
           <h2 style={{ margin: 0, color: 'var(--navy)' }}>{title}</h2>
           <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>{loading && !data ? 'Loading…' : `${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}${setup.groupBy ? ` in ${groups.length.toLocaleString()} group${groups.length === 1 ? '' : 's'}` : ''}`}{headline ? ` · Total ${headline.label}: ${headline.type === 'money' ? '$' + money(totals[headline.key]) : totals[headline.key]}` : ''}</span>
         </div>
-        {loading && !data ? <div style={{ padding: 40, textAlign: 'center' }}>Loading report…</div> : <div className="table-container">
+        {loading && !data ? <div style={{ padding: 24, textAlign: 'center' }}>Loading report…</div> : <div className="table-container">
           {setup.groupBy ? <table>
             <thead><tr><th>{label(setup.groupBy)}</th>{setup.groupBy2 && <th>{label(setup.groupBy2)}</th>}<th style={{ textAlign: 'right' }}>Count</th>{numeric.map(column => <th key={column.key} style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => sortBy(column.key)}>{column.label}{setup.sortBy === column.key ? (setup.sortDesc ? ' ▼' : ' ▲') : ''}</th>)}</tr></thead>
             <tbody>{groups.length ? groups.flatMap(group => { const id = `${group.key}|${group.key2 ?? ''}`; return [
-              <tr key={id} onClick={() => setExpanded(current => ({ ...current, [id]: !current[id] }))} style={{ cursor: 'pointer' }}><td><strong>{expanded[id] ? '▾ ' : '▸ '}{group.key}</strong></td>{setup.groupBy2 && <td>{group.key2}</td>}<td style={{ textAlign: 'right' }}>{group.count}</td>{numeric.map(column => <td key={column.key} style={{ textAlign: 'right', fontWeight: 700 }}>{column.type === 'money' ? `$${money(group.sums[column.key])}` : Math.round(group.sums[column.key] * 100) / 100}</td>)}</tr>,
+              <tr key={id} onClick={() => setExpanded(current => ({ ...current, [id]: !current[id] }))} style={{ cursor: 'pointer' }}><td><strong>{expanded[id] ? '▾ ' : '▸ '}{group.key}</strong></td>{setup.groupBy2 && <td>{group.key2}</td>}<td style={{ textAlign: 'right' }}>{group.count}</td>{numeric.map(column => <td key={column.key} style={{ textAlign: 'right', fontWeight: 600 }}>{column.type === 'money' ? `$${money(group.sums[column.key])}` : Math.round(group.sums[column.key] * 100) / 100}</td>)}</tr>,
               ...(expanded[id] ? [<tr key={`${id}-rows`}><td colSpan={2 + (setup.groupBy2 ? 1 : 0) + numeric.length} style={{ background: 'var(--bg-input)', padding: 8 }}><DetailTable columns={columns} rows={group.rows.slice(0, SHOW_LIMIT)} cellText={cellText} /></td></tr>] : []),
-            ]; }) : <tr><td colSpan={9} style={{ textAlign: 'center', padding: 30, color: 'var(--text-muted)' }}>Nothing matches.</td></tr>}</tbody>
-            {groups.length > 0 && <tfoot><tr style={{ fontWeight: 800, borderTop: '2px solid var(--border)' }}><td>Total</td>{setup.groupBy2 && <td />}<td style={{ textAlign: 'right' }}>{rows.length}</td>{numeric.map(column => <td key={column.key} style={{ textAlign: 'right' }}>{column.type === 'money' ? `$${money(totals[column.key])}` : totals[column.key]}</td>)}</tr></tfoot>}
+            ]; }) : <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Nothing matches.</td></tr>}</tbody>
+            {groups.length > 0 && <tfoot><tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}><td>Total</td>{setup.groupBy2 && <td />}<td style={{ textAlign: 'right' }}>{rows.length}</td>{numeric.map(column => <td key={column.key} style={{ textAlign: 'right' }}>{column.type === 'money' ? `$${money(totals[column.key])}` : totals[column.key]}</td>)}</tr></tfoot>}
           </table> : <>
             <DetailTable columns={columns} rows={rows.slice(0, limit)} cellText={cellText} sortKey={setup.sortBy} sortDesc={setup.sortDesc} onSort={sortBy} totals={rows.length ? totals : undefined} />
             {rows.length > limit && <div style={{ textAlign: 'center', padding: 12 }}><span style={{ color: 'var(--text-muted)', marginRight: 10 }}>Showing {limit.toLocaleString()} of {rows.length.toLocaleString()} (Excel gets all of them)</span><button type="button" className="btn btn-secondary btn-sm" onClick={() => setLimit(value => value + SHOW_LIMIT)}>Show more</button></div>}
@@ -157,8 +157,8 @@ const ReportBuilder: React.FC<{ onMonthly: () => void }> = ({ onMonthly }) => {
 
 const DetailTable: React.FC<{ columns: { key: string; label: string; type: string }[]; rows: Record<string, any>[]; cellText: (column: { type: string }, value: unknown) => string; sortKey?: string; sortDesc?: boolean; onSort?: (key: string) => void; totals?: Record<string, number> }> = ({ columns, rows, cellText, sortKey, sortDesc, onSort, totals }) => <table>
   <thead><tr>{columns.map(column => <th key={column.key} onClick={() => onSort?.(column.key)} style={{ cursor: onSort ? 'pointer' : undefined, textAlign: column.type === 'money' || column.type === 'number' ? 'right' : undefined, whiteSpace: 'nowrap' }}>{column.label}{sortKey === column.key ? (sortDesc ? ' ▼' : ' ▲') : ''}</th>)}</tr></thead>
-  <tbody>{rows.length ? rows.map((row, index) => <tr key={String(row.id ?? index)}>{columns.map(column => <td key={column.key} dir="auto" style={{ textAlign: column.type === 'money' || column.type === 'number' ? 'right' : undefined, whiteSpace: column.type === 'date' || column.type === 'money' ? 'nowrap' : undefined }}>{cellText(column, row[column.key])}</td>)}</tr>) : <tr><td colSpan={columns.length || 1} style={{ textAlign: 'center', padding: 30, color: 'var(--text-muted)' }}>Nothing matches.</td></tr>}</tbody>
-  {totals && <tfoot><tr style={{ fontWeight: 800 }}>{columns.map((column, index) => <td key={column.key} style={{ textAlign: column.type === 'money' || column.type === 'number' ? 'right' : undefined, whiteSpace: 'nowrap' }}>{column.type === 'money' ? `$${money(totals[column.key])}` : column.type === 'number' ? totals[column.key] : index === 0 ? 'Total' : ''}</td>)}</tr></tfoot>}
+  <tbody>{rows.length ? rows.map((row, index) => <tr key={String(row.id ?? index)}>{columns.map(column => <td key={column.key} dir="auto" style={{ textAlign: column.type === 'money' || column.type === 'number' ? 'right' : undefined, whiteSpace: column.type === 'date' || column.type === 'money' ? 'nowrap' : undefined }}>{cellText(column, row[column.key])}</td>)}</tr>) : <tr><td colSpan={columns.length || 1} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Nothing matches.</td></tr>}</tbody>
+  {totals && <tfoot><tr style={{ fontWeight: 600 }}>{columns.map((column, index) => <td key={column.key} style={{ textAlign: column.type === 'money' || column.type === 'number' ? 'right' : undefined, whiteSpace: 'nowrap' }}>{column.type === 'money' ? `$${money(totals[column.key])}` : column.type === 'number' ? totals[column.key] : index === 0 ? 'Total' : ''}</td>)}</tr></tfoot>}
 </table>;
 
 const ValueInput: React.FC<{ value: string; options: string[]; onChange: (value: string) => void }> = ({ value, options, onChange }) => {

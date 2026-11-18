@@ -48,7 +48,7 @@ export const PageExportButton: React.FC<{ path: string }> = ({ path }) => {
   };
   return <div style={{ position: 'relative' }}>
     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setOpen(value => !value)} title="Export this list to Excel"><FileSpreadsheet size={15} /> <span className="export-label">Export to Excel</span></button>
-    {open && <div className="card" style={{ position: 'absolute', right: 0, top: '115%', zIndex: 60, width: 290, padding: 14, display: 'grid', gap: 10, boxShadow: '0 10px 30px rgba(0,0,0,.18)' }}>
+    {open && <div className="card" style={{ position: 'absolute', right: 0, top: '115%', zIndex: 60, width: 290, padding: 12, display: 'grid', gap: 10, boxShadow: '0 10px 30px rgba(0,0,0,.18)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><strong style={{ color: 'var(--navy)' }}>Export {page.title}</strong><button type="button" className="btn btn-secondary btn-sm" style={{ padding: 4 }} onClick={() => setOpen(false)} aria-label="Close"><X size={14} /></button></div>
       {hasDates && <label className="form-group" style={{ margin: 0 }}><span>Dates</span><select value={range} onChange={event => setRange(event.target.value)}>{RANGES.map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label>}
       {hasDates && range === 'custom' && <div style={{ display: 'flex', gap: 8 }}><input type="date" value={from} onChange={event => setFrom(event.target.value)} /><input type="date" value={to} onChange={event => setTo(event.target.value)} /></div>}

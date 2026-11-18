@@ -54,11 +54,11 @@ export const OnlineStripeSync: React.FC = () => {
       { name: 'Ignored', columns: chargeCols, rows: data.ignored },
     ]);
   };
-  const tile = (label: string, value: number | undefined, color?: string) => <div className="card" style={{ padding: 14, minWidth: 150 }}><div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{label}</div><div style={{ fontSize: 26, fontWeight: 800, color: color || 'var(--navy)' }}>{value ?? '–'}</div></div>;
+  const tile = (label: string, value: number | undefined, color?: string) => <div className="card" style={{ padding: 12, minWidth: 150 }}><div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{label}</div><div style={{ fontSize: 26, fontWeight: 600, color: color || 'var(--navy)' }}>{value ?? '–'}</div></div>;
   const btn = (label: React.ReactNode, onClick: () => void, key: string, kind = 'btn-secondary') => <button type="button" className={`btn btn-sm ${kind}`} disabled={Boolean(busy)} onClick={onClick} style={{ whiteSpace: 'nowrap' }}>{busy === key ? '…' : label}</button>;
   const linkChoices = (amount: number, currency: string, list: Pay[]) => list.filter(p => close(Number(p.amount), amount) && String(p.currency || 'CAD') === currency);
   const chargeChoices = (p: Pay) => (data?.onlyStripe || []).filter(ch => close(ch.amount, Number(p.amount)) && ch.currency === String(p.currency || 'CAD'));
-  return <div className="page page-inner" style={{ display: 'grid', gap: 16 }}>
+  return <div className="page page-inner" style={{ display: 'grid', gap: 12 }}>
     <div className="card" style={{ display: 'grid', gap: 12 }}>
       <div><h2 style={{ margin: 0, color: 'var(--navy)' }}>Stripe Sync (US-dollar cards)</h2><p style={{ margin: '4px 0 0', color: 'var(--text-muted)' }}>Your Stripe charges next to the US-dollar payments in CharityPro. Add a missing charge for a donor, link it to a payment that is already there, ignore it, or delete a payment that should not be there.</p></div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
@@ -69,7 +69,7 @@ export const OnlineStripeSync: React.FC = () => {
         <button type="button" className="btn btn-secondary btn-sm" disabled={!data} onClick={exportExcel}><FileSpreadsheet size={15} /> Export to Excel</button>
       </div>
       {error && <div style={{ color: 'var(--red)' }}>{error}</div>}
-      {notice && <div style={{ color: 'var(--green)', fontWeight: 700 }}>{notice}</div>}
+      {notice && <div style={{ color: 'var(--green)', fontWeight: 600 }}>{notice}</div>}
     </div>
     {data && <>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>{tile('Stripe charges', data.counts.stripe)}{tile('In CharityPro', data.counts.charityPro)}{tile('Matched', data.counts.matched, 'var(--green)')}{tile('Only in Stripe', data.counts.onlyStripe, 'var(--red)')}{tile('Only in CharityPro', data.counts.onlyCharityPro, 'var(--red)')}</div>
@@ -85,15 +85,15 @@ export const OnlineStripeSync: React.FC = () => {
               </div></td></tr>
             {adding === ch.id && <tr><td colSpan={7} style={{ background: 'var(--bg-input)' }}><div style={{ display: 'grid', gap: 8, maxWidth: 560 }}><strong>Which donor is this ${money(ch.amount)} {ch.currency} from {ch.name || 'this card'}?</strong><DonorPicker value={donor} onChange={setDonor} autoFocus />{ch.currency === 'USD' && <label className="form-group" style={{ margin: 0 }}><span>USD → CAD rate</span><input type="number" min="0.0001" step="0.0001" value={rate} onChange={event => { setRate(event.target.value); setRateNote('Rate you entered'); }} placeholder="1.38" style={{ maxWidth: 160 }} /><small style={{ color: 'var(--text-muted)' }}>{Number(rate) > 0 ? `US${money(ch.amount - ch.refunded)} = CAD ${money((ch.amount - ch.refunded) * Number(rate))}` : ''}{rateNote ? ` · ${rateNote}` : ''}</small></label>}<div style={{ display: 'flex', gap: 8 }}>{btn('Save payment', () => addCharge(ch), ch.id, 'btn-primary')}<button type="button" className="btn btn-secondary btn-sm" onClick={() => { setAdding(null); setDonor(null); }}>Cancel</button></div><span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>It is saved{ch.currency === 'USD' ? ' with the Canadian amount from the rate above' : ''} and put on the donor's pledge for that date.</span></div></td></tr>}
           </React.Fragment>; })}
-          {!data.onlyStripe.length && <tr><td colSpan={7} style={{ textAlign: 'center', padding: 24 }}>Nothing – every Stripe charge is in CharityPro.</td></tr>}
+          {!data.onlyStripe.length && <tr><td colSpan={7} style={{ textAlign: 'center', padding: 16 }}>Nothing – every Stripe charge is in CharityPro.</td></tr>}
         </tbody></table>}
         {tab === 'cp' && <table><thead><tr><th>Date</th><th>Donor</th><th style={{ textAlign: 'right' }}>Amount</th><th style={{ textAlign: 'right' }}>CAD</th><th>Method</th><th>Notes</th><th>What to do</th></tr></thead><tbody>
           {data.onlyCharityPro.map(p => { const choices = chargeChoices(p); return <tr key={p.id}><td>{p.date}</td><td>{p.donor}</td><td style={{ textAlign: 'right' }}>${money(p.amount)} {p.currency}</td><td style={{ textAlign: 'right' }}>{p.amountCAD ? `$${money(p.amountCAD)}` : ''}</td><td>{p.method}</td><td style={{ maxWidth: 260 }}>{p.notes}</td>
             <td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{btn('Open / edit', () => setOpenPayment(p), p.id + '-open')}{choices.length > 0 && <select disabled={Boolean(busy)} value="" onChange={event => { if (event.target.value) void link(event.target.value, p.id); }} style={{ width: 'auto' }}><option value="">Link to Stripe…</option>{choices.map(ch => <option key={ch.id} value={ch.id}>{ch.date} · {ch.name || ch.email} · ${money(ch.amount)}</option>)}</select>}{btn(<><Trash2 size={13} /> Delete</>, () => remove(p), p.id)}</div></td></tr>; })}
-          {!data.onlyCharityPro.length && <tr><td colSpan={7} style={{ textAlign: 'center', padding: 24 }}>Nothing.</td></tr>}
+          {!data.onlyCharityPro.length && <tr><td colSpan={7} style={{ textAlign: 'center', padding: 16 }}>Nothing.</td></tr>}
         </tbody></table>}
         {tab === 'matched' && <table><thead><tr><th>Matched by</th><th>Stripe date</th><th>Name on card</th><th style={{ textAlign: 'right' }}>Stripe</th><th style={{ textAlign: 'right' }}>Paid out CAD</th><th>CharityPro</th><th style={{ textAlign: 'right' }}>CharityPro amount</th><th /></tr></thead><tbody>{data.matched.map(x => <tr key={x.stripe.id}><td>{x.how}</td><td>{x.stripe.date}</td><td>{x.stripe.name}</td><td style={{ textAlign: 'right' }}>${money(x.stripe.amount)} {x.stripe.currency}</td><td style={{ textAlign: 'right' }}>{x.stripe.cadAmount !== null ? `$${money(x.stripe.cadAmount)}` : ''}</td><td>{x.payment.date} · {x.payment.donor}</td><td style={{ textAlign: 'right' }}>${money(x.payment.amount)} {x.payment.currency}</td><td>{btn(<><LinkIcon size={13} /> Open</>, () => setOpenPayment(x.payment), x.payment.id + '-open')}</td></tr>)}</tbody></table>}
-        {tab === 'ignored' && <table><thead><tr><th>Date</th><th>Name on card</th><th style={{ textAlign: 'right' }}>Amount</th><th>Status</th><th /></tr></thead><tbody>{data.ignored.map(ch => <tr key={ch.id}><td>{ch.date}</td><td>{ch.name || ch.email}</td><td style={{ textAlign: 'right' }}>${money(ch.amount)} {ch.currency}</td><td>{ch.status}</td><td>{btn(<><Undo2 size={13} /> Show again</>, () => void ignore(ch, false), ch.id)}</td></tr>)}{!data.ignored.length && <tr><td colSpan={5} style={{ textAlign: 'center', padding: 24 }}>Nothing ignored.</td></tr>}</tbody></table>}
+        {tab === 'ignored' && <table><thead><tr><th>Date</th><th>Name on card</th><th style={{ textAlign: 'right' }}>Amount</th><th>Status</th><th /></tr></thead><tbody>{data.ignored.map(ch => <tr key={ch.id}><td>{ch.date}</td><td>{ch.name || ch.email}</td><td style={{ textAlign: 'right' }}>${money(ch.amount)} {ch.currency}</td><td>{ch.status}</td><td>{btn(<><Undo2 size={13} /> Show again</>, () => void ignore(ch, false), ch.id)}</td></tr>)}{!data.ignored.length && <tr><td colSpan={5} style={{ textAlign: 'center', padding: 16 }}>Nothing ignored.</td></tr>}</tbody></table>}
       </div>
     </>}
     {openPayment && <CloudPaymentDetailsModal payment={openPayment} onClose={() => setOpenPayment(null)} onUpdated={() => { void load(true); }} />}

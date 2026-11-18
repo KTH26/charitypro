@@ -88,22 +88,22 @@ export const OnlineDonorFuseReconcile: React.FC = () => {
 
   return <div className="page"><div className="page-inner">
     <div className="page-head"><div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">DonorFuse Pledge Reconciliation</h1><p className="page-sub">Guarded administrator tool for restoring the old system's exact pledge allocations.</p></div></div>
-    <div className="card" style={{ maxWidth: 850, padding: 28 }}>
+    <div className="card" style={{ maxWidth: 850, padding: 18 }}>
       <label className="form-label" htmlFor="donorfuse-plan">Reconciliation file</label>
       <input id="donorfuse-plan" type="file" accept="application/json,.json" onChange={event => chooseFile(event.target.files?.[0])} />
       {fileName && <p className="muted" style={{ marginTop: 10 }}>{fileName}</p>}
       {operations.length > 0 && <>
-        <div className="card" style={{ marginTop: 20, padding: 18, background: 'var(--surface-2)' }}>
+        <div className="card" style={{ marginTop: 14, padding: 12, background: 'var(--surface-2)' }}>
           <strong>{operations.length.toLocaleString()} guarded changes ready</strong>
           <ul>{Object.entries(counts).map(([key, value]) => <li key={key}>{value.toLocaleString()} — {key}</li>)}</ul>
           <p className="muted">Every change checks the current cloud revision first. If any record changed since the backup, that batch stops without changing anything.</p>
         </div>
-        <div style={{display:'flex',gap:10,marginTop:18,flexWrap:'wrap'}}><button className="btn btn-secondary" disabled={running || refreshing || complete} onClick={()=>void refreshAgainstCloud()}>{refreshing?'Checking live cloud…':'Refresh against live cloud'}</button><button className="btn btn-primary" disabled={running || refreshing || complete} onClick={apply}>{running ? `Applying ${progress.toLocaleString()} of ${operations.length.toLocaleString()}…` : complete ? 'Reconciliation completed' : 'Apply verified reconciliation'}</button></div>
+        <div style={{display:'flex',gap:10,marginTop:12,flexWrap:'wrap'}}><button className="btn btn-secondary" disabled={running || refreshing || complete} onClick={()=>void refreshAgainstCloud()}>{refreshing?'Checking live cloud…':'Refresh against live cloud'}</button><button className="btn btn-primary" disabled={running || refreshing || complete} onClick={apply}>{running ? `Applying ${progress.toLocaleString()} of ${operations.length.toLocaleString()}…` : complete ? 'Reconciliation completed' : 'Apply verified reconciliation'}</button></div>
       </>}
-      {refreshNotice && <div className="alert alert-success" style={{ marginTop: 18 }}>{refreshNotice}</div>}
-      {error && <div className="alert alert-error" style={{ marginTop: 18 }}>{error}</div>}
-      {complete && conflicts.length === 0 && <div className="alert alert-success" style={{ marginTop: 18 }}>All verified DonorFuse pledge and payment links were applied successfully.</div>}
-      {conflicts.length > 0 && <div className="alert alert-error" style={{ marginTop: 18 }}>{conflicts.length.toLocaleString()} changed records were safely skipped and need a fresh backup before they can be reconciled.</div>}
+      {refreshNotice && <div className="alert alert-success" style={{ marginTop: 12 }}>{refreshNotice}</div>}
+      {error && <div className="alert alert-error" style={{ marginTop: 12 }}>{error}</div>}
+      {complete && conflicts.length === 0 && <div className="alert alert-success" style={{ marginTop: 12 }}>All verified DonorFuse pledge and payment links were applied successfully.</div>}
+      {conflicts.length > 0 && <div className="alert alert-error" style={{ marginTop: 12 }}>{conflicts.length.toLocaleString()} changed records were safely skipped and need a fresh backup before they can be reconciled.</div>}
     </div>
   </div></div>;
 };

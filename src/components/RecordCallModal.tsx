@@ -168,8 +168,8 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
   return <div className="modal-overlay" onClick={closeCall}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 900, width: '94%', maxHeight: '94vh', overflowY: 'auto' }}>
     <div className="modal-header"><h2 style={{ margin: 0 }}>{title}</h2><button type="button" className="modal-close" onClick={closeCall}><X size={20} /></button></div>
     <div className="modal-body">
-      {error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}
-      {step === 'call' && <div style={{ display: 'grid', gap: 16 }}>
+      {error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}
+      {step === 'call' && <div style={{ display: 'grid', gap: 12 }}>
         <div className="form-grid-2">
           <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Donor *</span>
             {donor ? (() => { const names = donorNames(donor); return <div className="call-donor-card">
@@ -185,12 +185,12 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
           <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Campaign</span><select value={form.campaignId} onChange={event => set('campaignId', event.target.value)}><option value="">— Select —</option>{campaigns.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         </div>
 
-        <div><div style={{ fontWeight: 800, color: 'var(--navy)', marginBottom: 8 }}>What did he answer? *</div><div className="call-outcomes">{CALL_OUTCOMES.map(outcomeButton)}</div></div>
+        <div><div style={{ fontWeight: 600, color: 'var(--navy)', marginBottom: 8 }}>What did he answer? *</div><div className="call-outcomes">{CALL_OUTCOMES.map(outcomeButton)}</div></div>
 
         {form.outcome === 'Pledged' && <div className="call-step-box" style={{ display: 'grid', gap: 8 }}>
           {pledgeDone ? <div className="call-linked-done"><CheckCircle2 size={18} /> Pledge saved: <strong>{pledgeDone.currency} {money(pledgeDone.amount)}</strong> on {pledgeDone.date}<button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowPledge(true)}>Edit pledge</button></div>
             : <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><button type="button" className="btn btn-primary btn-sm" onClick={() => chooseOutcome('Pledged')}>Enter the pledge</button><span style={{ color: 'var(--text-muted)' }}>Opens the full pledge window.</span></div>}
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700 }}><input type="checkbox" checked={form.setUpPayments} onChange={event => set('setUpPayments', event.target.checked)} /> After saving the call, set up payments for this pledge (card or other)</label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 600 }}><input type="checkbox" checked={form.setUpPayments} onChange={event => set('setUpPayments', event.target.checked)} /> After saving the call, set up payments for this pledge (card or other)</label>
         </div>}
         {form.outcome === 'Paid' && <div className="call-step-box">
           {paymentDone ? <div className="call-linked-done"><CheckCircle2 size={18} /> Payment saved: <strong>{money(paymentDone.amount)}</strong> · {paymentDone.method.replace(/_/g, ' ')}{paymentDone.pending ? ' · pending' : ''}</div>
@@ -211,16 +211,16 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="btn btn-secondary" onClick={closeCall} disabled={saving}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={() => void saveCall()}>{saving ? 'Saving…' : needsPledge ? 'Enter Pledge →' : needsPayment ? 'Enter Payment →' : 'Save Call'}</button></div>
       </div>}
 
-      {step === 'recurring' && donor && <div style={{ display: 'grid', gap: 14 }}>
+      {step === 'recurring' && donor && <div style={{ display: 'grid', gap: 10 }}>
         <div className="call-saved-note"><CheckCircle2 size={18} /> The call{saved?.pledgeId ? ' and pledge are' : ' is'} saved. Now set up the payments.</div>{saved?.pledgeAmount ? <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>The pledge is {money(saved.pledgeAmount)}. Enter the amount of <strong>each</strong> payment (for example, the monthly amount).</div> : null}
         {cardsToggle}
         {recurringForm(true)}
       </div>}
 
-      {step === 'done' && <div style={{ textAlign: 'center', padding: 30 }}>
+      {step === 'done' && <div style={{ textAlign: 'center', padding: 20 }}>
         <CheckCircle2 size={42} style={{ color: 'var(--green)' }} />
         <h3 style={{ margin: '10px 0 6px', color: 'var(--navy)' }}>{doneMessage}</h3>
-        <div style={{ color: 'var(--text-muted)', marginBottom: 18 }}>It shows on the Tracker page and in the donor’s pop-up.</div>
+        <div style={{ color: 'var(--text-muted)', marginBottom: 12 }}>It shows on the Tracker page and in the donor’s pop-up.</div>
         <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
       </div>}
     </div>
@@ -234,7 +234,7 @@ export const RecordCallModal: React.FC<{ donor?: Donor; onClose: () => void; onS
       {payWindow === 'payment' ? <>
         <OnlinePaymentForm donor={donor} onCancel={() => setPayWindow('')} onCreated={(status, item) => { setPaymentDone({ id: String(item?.id || ''), amount: Number(item?.amount || 0), method: String(item?.method || ''), pending: status === 'pending' }); setPayWindow(''); }} />
         <div className="card" style={{ padding: 12, textAlign: 'right' }}><button type="button" className="btn btn-ghost btn-sm" onClick={() => setPayWindow('recurring')}>He wants monthly / recurring payments instead →</button></div>
-      </> : <div className="card" style={{ padding: 20, display: 'grid', gap: 12 }}><h2 style={{ margin: 0, color: 'var(--navy)' }}>Set up payments for {donorNames(donor).main}</h2>{cardsToggle}{recurringForm(false)}</div>}
+      </> : <div className="card" style={{ padding: 14, display: 'grid', gap: 12 }}><h2 style={{ margin: 0, color: 'var(--navy)' }}>Set up payments for {donorNames(donor).main}</h2>{cardsToggle}{recurringForm(false)}</div>}
     </div></div>}
     {showProfile && donor && <CloudDonorProfileModal donorId={donor.id} onClose={() => setShowProfile(false)} onEdit={item => { setShowProfile(false); setEditingDonor(item); }} />}
     {editingDonor && <div className="modal-overlay" onClick={() => setEditingDonor(null)}><div onClick={event => event.stopPropagation()} style={{ width: 'min(900px,94vw)', maxHeight: '92vh', overflowY: 'auto' }}><OnlineDonorForm donor={editingDonor} onCancel={() => setEditingDonor(null)} onSaved={() => setEditingDonor(null)} onConflict={() => setEditingDonor(null)} /></div></div>}

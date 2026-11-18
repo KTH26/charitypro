@@ -37,15 +37,15 @@ export const PickupsBox: React.FC = () => {
     try { await update(item, { pickupStatus: 'cancelled' }); await load(true); } catch (reason: any) { setError(reason.message); }
   };
 
-  return <section className="card loans-box" style={{ padding: 0, overflow: 'hidden', marginTop: 18 }}>
+  return <section className="card loans-box" style={{ padding: 0, overflow: 'hidden', marginTop: 12 }}>
     <div className="loans-box-header"><div>
-      <h2 style={{ margin: 0, color: 'var(--navy)', fontSize: 19, display: 'flex', alignItems: 'center', gap: 8 }}><HandCoins size={20} /> Money to Pick Up</h2>
+      <h2 style={{ margin: 0, color: 'var(--navy)', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}><HandCoins size={20} /> Money to Pick Up</h2>
       <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{items.length ? `${items.length} donor${items.length === 1 ? '' : 's'} · click a name to enter what he gave` : 'Nothing to pick up'}</div>
     </div><a href="/tracker" className="btn btn-secondary btn-sm">Open Tracker</a></div>
-    {error && <div style={{ padding: '12px 22px', color: 'var(--red)', fontWeight: 700 }}>{error}</div>}
-    {notice && <div style={{ padding: '12px 22px', color: 'var(--green)', fontWeight: 800 }}>{notice}</div>}
-    {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</div>
-      : items.length === 0 ? <div style={{ padding: 26, textAlign: 'center', color: 'var(--text-muted)' }}>When a donor says “come pick it up”, record the call in the Tracker and choose “Pick up money”. He will show here.</div>
+    {error && <div style={{ padding: '12px 22px', color: 'var(--red)', fontWeight: 600 }}>{error}</div>}
+    {notice && <div style={{ padding: '12px 22px', color: 'var(--green)', fontWeight: 600 }}>{notice}</div>}
+    {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</div>
+      : items.length === 0 ? <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>When a donor says “come pick it up”, record the call in the Tracker and choose “Pick up money”. He will show here.</div>
       : <div className="loans-box-scroll"><table className="loans-table">
         <thead><tr><th>Donor</th><th>Address</th><th style={{ textAlign: 'right' }}>Amount</th><th>Pick up on</th><th></th></tr></thead>
         <tbody>{items.map(item => {
@@ -53,7 +53,7 @@ export const PickupsBox: React.FC = () => {
           return <tr key={item.id}>
             <td><button type="button" className="link-button" onClick={() => { setCollecting(item); setNotice(''); }}>{item.donorName}</button>{item.donorPhone && <small style={{ display: 'block', color: 'var(--text-muted)' }}>{item.donorPhone}</small>}</td>
             <td>{item.pickupAddress || item.donorAddress || '—'}</td>
-            <td style={{ textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap' }}>{item.pickupAmount ? money(item.pickupAmount) : '—'}</td>
+            <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{item.pickupAmount ? money(item.pickupAmount) : '—'}</td>
             <td style={{ whiteSpace: 'nowrap', color: late ? 'var(--red)' : undefined, fontWeight: late ? 800 : undefined }}>{item.pickupDate || 'Any time'}</td>
             <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><button className="btn btn-primary btn-sm" onClick={() => { setCollecting(item); setNotice(''); }}>Picked up</button> <button className="btn btn-ghost btn-sm" onClick={() => void remove(item)}>Remove</button></td>
           </tr>;

@@ -36,7 +36,7 @@ export const OnlineDashboard: React.FC = () => {
 
   return <main className="dashboard-page"><div className="dashboard-shell">
     <div className="dashboard-hero"><div><div className="page-kicker">CHARITYPRO CLOUD</div><h1>Good to see you.</h1><p>Your fundraising and finances, clearly organized in one place.</p></div><div className="dashboard-date">Live shared data<br/><strong>{new Intl.DateTimeFormat('en-CA', { month: 'long', day: 'numeric', year: 'numeric' }).format(new Date())}</strong></div></div>
-    {error && <div className="card" style={{ padding: 16, color: 'var(--red)', marginBottom: 18 }}>{error}</div>}
+    {error && <div className="card" style={{ padding: 12, color: 'var(--red)', marginBottom: 12 }}>{error}</div>}
     <div className="dashboard-stats">
       {cards.map((card, index) => <a key={card.label} href={card.href} className={`dashboard-stat ${card.danger ? 'is-alert' : ''}`}><span className="dashboard-stat-index">{String(index + 1).padStart(2, '0')}</span><span className="dashboard-stat-label">{card.label}</span><strong>{card.value}</strong><span className="dashboard-stat-link">View details →</span></a>)}
     </div>

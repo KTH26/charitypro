@@ -80,18 +80,18 @@ export const LoansPayableBox: React.FC = () => {
     <section className="card loans-box" style={{ padding: 0, overflow: 'hidden' }}>
       <div className="loans-box-header">
         <div>
-          <h2 style={{ margin: 0, color: 'var(--navy)', fontSize: 19, display: 'flex', alignItems: 'center', gap: 8 }}><Landmark size={20} /> Loans to Pay Back</h2>
+          <h2 style={{ margin: 0, color: 'var(--navy)', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}><Landmark size={20} /> Loans to Pay Back</h2>
           <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>
             {Object.keys(totals).length ? Object.entries(totals).map(([currency, total]) => `${money(total, currency)} still owed`).join(' · ') : 'Nothing owed'}
-            {overdue > 0 && <span style={{ color: 'var(--red)', fontWeight: 800 }}> · {overdue} overdue</span>}
-            {noDate > 0 && <span style={{ color: 'var(--red)', fontWeight: 800 }}> · {noDate} without a date</span>}
+            {overdue > 0 && <span style={{ color: 'var(--red)', fontWeight: 600 }}> · {overdue} overdue</span>}
+            {noDate > 0 && <span style={{ color: 'var(--red)', fontWeight: 600 }}> · {noDate} without a date</span>}
           </div>
         </div>
         
       </div>
-      {error && <div style={{ padding: '12px 22px', color: 'var(--red)', fontWeight: 700 }}>{error}</div>}
-      {loading ? <div style={{ padding: 34, textAlign: 'center', color: 'var(--text-muted)' }}>Loading loans…</div>
-        : items.length === 0 ? <div style={{ padding: 34, textAlign: 'center', color: 'var(--green)', fontWeight: 800 }}>
+      {error && <div style={{ padding: '12px 22px', color: 'var(--red)', fontWeight: 600 }}>{error}</div>}
+      {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Loading loans…</div>
+        : items.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--green)', fontWeight: 600 }}>
           <CheckCircle2 size={25} style={{ verticalAlign: 'middle', marginRight: 8 }} />
           {accounts.length ? 'All loans are paid back.' : 'No loan accounts yet. To add one, open an account, choose Liability, and set the kind to “Loan”.'}
         </div>
@@ -102,8 +102,8 @@ export const LoansPayableBox: React.FC = () => {
             const days = item.dueDate ? daysUntil(item.dueDate) : null;
             const tone = days === null || days < 0 ? 'is-late' : days <= 7 ? 'is-soon' : '';
             return <tr key={key}>
-              <td style={{ fontWeight: 700 }}>{item.accountName}</td>
-              <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 800 }}>{money(item.remaining, item.currency)}</td>
+              <td style={{ fontWeight: 600 }}>{item.accountName}</td>
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{money(item.remaining, item.currency)}</td>
               <td>{editing === key
                 ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                   <input type="date" value={newDate} onChange={event => setNewDate(event.target.value)} autoFocus style={{ width: 145 }} />

@@ -96,20 +96,20 @@ export const PledgeFormModal: React.FC<{
 
   // "Paid right away": the payment window opens with this pledge already chosen.
   if (paying && donor) return <div className="modal-overlay"><div className="pay-modal" onClick={event => event.stopPropagation()}>
-    <div className="call-saved-note" style={{ marginBottom: 8, background: 'var(--bg-card)', padding: 12, borderRadius: 10 }}>✓ The pledge is saved. Now enter how he paid.</div>
+    <div className="call-saved-note" style={{ marginBottom: 8, background: 'var(--bg-card)', padding: 12, borderRadius: 8 }}>✓ The pledge is saved. Now enter how he paid.</div>
     <OnlinePaymentForm title="Payment for this pledge" donor={donor} defaultAmount={Number(form.amount)} defaultCurrency={form.currency} defaultAllocations={[{ pledgeId: String(paying.item.id), amount: Number(form.amount) }]} onCancel={() => onSaved(paying.item, paying.isNew)} onCreated={() => onSaved(paying.item, paying.isNew)} />
   </div></div>;
 
   return <div className="modal-overlay" onClick={onClose}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={save} style={{ maxWidth: 760, width: '92%', maxHeight: '94vh', overflowY: 'auto' }}>
     <div className="modal-header"><h2 style={{ margin: 0, color: 'var(--navy)' }}>{pledge ? 'Edit Pledge' : 'New Pledge'}</h2><button type="button" className="modal-close" onClick={onClose}>×</button></div>
     <div className="modal-body">
-      {error && <div style={{ color: 'var(--red)', fontWeight: 700, marginBottom: 14 }}>{error}</div>}{notice && <div style={{ color: 'var(--green)', fontWeight: 700, marginBottom: 14 }}>{notice}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
+      {error && <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}{notice && <div style={{ color: 'var(--green)', fontWeight: 600, marginBottom: 10 }}>{notice}</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10 }}>
         <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Donor *</span><DonorPicker value={donor} onChange={setDonor} locked={Boolean(fixedDonor)} autoFocus={!fixedDonor} /></div>
         <label className="form-group" style={{ margin: 0 }}><span>Amount *</span><input type="number" min="0.01" step="0.01" autoFocus={Boolean(fixedDonor)} value={form.amount} onChange={event => setForm(current => ({ ...current, amount: event.target.value }))} /></label>
         <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={form.currency} onChange={event => setForm(current => ({ ...current, currency: event.target.value as 'CAD' | 'USD' }))}><option>CAD</option><option>USD</option></select></label>
         <label className="form-group" style={{ margin: 0 }}><span>Date *</span><input type="date" value={form.date} onChange={event => setForm(current => ({ ...current, date: event.target.value }))} /></label>
-        <div className="form-group" style={{ margin: 0 }}><span>Campaign — automatic by date</span><div style={{ padding: '11px 12px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-input)', fontWeight: 800 }}>{campaign ? `${campaign.name} (${campaign.year})` : 'No campaign covers this date'}</div></div>
+        <div className="form-group" style={{ margin: 0 }}><span>Campaign — automatic by date</span><div style={{ padding: '11px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-input)', fontWeight: 600 }}>{campaign ? `${campaign.name} (${campaign.year})` : 'No campaign covers this date'}</div></div>
 
         <div className="pledge-extra">
           <strong style={{ color: 'var(--navy)' }}><CalendarDays size={15} style={{ verticalAlign: -2 }} /> Calendar dates (optional)</strong>
@@ -129,7 +129,7 @@ export const PledgeFormModal: React.FC<{
         {!!form.fundraiserAllocations.length && <button type="button" className="btn btn-secondary btn-sm" style={{ gridColumn: '1 / -1', justifySelf: 'start' }} onClick={() => void saveGroup()}>Save this split as a team</button>}
         <PledgeTagPicker value={form.tags} onChange={tags => setForm(current => ({ ...current, tags }))} />
         <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Notes</span><textarea value={form.notes} onChange={event => setForm(current => ({ ...current, notes: event.target.value }))} /></label>
-        {!pledge && <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontWeight: 800, padding: 12, borderRadius: 10, background: 'var(--bg-input)' }}><input type="checkbox" checked={payNow} onChange={event => setPayNow(event.target.checked)} /> He already paid (or pays now) – open the payment after saving</label>}
+        {!pledge && <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontWeight: 600, padding: 12, borderRadius: 8, background: 'var(--bg-input)' }}><input type="checkbox" checked={payNow} onChange={event => setPayNow(event.target.checked)} /> He already paid (or pays now) – open the payment after saving</label>}
       </div>
     </div>
     <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : payNow && !pledge ? 'Save Pledge & Enter Payment →' : 'Save Pledge'}</button></div>

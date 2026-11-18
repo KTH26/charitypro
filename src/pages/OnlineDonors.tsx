@@ -66,23 +66,23 @@ export const OnlineDonors: React.FC = () => {
         </div>
 
         {editing && <OnlineDonorForm donor={editing === 'new' ? undefined : editing} onCancel={() => setEditing(null)} onSaved={saved} onConflict={message => { setEditing(null); setNotice(message); void load(); }} />}
-        {notice && <div className="card" style={{ padding: 14, marginBottom: 16, color: notice.includes('changed by another') ? 'var(--red)' : 'var(--green)', fontWeight: 800 }}>{notice}</div>}
-        <section className="card" style={{ padding: 18, marginBottom: 18 }}>
+        {notice && <div className="card" style={{ padding: 12, marginBottom: 12, color: notice.includes('changed by another') ? 'var(--red)' : 'var(--green)', fontWeight: 600 }}>{notice}</div>}
+        <section className="card" style={{ padding: 12, marginBottom: 12 }}>
           <div style={{ display: 'flex', gap: 10 }}><input style={{ flex: 1 }} value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder="Live search: name, phone, email, Hebrew name, address or donor ID" />{searchInput && <button className="btn btn-secondary" type="button" onClick={() => setSearchInput('')}>Clear</button>}</div>
         </section>
 
-        {error && <div className="card" style={{ padding: 16, color: 'var(--red)', marginBottom: 16 }}>{error}</div>}
+        {error && <div className="card" style={{ padding: 12, color: 'var(--red)', marginBottom: 12 }}>{error}</div>}
         <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading donors from the cloud...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          {loading ? <div style={{ padding: 24, textAlign: 'center' }}>Loading donors from the cloud...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><SortableTh column="name" label="Donor" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="phone" label="Phone" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="email" label="Email" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="address" label="Address" sort={sort} direction={direction} onSort={changeSort}/><th style={{textAlign:'right'}}>Open balance</th><th /></tr></thead>
             <tbody>{items.map(donor => <tr key={donor.id} onClick={() => setProfileId(donor.id)} style={{ cursor: 'pointer' }}>
-              <td><div style={{ fontWeight: 800 }}>{donor.name}</div><div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{donor.displayId || donor.id}</div>{(donor.hebFirstName || donor.hebLastName) && <div dir="rtl" style={{ color: 'var(--navy-light)', fontSize: 13, textAlign: 'left' }}>{[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ')}</div>}</td>
+              <td><div style={{ fontWeight: 600 }}>{donor.name}</div><div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{donor.displayId || donor.id}</div>{(donor.hebFirstName || donor.hebLastName) && <div dir="rtl" style={{ color: 'var(--navy-light)', fontSize: 13, textAlign: 'left' }}>{[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ')}</div>}</td>
               <td>{donor.phone}</td><td>{donor.email || ''}</td><td>{donor.address || ''}</td>
-              <td style={{ textAlign: 'right', fontWeight: 800, color: Number(donor.openBalance || 0)>0?'var(--red)':'var(--green)' }}>${Number(donor.openBalance || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td style={{ textAlign: 'right', fontWeight: 600, color: Number(donor.openBalance || 0)>0?'var(--red)':'var(--green)' }}>${Number(donor.openBalance || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               <td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={event => { event.stopPropagation(); setEditing(donor); setNotice(''); }}>Edit</button></td>
-            </tr>)}{items.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center' }}>No matching donors.</td></tr>}</tbody>
+            </tr>)}{items.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center' }}>No matching donors.</td></tr>}</tbody>
           </table></div>}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
         </section>
       </div>
       {profileId && <CloudDonorProfileModal donorId={profileId} onClose={() => setProfileId(null)} onEdit={donor => { setProfileId(null); setEditing(donor); }} />}
