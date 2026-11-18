@@ -1,118 +1,157 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Printer, Save } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Combine, MoveLeft, MoveRight, Printer, RotateCcw, Split } from 'lucide-react';
 import { HDate } from '@hebcal/core';
 import { MonthNav } from '../components/HebrewCalendar';
 import { hebMonthName, hebYearText, todayHebrew } from '../utils/hebrewCalendar';
-import { buildSheet, dayLetters, endLine, nameLine, titleLine, type SheetDay, type SheetSponsor } from '../utils/sponsorSheet';
+import { type SheetDay, type SheetLayout, type SheetSponsor, dayLabel, defaultLayout, endLine, firstLine, lastLine, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, splitBox, titleLine } from '../utils/sponsorSheet';
 
 type Item = SheetDay & { id: string; kind: 'day' | 'month' };
-type Settings = { contactTitle: string; contactName: string; contactEnd: string; contactPhone: string };
-const DEFAULT_SETTINGS: Settings = { contactTitle: 'הר"ר', contactName: 'יצחק הערש מאליק', contactEnd: 'הי"ו', contactPhone: '514-464-2175' };
-const plain = (text: string) => text.replace(/[׳״]/g, (mark: string) => (mark === '״' ? '"' : "'"));
 
-/** One sponsor box: the day tabs on top, then title, name, הי"ו and the dedication. */
-const Box: React.FC<{ days: number[]; sponsor: SheetSponsor | null; span: number }> = ({ days, sponsor, span }) => {
-  const wide = span >= 3;
-  return <div className={`ss-box ${sponsor ? '' : 'ss-free'} ${wide ? 'ss-wide' : ''}`} style={{ gridColumn: `span ${span}` }}>
-    <div className="ss-tabs">{days.map(day => <span key={day} className="ss-tab">{dayLetters(day)}</span>)}</div>
-    {sponsor ? <div className="ss-body">
-      {wide ? <div className="ss-oneline"><span className="ss-title">{titleLine(sponsor)}</span> <span className="ss-name">{nameLine(sponsor)}</span> <span className="ss-end">{endLine(sponsor)}</span></div>
-        : <><div className="ss-title">{titleLine(sponsor)}</div><div className="ss-name">{nameLine(sponsor)}</div><div className="ss-end">{endLine(sponsor)}</div></>}
-      {sponsor.honoree && <div className="ss-honoree">{sponsor.honoree}</div>}
-      {sponsor.notes && <div className="ss-honoree">{sponsor.notes}</div>}
-    </div> : <div className="ss-body ss-open">פנוי</div>}
-  </div>;
+// Measured from the designer's sheet (points; the page is 1266 × 834).
+const COL_LEFT = [724.3, 622.7, 519, 415.3, 312.3, 209.3, 105.7]; // column 0 is the right one
+const BOX_W = 95; const BOX_H = 87.7; const BORDER = 1.1;
+const ROW_TOP = [223, 328.3, 431.3, 537.3, 636.3];
+const TAB_W = 31.3; const TAB_H = 21.7;
+const RED = '#f94b33'; const TEAL = '#2c585c'; const INK = '#2c2e35'; const BOX_FILL = '#e8fdff';
+const plain = (text: string) => text.replace(/[׳״]/g, (mark: string) => (mark === '״' ? '"' : "'"));
+const pt = (value: number) => `${Math.round(value * 100) / 100}pt`;
+
+const rowTops = (rows: number) => {
+  if (rows <= ROW_TOP.length) return { tops: ROW_TOP.slice(0, Math.max(rows, 1)), height: BOX_H };
+  const pitch = (ROW_TOP[ROW_TOP.length - 1] - ROW_TOP[0]) / (rows - 1);
+  return { tops: Array.from({ length: rows }, (_, index) => ROW_TOP[0] + pitch * index), height: Math.min(BOX_H, pitch - 15) };
 };
 
-/** The monthly sponsor list, ready to print (17 × 11 inches, like the designer's sheet). */
+/** Shrinks the text of a box until it fits. */
+const Fit: React.FC<{ children: React.ReactNode; deps: unknown[] }> = ({ children, deps }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return; let scale = 1; el.style.fontSize = '1em';
+    for (let step = 0; step < 14 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1); step++) { scale -= 0.05; el.style.fontSize = `${scale}em`; }
+  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  return <div ref={ref} className="ss-fit">{children}</div>;
+};
+
+/** What is written inside a box, sized like the sheet: bigger for wider boxes. */
+const BoxText: React.FC<{ sponsor: SheetSponsor; span: number }> = ({ sponsor, span }) => {
+  const honoree = [sponsor.honoree, sponsor.notes].filter(Boolean);
+  if (span >= 5) return <Fit deps={[sponsor, span]}><div className="ss-line"><span style={{ fontSize: '18pt' }} className="ss-ink">{titleLine(sponsor)}</span> <span className="ss-name" style={{ fontSize: '36pt' }}>{nameLine(sponsor)}</span> <span style={{ fontSize: '18pt' }} className="ss-ink">{endLine(sponsor)}</span></div>{honoree.map(text => <div key={text} className="ss-hon" style={{ fontSize: '12pt' }}>{text}</div>)}</Fit>;
+  const nameSize = span >= 3 ? 24 : span === 2 ? 17 : 15;
+  // One line when it fits; otherwise the first name on one line and the last name under it.
+  return <Fit deps={[sponsor, span]}>
+    <div className="ss-ink ss-title" style={{ fontSize: '8pt' }}>{titleLine(sponsor)}</div>
+    <div className="ss-name" style={{ fontSize: pt(nameSize) }}>{firstLine(sponsor) && lastLine(sponsor) ? <><span className="ss-nowrap">{firstLine(sponsor)}</span> <span className="ss-nowrap">{lastLine(sponsor)}</span></> : nameLine(sponsor)}</div>
+    <div className="ss-ink" style={{ fontSize: '8pt' }}>{endLine(sponsor)}</div>
+    {honoree.map(text => <div key={text} className="ss-hon" style={{ fontSize: span >= 3 ? '9pt' : '7.5pt' }}>{text}</div>)}
+  </Fit>;
+};
+
+/** The monthly sponsor list, printed exactly on the designer's sheet. */
 export const SponsorSheet: React.FC = () => {
   const today = todayHebrew();
   const start = new URLSearchParams(window.location.search);
   const [view, setView] = useState({ month: Number(start.get('month')) || today.getMonth(), year: Number(start.get('year')) || today.getFullYear() });
+  const daysInMonth = HDate.daysInMonth(view.month, view.year);
   const [items, setItems] = useState<Item[]>([]); const [error, setError] = useState('');
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS); const [notice, setNotice] = useState('');
-  const [scale, setScale] = useState(0.5); const wrap = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<SheetLayout>(defaultLayout(daysInMonth)); const [loaded, setLoaded] = useState(false);
+  const [selected, setSelected] = useState<number[]>([]); const [dragging, setDragging] = useState<number | null>(null);
+  const [status, setStatus] = useState(''); const [scale, setScale] = useState(0.6); const wrap = useRef<HTMLDivElement>(null);
+  const saveTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     const id = 'sponsor-sheet-fonts';
-    if (!document.getElementById(id)) { const link = document.createElement('link'); link.id = id; link.rel = 'stylesheet'; link.href = 'https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700;900&family=Noto+Serif+Hebrew:wght@400;600&display=swap'; document.head.appendChild(link); }
+    if (!document.getElementById(id)) { const link = document.createElement('link'); link.id = id; link.rel = 'stylesheet'; link.href = 'https://fonts.googleapis.com/css2?family=Noto+Serif+Hebrew:wdth,wght@62.5..100,300..900&display=swap'; document.head.appendChild(link); }
   }, []);
   useEffect(() => {
-    let cancelled = false;
+    let cancelled = false; setLoaded(false); setSelected([]);
     void (async () => {
       try {
         const response = await fetch(`/api/v3/sponsor-sheet?hebYear=${view.year}&hebMonth=${view.month}`); const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load the sponsors.');
-        if (cancelled) return; setItems(data.items || []); setSettings({ ...DEFAULT_SETTINGS, ...(data.settings || {}) }); setError('');
-      } catch (reason: any) { if (!cancelled) setError(reason.message); }
+        if (cancelled) return; setItems(data.items || []); setLayout(normalizeLayout(data.layout || defaultLayout(daysInMonth), daysInMonth)); setError(''); setLoaded(true);
+      } catch (reason: any) { if (!cancelled) { setError(reason.message); setLayout(defaultLayout(daysInMonth)); } }
     })();
     return () => { cancelled = true; };
-  }, [view.month, view.year]);
+  }, [view.month, view.year, daysInMonth]);
   useEffect(() => {
-    const fit = () => { const width = wrap.current?.clientWidth || 1200; setScale(Math.min(1, width / 1632)); };
+    const fit = () => { const width = wrap.current?.clientWidth || 1200; setScale(Math.min(1, width / (1266 * 4 / 3))); };
     fit(); window.addEventListener('resize', fit); return () => window.removeEventListener('resize', fit);
   }, []);
 
-  const daysInMonth = HDate.daysInMonth(view.month, view.year);
-  const rows = useMemo(() => buildSheet(daysInMonth, items.filter(item => item.kind === 'day' && item.day >= 1)), [items, daysInMonth]);
-  const patron = items.find(item => item.kind === 'month') || null;
-  const month = hebMonthName(view.month, view.year); const year = plain(hebYearText(view.year));
-  const taken = items.filter(item => item.kind === 'day').length;
-  const saveSettings = async () => {
-    setNotice('');
-    const response = await fetch('/api/v3/sponsor-sheet/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
-    const data = await response.json().catch(() => ({})); setNotice(response.ok && data.success ? 'Saved.' : data.error || 'Unable to save.');
+  const save = (next: SheetLayout, reset = false) => {
+    setLayout(next); setStatus('Saving…'); window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/v3/sponsor-sheet/layout?hebYear=${view.year}&hebMonth=${view.month}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reset ? { reset: true } : next) });
+        const data = await response.json().catch(() => ({})); setStatus(response.ok && data.success ? 'Saved' : data.error || 'Not saved');
+      } catch { setStatus('Not saved'); }
+    }, 500);
   };
+
+  const byDay = useMemo(() => new Map(items.filter(item => item.kind === 'day').map(item => [item.day, item])), [items]);
+  const patron = items.find(item => item.kind === 'month') || null;
+  const { placed, rows } = useMemo(() => placeBoxes(layout), [layout]);
+  const { tops, height } = rowTops(rows);
+  const monthName = hebMonthName(view.month, view.year);
+  const monthTitle = layout.monthTitle || `${monthName} ${hebYearText(view.year)}`;
+  const bandMonth = layout.bandMonth || monthName;
+  const taken = byDay.size;
+
+  const toggle = (index: number) => setSelected(current => current.includes(index) ? current.filter(at => at !== index) : [...current, index]);
+  const merge = () => { try { save(mergeBoxes(layout, selected)); setSelected([]); setError(''); } catch (reason: any) { setError(reason.message); } };
+  const split = () => { let next = layout; [...selected].sort((a, b) => b - a).forEach(index => { next = splitBox(next, index); }); save(next); setSelected([]); };
+  const move = (step: -1 | 1) => { if (selected.length !== 1) return; const to = selected[0] + step; if (to < 0 || to >= layout.boxes.length) return; save(moveBox(layout, selected[0], to)); setSelected([to]); };
+  const editLabel = (day: number) => { const text = window.prompt('Text on this day tab (for example יא):', dayLabel(layout, day)); if (text === null) return; const labels = { ...(layout.labels || {}) }; if (text.trim()) labels[String(day)] = text.trim(); else delete labels[String(day)]; save({ ...layout, labels }); };
+  const mixed = placed.filter(box => new Set(box.days.map(day => byDay.get(day)?.donorId || '')).size > 1);
 
   return <div className="ss-page">
     <style>{SHEET_CSS}</style>
     <div className="ss-controls no-print">
-      <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ margin: '4px 0', color: 'var(--navy)' }}>Monthly sponsor list</h1><div style={{ color: 'var(--text-muted)' }}>{taken} of {daysInMonth} days taken{patron ? ' · month patron: ' + nameLine(patron) : ' · no month patron yet'}. Book days on the Calendar page.</div></div>
-      <MonthNav year={view.year} month={view.month} onChange={(nextMonth, nextYear) => setView({ month: nextMonth, year: nextYear })} />
-      <div className="ss-settings">
-        <span>Who to call:</span>
-        <input dir="rtl" value={settings.contactTitle} onChange={event => setSettings({ ...settings, contactTitle: event.target.value })} style={{ width: 60 }} />
-        <input dir="rtl" value={settings.contactName} onChange={event => setSettings({ ...settings, contactName: event.target.value })} style={{ width: 170 }} />
-        <input dir="rtl" value={settings.contactEnd} onChange={event => setSettings({ ...settings, contactEnd: event.target.value })} style={{ width: 60 }} />
-        <input value={settings.contactPhone} onChange={event => setSettings({ ...settings, contactPhone: event.target.value })} style={{ width: 130 }} />
-        <button className="btn btn-secondary btn-sm" onClick={() => void saveSettings()}><Save size={14} /> Save</button>{notice && <small>{notice}</small>}
-        <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => window.print()}><Printer size={16} /> Print / save as PDF</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div><div style={{ color: 'var(--green)', fontWeight: 800, fontSize: 13 }}>CHARITYPRO CLOUD</div><h1 style={{ margin: '4px 0', color: 'var(--navy)' }}>Monthly sponsor list</h1><div style={{ color: 'var(--text-muted)' }}>{taken} of {daysInMonth} days taken{patron ? ` · month patron: ${nameLine(patron)}` : ' · no month patron yet'} · book days on the Calendar page</div></div>
+        <button className="btn btn-primary" onClick={() => window.print()}><Printer size={16} /> Print / save as PDF</button>
       </div>
+      <MonthNav year={view.year} month={view.month} onChange={(month, year) => setView({ month, year })} />
+      <div className="ss-tools">
+        <button className="btn btn-secondary btn-sm" disabled={selected.length < 2} onClick={merge}><Combine size={14} /> Merge chosen boxes</button>
+        <button className="btn btn-secondary btn-sm" disabled={!selected.some(index => (layout.boxes[index] || []).length > 1)} onClick={split}><Split size={14} /> Split</button>
+        <button className="btn btn-secondary btn-sm" disabled={selected.length !== 1} onClick={() => move(-1)} title="Move one place to the right (earlier)"><MoveRight size={14} /> Earlier</button>
+        <button className="btn btn-secondary btn-sm" disabled={selected.length !== 1} onClick={() => move(1)} title="Move one place to the left (later)"><MoveLeft size={14} /> Later</button>
+        {selected.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setSelected([])}>Clear choice ({selected.length})</button>}
+        <button className="btn btn-ghost btn-sm" onClick={() => { if (window.confirm('Go back to one box per day in the regular order, with the regular dates?')) { save(defaultLayout(daysInMonth), true); setSelected([]); } }}><RotateCcw size={14} /> Regular order</button>
+        <label>Month title <input dir="rtl" value={layout.monthTitle ?? ''} placeholder={`${monthName} ${plain(hebYearText(view.year))}`} onChange={event => save({ ...layout, monthTitle: event.target.value })} /></label>
+        <label>Month in the patron band <input dir="rtl" value={layout.bandMonth ?? ''} placeholder={monthName} onChange={event => save({ ...layout, bandMonth: event.target.value })} /></label>
+        <small style={{ color: 'var(--text-muted)' }}>{loaded ? status : 'Loading…'}</small>
+      </div>
+      <small style={{ color: 'var(--text-muted)' }}>Click boxes to choose them, then Merge (each day keeps its tab). Drag a box to move it. Double-click a red day tab to change its date. Print: paper 11 × 17 (Tabloid), landscape, margins none, “Background graphics” on.</small>
       {error && <div className="pay-error">{error}</div>}
-      <small style={{ color: 'var(--text-muted)' }}>In the print window choose paper 11 × 17 (Tabloid), landscape, margins none, and turn on "Background graphics".</small>
+      {mixed.length > 0 && <div className="pay-error">A merged box has days of different sponsors ({mixed.map(box => box.days.map(day => dayLabel(layout, day)).join(',')).join(' · ')}). The box shows the first day's sponsor.</div>}
     </div>
-    <div ref={wrap} className="ss-wrap" style={{ height: 1056 * scale }}>
+    <div ref={wrap} className="ss-wrap" style={{ height: 834 * (4 / 3) * scale }}>
       <div className="ss-sheet" dir="rtl" style={{ transform: `scale(${scale})` }}>
-        <div className="ss-kicker">מ כ י ר ת &nbsp; ז כ ו ת &nbsp; י ו מ י &nbsp; ה צ ל ה</div>
-        <div className="ss-main">
-          <aside className="ss-side">
-            <div className="ss-card ss-intro">
-              <p className="ss-small">ברוב הכרת הטוב הננו בזה להביע בשער בת רבים<br />הני נדבנים שזכות לנדב</p>
-              <div className="ss-ribbon"><div className="ss-ribbon-top">יום הצלה בחודש</div><div className="ss-ribbon-month">{month} {year}</div></div>
-              <p className="ss-small">ובזה קנו חלק נכבד בזכות הצלת נפשות מישראל מידי יום ביומו</p>
-              <div className="ss-dear">טייערע אידן!</div>
-              <p className="ss-yid">הצלה לויפט אויף די מסירות נפש פון<br />די מעמבערס, און אויף אייער ספאנסערשיפ</p>
-              <div className="ss-reward">שכרכם הרבה מאוד!</div>
-              <div className="ss-contact"><p>נאכנישט גענומען א טייל? אזוי אויך אויסציוועלן<br />אייער טאג לע"נ וכדו' פארבינט אייך היינט מיט</p><div className="ss-contact-name"><small>{settings.contactTitle}</small> {settings.contactName} <small>{settings.contactEnd}</small></div><div className="ss-phone">{settings.contactPhone}</div></div>
+        <img className="ss-template" src="/sponsor-sheet/template.jpg" alt="" />
+        {placed.map(box => {
+          const top = tops[box.row]; const right = COL_LEFT[box.col] + BOX_W + BORDER; const left = COL_LEFT[box.col + box.span - 1] - BORDER;
+          const sponsor = byDay.get(box.days[0]) || null; const isSelected = selected.includes(box.index);
+          return <React.Fragment key={box.days.join('-')}>
+            <div className={`ss-box ${isSelected ? 'ss-selected' : ''} ${dragging === box.index ? 'ss-dragging' : ''}`} style={{ left: pt(left), top: pt(top - BORDER), width: pt(right - left), height: pt(height + 2 * BORDER) }}
+              draggable onDragStart={() => setDragging(box.index)} onDragEnd={() => setDragging(null)} onDragOver={event => event.preventDefault()}
+              onDrop={event => { event.preventDefault(); if (dragging !== null && dragging !== box.index) { save(moveBox(layout, dragging, box.index)); setSelected([]); } setDragging(null); }}
+              onClick={() => toggle(box.index)}>
+              {sponsor && <BoxText sponsor={sponsor} span={box.span} />}
             </div>
-            <div className="ss-card ss-patron">
-              <div className="ss-patron-head">פטרון החודש</div>
-              {patron ? <>
-                <p className="ss-small">ברוב רגשי הכרת הטוב הננו בזה להביע את מיטב ברכותינו אל מול כבוד ידידינו הדגול, אהוב ונחמד על כל יודעיו ומכיריו, אין גומרין עליו את ההלל, הלא הוא הרבני הנגיד והנכבד מוזיל זהב מכיסו למען הצלת נפשות</p>
-                <div className="ss-patron-name"><small>כבוד מוה"ר</small> {patron.hebFirstName || nameLine(patron)}</div>
-                <div className="ss-patron-name">{[patron.hebLastName, patron.title].filter(Boolean).join(' ')} <small>{endLine(patron)}</small></div>
-                <p className="ss-small">אשר זכה בכתר על ראשו בכתרה של הצלה עם רכישת זכות</p>
-                <div className="ss-patron-band">פטרון הצלה לחודש {month}</div>
-                {patron.honoree && <div className="ss-honoree">{patron.honoree}</div>}
-                {patron.notes && <div className="ss-honoree">{patron.notes}</div>}
-              </> : <div className="ss-open" style={{ padding: 30 }}>פנוי</div>}
-            </div>
-          </aside>
-          <section className="ss-card ss-calendar">
-            <div className="ss-badge"><img src="/hatzolah-tosh-logo.png" alt="" /><div className="ss-badge-text">חברה<br />הצלה</div></div>
-            <div className="ss-grid">{rows.map((row, index) => <div key={index} className="ss-row">{row.map(box => <Box key={box.days.join('-')} {...box} />)}</div>)}</div>
-          </section>
-        </div>
+            {box.days.map((day, at) => <div key={day} className="ss-tab" style={{ left: pt(COL_LEFT[box.col + at] + BOX_W - 8.3 - TAB_W), top: pt(top - 12) }} onDoubleClick={event => { event.stopPropagation(); editLabel(day); }} title="Double-click to change">{dayLabel(layout, day)}</div>)}
+          </React.Fragment>;
+        })}
+        <div className="ss-abs ss-month" style={{ left: pt(968), top: pt(226), width: pt(173), height: pt(38) }}>{monthTitle}</div>
+        {patron && <>
+          <div className="ss-abs ss-patron" style={{ left: pt(920), top: pt(612), width: pt(260), height: pt(52) }}>
+            <div><span className="ss-ink" style={{ fontSize: '13pt' }}>כבוד מוה"ר</span> <span className="ss-pname">{firstLine(patron) || nameLine(patron)}</span></div>
+            <div><span className="ss-pname">{lastLine(patron)}</span> <span className="ss-ink" style={{ fontSize: '14pt' }}>{endLine(patron)}</span></div>
+          </div>
+          <div className="ss-abs ss-phon" style={{ left: pt(932), top: pt(711), width: pt(238), height: pt(32) }}><Fit deps={[patron]}>{patron.honoree && <div>{patron.honoree}</div>}{patron.notes && <div style={{ fontSize: '7pt' }}>{patron.notes}</div>}</Fit></div>
+        </>}
+        <div className="ss-abs ss-band" style={{ left: pt(946), top: pt(683), width: pt(223), height: pt(25) }}>פטרון הצלה לחודש {bandMonth}</div>
       </div>
     </div>
   </div>;
@@ -121,55 +160,38 @@ export const SponsorSheet: React.FC = () => {
 const SHEET_CSS = `
 .ss-page{padding:24px 28px}
 .ss-controls{display:grid;gap:12px;margin-bottom:16px}
-.ss-settings{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.ss-settings input{padding:6px 8px;border:1px solid var(--border,#d0d7de);border-radius:6px}
+.ss-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ss-tools label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--text-muted)}
+.ss-tools input{padding:6px 8px;border:1px solid var(--border,#d0d7de);border-radius:6px;width:150px}
 .ss-wrap{width:100%;overflow:hidden}
-.ss-sheet{width:1632px;height:1056px;transform-origin:top left;position:relative;box-sizing:border-box;padding:34px 40px;
-  background:linear-gradient(135deg,#dfeef0 0%,#c9dfe2 45%,#a9c7cc 100%);font-family:'Frank Ruhl Libre','Noto Serif Hebrew',serif;color:#1d3c43;
-  -webkit-print-color-adjust:exact;print-color-adjust:exact;box-shadow:0 4px 24px rgba(0,0,0,.12)}
-.ss-kicker{text-align:center;font-size:17px;letter-spacing:2px;color:#2d5a61;margin-bottom:14px}
-.ss-main{display:grid;grid-template-columns:330px 1fr;gap:34px;height:calc(100% - 40px)}
-.ss-card{background:#fbfdfc;border-radius:22px;box-shadow:0 2px 10px rgba(0,0,0,.12);box-sizing:border-box}
-.ss-side{display:grid;grid-template-rows:auto 1fr;gap:26px}
-.ss-intro{padding:22px 22px 18px;text-align:center;border:2px solid #cfe3e6}
-.ss-small{font-size:12px;line-height:1.45;margin:4px 0;color:#2d4a50}
-.ss-ribbon{margin:10px 0;border:3px solid #e2553d;border-radius:10px;overflow:hidden}
-.ss-ribbon-top{background:#fff;color:#e2553d;font-weight:900;font-size:22px;padding:4px}
-.ss-ribbon-month{background:#e2553d;color:#fff;font-weight:900;font-size:44px;line-height:1.15;padding:4px 6px 8px}
-.ss-dear{color:#e2553d;font-weight:900;font-size:24px;margin-top:8px}
-.ss-yid{font-size:14px;line-height:1.45;margin:4px 0}
-.ss-reward{color:#e2553d;font-weight:900;font-size:26px;margin:4px 0 10px}
-.ss-contact{border-top:1px solid #d8e6e8;padding-top:8px;font-size:11px}
-.ss-contact p{margin:0 0 4px}
-.ss-contact-name{font-weight:700;font-size:15px}.ss-contact-name small{font-size:10px}
-.ss-phone{display:inline-block;margin-top:4px;border:1.5px solid #2d5a61;border-radius:6px;padding:1px 10px;font-weight:700;font-size:15px;direction:ltr}
-.ss-patron{padding:18px 22px;text-align:center;border:2px solid #cfe3e6}
-.ss-patron-head{display:inline-block;border:2px solid #e2553d;color:#e2553d;font-weight:900;font-size:28px;padding:2px 26px;border-radius:6px;margin-bottom:8px}
-.ss-patron-name{font-weight:900;font-size:30px;line-height:1.15;color:#1d3c43}.ss-patron-name small{font-size:13px;font-weight:600}
-.ss-patron-band{background:#e2553d;color:#fff;font-weight:900;font-size:24px;border-radius:8px;padding:4px 8px;margin:8px 0}
-.ss-calendar{position:relative;padding:86px 26px 22px;border:2px solid #cfe3e6}
-.ss-badge{position:absolute;top:-30px;left:50%;transform:translateX(-50%);background:#2f5b62;border-radius:16px;padding:8px 22px;display:flex;align-items:center;gap:14px;box-shadow:0 2px 8px rgba(0,0,0,.2)}
-.ss-badge img{height:84px;width:84px;object-fit:contain;background:#fff;border-radius:50%;padding:4px}
-.ss-badge-text{color:#fff;font-weight:900;font-size:36px;line-height:.95;text-align:center}
-.ss-grid{display:grid;gap:18px}
-.ss-row{display:grid;grid-template-columns:repeat(7,1fr);gap:12px}
-.ss-box{position:relative;background:#e3f4f6;border:1.5px solid #9fc9cf;border-radius:12px;min-height:150px;padding:30px 8px 8px;box-sizing:border-box;text-align:center;display:flex;flex-direction:column;justify-content:center}
-.ss-free{background:#f5f8f8;border-style:dashed}
-.ss-tabs{position:absolute;top:-14px;right:0;left:0;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:12px;padding:0}
-.ss-tab{justify-self:end;margin-right:8px;background:#e2553d;color:#fff;font-weight:900;font-size:22px;min-width:40px;height:30px;line-height:30px;border-radius:7px;padding:0 6px}
-.ss-title{font-size:12px;color:#3c5d63}
-.ss-name{font-weight:900;font-size:20px;line-height:1.15;color:#123238}
-.ss-end{font-size:12px;color:#3c5d63}
-.ss-oneline .ss-name{font-size:34px}.ss-oneline .ss-title,.ss-oneline .ss-end{font-size:16px}
-.ss-wide .ss-honoree{font-size:15px}
-.ss-honoree{font-size:11px;line-height:1.35;color:#2d4a50;margin-top:5px}
-.ss-open{color:#9ab3b7;font-size:16px}
+.ss-sheet{position:relative;width:1266pt;height:834pt;transform-origin:top left;overflow:hidden;background:#fff;font-family:'Noto Serif Hebrew',serif;color:${INK};-webkit-print-color-adjust:exact;print-color-adjust:exact;box-shadow:0 4px 24px rgba(0,0,0,.15)}
+.ss-template{position:absolute;inset:0;width:1266pt;height:834pt;display:block}
+.ss-abs{position:absolute;box-sizing:border-box}
+.ss-box{position:absolute;box-sizing:border-box;background:${BOX_FILL};border:${BORDER}pt solid ${TEAL};border-radius:20pt 0 20pt 0;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:13pt 5pt 4pt}
+.ss-box:hover{outline:2pt dashed rgba(249,75,51,.35)}
+.ss-selected{outline:3pt solid #2563eb!important;outline-offset:2pt}
+.ss-dragging{opacity:.4}
+.ss-fit{width:100%;max-height:100%;overflow:hidden;text-align:center;line-height:1.08}
+.ss-line{white-space:nowrap}
+.ss-nowrap{white-space:nowrap}
+.ss-ink{color:${INK};font-weight:400;font-stretch:90%}
+.ss-title{letter-spacing:.5pt}
+.ss-name{color:${RED};font-weight:800;font-stretch:62.5%;line-height:.95;margin:1pt 0}
+.ss-hon{color:${INK};font-weight:500;font-stretch:72%;line-height:1.15;margin-top:2pt}
+.ss-tab{position:absolute;width:${TAB_W}pt;height:${TAB_H}pt;background:${RED};color:#fff;border-radius:6pt 0 6pt 0;box-shadow:1.6pt 1.6pt 0 #5e8587;font-weight:700;font-stretch:85%;font-size:16pt;line-height:${TAB_H}pt;text-align:right;padding-right:5pt;box-sizing:border-box;cursor:text;white-space:nowrap;overflow:hidden}
+.ss-month{color:#fff;font-weight:800;font-stretch:72%;font-size:34pt;line-height:36pt;text-align:center;white-space:nowrap}
+.ss-patron{text-align:center;line-height:24pt;color:${TEAL}}
+.ss-pname{font-size:25pt;font-weight:800;font-stretch:80%;color:${TEAL}}
+.ss-band{color:#fff;font-weight:800;font-stretch:80%;font-size:22pt;line-height:25pt;text-align:center;white-space:nowrap}
+.ss-phon{text-align:center;font-size:8pt;line-height:1.2;color:${INK};font-weight:500}
 @media print{
-  @page{size:17in 11in;margin:0}
+  @page{size:1266pt 834pt;margin:0}
+  html,body{margin:0!important;padding:0!important;background:#fff!important}
   body *{visibility:hidden}
   .ss-sheet,.ss-sheet *{visibility:visible}
   .ss-wrap{height:auto!important;overflow:visible}
   .ss-sheet{position:fixed;top:0;left:0;transform:none!important;box-shadow:none}
+  .ss-box{outline:none!important;opacity:1!important}
   .no-print{display:none!important}
 }
 `;

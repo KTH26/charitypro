@@ -28,7 +28,8 @@ export const SolaCardCapture: React.FC<{ donorId: string; onSaved: (card?: any) 
       await loadScript(src); if (controller.signal.aborted) return;
       const gateway = window as any; gateway.setAccount(data.ifieldsKey, data.softwareName, data.softwareVersion);
       gateway.enableAutoFormatting?.(' ');
-      const fieldStyle = { border: '0', width: '100%', height: '42px', padding: '10px 12px', 'font-size': '15px', 'font-family': 'Inter, sans-serif', color: '#19282f', background: '#fff' };
+      // The field fills the frame exactly (no scroll bar, no text under the border).
+      const fieldStyle = { border: '0', margin: '0', width: '100%', height: '40px', 'line-height': '40px', padding: '0 12px', 'box-sizing': 'border-box', 'font-size': '15px', 'font-family': 'Inter, sans-serif', color: '#19282f', background: '#fff', outline: 'none' };
       gateway.setIfieldStyle?.('card-number', fieldStyle); gateway.setIfieldStyle?.('cvv', fieldStyle); setReady(true);
     }).catch(reason => { if (reason.name !== 'AbortError') setError(reason.message || 'Unable to load secure card entry.'); });
     return () => controller.abort();
@@ -37,13 +38,13 @@ export const SolaCardCapture: React.FC<{ donorId: string; onSaved: (card?: any) 
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); setError('');
     const month = Number(expiryMonth); const year = Number(expiryYear);
-    if (!ready || !month || !year || !cardholderName.trim()) { setError('Enter the cardholder name, expiration date, card number, and security code.'); return; }
+    if (!ready || !month || !year) { setError('Enter the card number and the expiration date.'); return; }
     setSaving(true);
     try {
       await new Promise<void>((resolve, reject) => (window as any).getTokens(resolve, () => reject(new Error('Sola could not verify the secure card fields. Check the number and security code.')), 30000));
       const cardNumberToken = document.querySelector<HTMLInputElement>('[data-ifields-id="card-number-token"]')?.value || '';
       const cvvToken = document.querySelector<HTMLInputElement>('[data-ifields-id="cvv-token"]')?.value || '';
-      if (!cardNumberToken || !cvvToken) throw new Error('Sola did not return secure card tokens. Please try again.');
+      if (!cardNumberToken) throw new Error('Sola did not return a secure card token. Check the card number and try again.');
       const key = requestId.current || crypto.randomUUID(); requestId.current = key;
       const response = await fetch(`/api/v3/donors/${encodeURIComponent(donorId)}/payment-methods/tokenize`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ cardNumberToken, cvvToken, expiryMonth: month, expiryYear: year, cardholderName: cardholderName.trim(), isDefault: oneTime ? false : isDefault, oneTime }) });
       const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || 'Unable to save this card.');
@@ -57,9 +58,9 @@ export const SolaCardCapture: React.FC<{ donorId: string; onSaved: (card?: any) 
     <div className="secure-card-heading"><div><span className="page-kicker">SOLA SECURE FIELDS</span><h3><CreditCard size={20}/> {oneTime ? 'Use a card once (not saved)' : 'Add a card on file'}</h3><p>The card number and security code go directly to Sola. CharityPro receives only temporary tokens and stores only a reusable gateway token plus masked details.</p></div><LockKeyhole size={30}/></div>
     {error && <div role="alert" className="secure-card-error">{error}</div>}
     <div className="secure-card-grid">
-      <label><span>Cardholder name</span><input autoComplete="cc-name" value={cardholderName} onChange={event => setCardholderName(event.target.value)} /></label>
-      <label className="secure-card-number"><span>Card number</span><iframe title="Secure card number" data-ifields-id="card-number" data-ifields-placeholder="Card number" src={`https://cdn.cardknox.com/ifields/${config?.ifieldsVersion || '3.5.2607.1401'}/ifield.htm`} /><input data-ifields-id="card-number-token" name="xCardNum" type="hidden" /></label>
-      <label><span>Security code</span><iframe title="Secure card security code" data-ifields-id="cvv" data-ifields-placeholder="CVV" src={`https://cdn.cardknox.com/ifields/${config?.ifieldsVersion || '3.5.2607.1401'}/ifield.htm`} /><input data-ifields-id="cvv-token" name="xCVV" type="hidden" /></label>
+      <label><span>Cardholder name <small>(optional)</small></span><input autoComplete="cc-name" value={cardholderName} onChange={event => setCardholderName(event.target.value)} /></label>
+      <label className="secure-card-number"><span>Card number</span><iframe scrolling="no" title="Secure card number" data-ifields-id="card-number" data-ifields-placeholder="Card number" src={`https://cdn.cardknox.com/ifields/${config?.ifieldsVersion || '3.5.2607.1401'}/ifield.htm`} /><input data-ifields-id="card-number-token" name="xCardNum" type="hidden" /></label>
+      <label><span>Security code <small>(optional)</small></span><iframe scrolling="no" title="Secure card security code" data-ifields-id="cvv" data-ifields-placeholder="CVV" src={`https://cdn.cardknox.com/ifields/${config?.ifieldsVersion || '3.5.2607.1401'}/ifield.htm`} /><input data-ifields-id="cvv-token" name="xCVV" type="hidden" /></label>
       <label><span>Expiry month</span><select autoComplete="cc-exp-month" value={expiryMonth} onChange={event => setExpiryMonth(event.target.value)}><option value="">Month</option>{Array.from({length:12},(_,index)=>index+1).map(month=><option key={month} value={month}>{String(month).padStart(2,'0')}</option>)}</select></label>
       <label><span>Expiry year</span><select autoComplete="cc-exp-year" value={expiryYear} onChange={event => setExpiryYear(event.target.value)}><option value="">Year</option>{Array.from({length:20},(_,index)=>new Date().getFullYear()+index).map(year=><option key={year} value={year}>{year}</option>)}</select></label>
     </div>

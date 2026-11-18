@@ -146,15 +146,20 @@ export const registerReportDataRoutes = (app: any) => {
       const item = parse(row.data); const donor = parse(row.donor);
       return { id: String(row.id), kind: item.kind, day: Number(item.hebDay || 0), donorId: String(item.donorId || ''), honoree: String(item.honoree || ''), notes: String(item.notes || ''), donorName: String(donor.name || ''), preTitle: String(donor.preTitle || ''), hebFirstName: String(donor.hebFirstName || ''), hebLastName: String(donor.hebLastName || ''), title: String(donor.title || ''), postTitle: String(donor.postTitle || '') };
     });
-    const settingsRow: any = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sponsor_sheet_settings'").first();
-    return c.json({ success: true, items, settings: parse(settingsRow?.value) });
+    const layoutRow: any = await c.env.DB.prepare('SELECT value FROM sync_metadata WHERE key=?').bind(`sponsor_sheet_layout_${hebYear}_${hebMonth}`).first();
+    return c.json({ success: true, items, layout: layoutRow ? parse(layoutRow.value) : null });
   });
-  // The fixed text on the sheet (who to call to take a day). Saved once for everyone.
-  app.put('/v3/sponsor-sheet/settings', async (c: any) => {
+  // How the month's boxes are arranged (merged boxes, order, changed day labels, month title). Saved per month for everyone.
+  app.put('/v3/sponsor-sheet/layout', async (c: any) => {
+    const hebYear = Number(c.req.query('hebYear') || 0); const hebMonth = Number(c.req.query('hebMonth') || 0);
+    if (!hebYear || !hebMonth) return c.json({ success: false, error: 'Choose the month.' }, 400);
     const body = await c.req.json().catch(() => ({}));
-    const settings = { contactTitle: String(body.contactTitle ?? '').slice(0, 60), contactName: String(body.contactName ?? '').slice(0, 120), contactEnd: String(body.contactEnd ?? '').slice(0, 30), contactPhone: String(body.contactPhone ?? '').slice(0, 40) };
-    await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sponsor_sheet_settings',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify(settings), Date.now()).run();
-    return c.json({ success: true, settings });
+    const boxes = (Array.isArray(body.boxes) ? body.boxes : []).slice(0, 40).map((box: any) => (Array.isArray(box) ? box : []).map(Number).filter((day: number) => Number.isInteger(day) && day >= 1 && day <= 30).slice(0, 7));
+    const labels: Record<string, string> = {}; for (const [key, value] of Object.entries(body.labels || {})) { const text = String(value || '').trim().slice(0, 12); if (text && Number(key) >= 1 && Number(key) <= 30) labels[key] = text; }
+    const layout = { boxes, labels, monthTitle: String(body.monthTitle || '').trim().slice(0, 40), bandMonth: String(body.bandMonth || '').trim().slice(0, 40) };
+    if (body.reset) { await c.env.DB.prepare('DELETE FROM sync_metadata WHERE key=?').bind(`sponsor_sheet_layout_${hebYear}_${hebMonth}`).run(); return c.json({ success: true, layout: null }); }
+    await c.env.DB.prepare('INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind(`sponsor_sheet_layout_${hebYear}_${hebMonth}`, JSON.stringify(layout), Date.now()).run();
+    return c.json({ success: true, layout });
   });
   app.get('/v3/report-data', async (c: any) => {
     if (!allowed(c)) return c.json({ success: false, error: 'Forbidden: Missing permission reports.read' }, 403);
