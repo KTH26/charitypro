@@ -235,6 +235,33 @@ describe('bank feed on a connected credit card', () => {
   });
 });
 
+describe('bank feed quick match', () => {
+  it('suggests last time\'s match (also when the bank adds a tag like [DS]), prefers a bill already entered, and saves only when asked', async () => {
+    const { db, call } = setup();
+    seed(db, 'accounts', 'amexfeed', { name: 'Amex', type: 'liability', subType: 'credit_card', currency: 'CAD', plaidConnected: true, statementDay: 24, paymentDueDay: 15 });
+    db.database.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted) VALUES('matchedBankTransactions','matchedBankTransactions','[]',1,1,0)").run();
+    const first = await call('POST', '/v3/bank/match-outgoing', { requestId: 'fid-1', action: 'expense', accountId: 'amexfeed', bankTransactionId: 'fid-oct', bankDate: '2026-10-13', description: '[DS]FIDELITY PAYMEN BUS/ENT', amount: 13.62, vendor: 'Fidelity', category: 'supplies', internalCategory: 'Bank fees', taxable: false });
+    expect(first.status).toBe(200);
+    seed(db, 'bills', 'phone-bill', { vendor: 'Bell', amount: 80, currency: 'CAD', dueDate: '2026-11-05', status: 'unpaid' });
+    const billsBefore = db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='bills'").get().count;
+    const found = await call('POST', '/v3/bank/quick-suggestions', { accountId: 'amexfeed', items: [
+      { id: 'fid-nov', description: 'FIDELITY PAYMEN BUS/ENT', amount: -15.46 },
+      { id: 'bell-nov', description: 'BELL CANADA 4455', amount: -80 },
+      { id: 'unknown', description: 'SOMETHING NEW', amount: -9 },
+      { id: 'money-in', description: 'FIDELITY PAYMEN BUS/ENT', amount: 20 },
+    ] });
+    expect(found.status).toBe(200);
+    expect(found.body.suggestions['fid-nov']).toMatchObject({ kind: 'expense', vendor: 'Fidelity', category: 'supplies', internalCategory: 'Bank fees', sameWording: false });
+    expect(found.body.suggestions['bell-nov']).toMatchObject({ kind: 'existing_bill', billId: 'phone-bill' });
+    expect(found.body.suggestions.unknown).toBeUndefined(); expect(found.body.suggestions['money-in']).toBeUndefined();
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='bills'").get().count).toBe(billsBefore); // a suggestion saves nothing
+    // Quick match = the same save as the pop-up, with the suggested details.
+    const { kind, label, categoryName, sameWording, ...fields } = found.body.suggestions['fid-nov'];
+    const quick = await call('POST', '/v3/bank/match-outgoing', { requestId: 'fid-2', action: kind, accountId: 'amexfeed', bankTransactionId: 'fid-nov', bankDate: '2026-11-12', description: 'FIDELITY PAYMEN BUS/ENT', amount: 15.46, ...fields });
+    expect(quick.status).toBe(200); expect(quick.body.item).toMatchObject({ vendor: 'Fidelity', amount: 15.46, category: 'supplies', paidDate: '2026-11-12' });
+  });
+});
+
 describe('credit card bill: payments during the period are for the previous bill', () => {
   it('ignores a payment made during the period, counts refunds in the period and payments after the statement', async () => {
     const { call, charge, db } = setup();

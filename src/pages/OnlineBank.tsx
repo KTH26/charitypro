@@ -300,6 +300,45 @@ export const OnlineBank: React.FC = () => {
   const selectedTotal = candidates.filter((candidate) => selectedIds.includes(candidate.id)).reduce((sum, candidate) => sum + Number(candidate.amountCAD ?? candidate.amount), 0);
   const totalsMatch = matching ? Math.abs(selectedTotal - matching.amount) < 0.005 : false;
   const removeMatchedFromVisibleFeed = (bankTransactionId: string) => setFeed((current) => current.filter((transaction) => transaction.id !== bankTransactionId));
+  // Quick match: money out that matches what it was matched to last time (or a bill already entered) is saved in one click.
+  const [suggestions, setSuggestions] = useState<Record<string, any>>({});
+  const [quickBusy, setQuickBusy] = useState<string[]>([]);
+  useEffect(() => {
+    const rows = feed.filter((transaction) => transaction.amount < 0 && (tab === "all" ? (transaction.matchState || "unmatched") === "unmatched" : tab === "unmatched"));
+    if (!rows.length || !selectedBank) { setSuggestions({}); return; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/v3/bank/quick-suggestions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: selectedBank, items: rows.map((transaction) => ({ id: transaction.id, description: transaction.description, amount: transaction.amount })) }) });
+        const data = await response.json();
+        if (!cancelled && response.ok && data.success) setSuggestions(data.suggestions || {});
+      } catch { /* no suggestions: Match Transaction still works */ }
+    })();
+    return () => { cancelled = true; };
+  }, [feed, tab, selectedBank]);
+  const quickMatch = async (transaction: BankTransaction, quiet = false) => {
+    const suggestion = suggestions[transaction.id]; if (!suggestion) return false;
+    setQuickBusy((current) => [...current, transaction.id]);
+    const requestId = matchRequestIds.current[transaction.id] || crypto.randomUUID(); matchRequestIds.current[transaction.id] = requestId;
+    try {
+      const { kind, label: _label, categoryName: _categoryName, sameWording: _sameWording, ...fields } = suggestion;
+      const response = await fetch("/api/v3/bank/match-outgoing", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": requestId }, body: JSON.stringify({ requestId, action: kind, accountId: selectedBank, bankTransactionId: transaction.id, bankDate: transaction.date, description: transaction.description, amount: Math.abs(transaction.amount), memo: transaction.description, ...fields }) });
+      const data = await response.json();
+      if (!response.ok || !data.success) { delete matchRequestIds.current[transaction.id]; throw new Error(data.error || "Could not match it."); }
+      delete matchRequestIds.current[transaction.id];
+      removeMatchedFromVisibleFeed(transaction.id);
+      if (!quiet) { setNotice(`Matched: ${transaction.description} – ${suggestion.label}`); void Promise.all([loadState(true), loadFeed(true)]); }
+      return true;
+    } catch (reason: any) { setError(`${transaction.description}: ${reason.message || "Could not match it."} Use Change to match it by hand.`); return false; }
+    finally { setQuickBusy((current) => current.filter((id) => id !== transaction.id)); }
+  };
+  const quickMatchAll = async () => {
+    const rows = feed.filter((transaction) => suggestions[transaction.id] && transaction.amount < 0 && (transaction.matchState || "unmatched") === "unmatched");
+    if (!rows.length || !window.confirm(`Quick match ${rows.length} transaction${rows.length === 1 ? "" : "s"} the way each was matched last time?\n\n${rows.slice(0, 12).map((transaction) => `${transaction.date}  ${Math.abs(transaction.amount).toFixed(2)}  ${transaction.description}  →  ${suggestions[transaction.id].label}`).join("\n")}${rows.length > 12 ? `\n…and ${rows.length - 12} more` : ""}`)) return;
+    setError(""); let done = 0;
+    for (const transaction of rows) if (await quickMatch(transaction, true)) done++;
+    setNotice(`${done} of ${rows.length} transactions matched.`); void Promise.all([loadState(true), loadFeed(true)]);
+  };
   const changeFeedStatus = async (transaction: BankTransaction, action: "dismiss" | "restore" | "delete") => {
     if (action === "delete" && !window.confirm(`Delete this bank transaction forever?\n\n${transaction.date} · ${transaction.description} · $${Math.abs(transaction.amount).toFixed(2)}\n\nIt will not come back, even if the bank sends it again. Nothing in your accounting changes.`)) return;
     setSaving(true); setError(""); setNotice("");
@@ -1163,6 +1202,7 @@ export const OnlineBank: React.FC = () => {
             >
               All
             </button>
+            {(() => { const count = feed.filter((transaction) => suggestions[transaction.id] && transaction.amount < 0 && (transaction.matchState || "unmatched") === "unmatched").length; return count > 0 && (tab === "unmatched" || tab === "all") ? <button className="btn btn-primary" disabled={quickBusy.length > 0} onClick={() => void quickMatchAll()} title="Match all of them the way each was matched last time">⚡ Quick match all ({count})</button> : null; })()}
             <input
               style={{ marginLeft: "auto", minWidth: 260 }}
               value={search}
@@ -1225,7 +1265,12 @@ export const OnlineBank: React.FC = () => {
                       {tab === "all" && <span className={`feed-state feed-state-${state}`}>{state === "matched" ? "Matched" : state === "dismissed" ? "Dismissed" : "Unmatched"}</span>}
                       {state === "unmatched" && <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
                         {transaction.amount > 0 && <button className="btn btn-primary btn-sm" onClick={() => void openDepositMatch(transaction)}>Match Deposit</button>}
-                        {transaction.amount < 0 && <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Match Transaction</button>}
+                        {transaction.amount < 0 && suggestions[transaction.id] && <>
+                          <span style={{ fontSize: 12, color: "var(--green)", fontWeight: 600, maxWidth: 260, textAlign: "right" }} title={suggestions[transaction.id].kind === "existing_bill" ? "A bill already entered with this amount" : suggestions[transaction.id].sameWording ? "Matched like this last time" : "Matched like this last time (bank wording slightly different)"}>{suggestions[transaction.id].label}</span>
+                          <button className="btn btn-primary btn-sm" disabled={quickBusy.includes(transaction.id)} onClick={() => void quickMatch(transaction)}>{quickBusy.includes(transaction.id) ? "Matching…" : "⚡ Quick match"}</button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Change</button>
+                        </>}
+                        {transaction.amount < 0 && !suggestions[transaction.id] && <button className="btn btn-primary btn-sm" onClick={() => void openOutgoingMatch(transaction)}>Match Transaction</button>}
                         <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => void changeFeedStatus(transaction,"dismiss")}>Dismiss</button>
                       </div>}
                       {tab === "matched" && <span style={{ color: "var(--green)", fontWeight: 600 }}>Matched</span>}

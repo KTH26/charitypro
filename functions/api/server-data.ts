@@ -4189,6 +4189,42 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, rule: rule.normalizedDescription === normalizedDescription ? rule : null });
   });
 
+  // Quick match: for money going out, what it was matched to last time (same bank wording), or the one bill already entered for it.
+  // Only a suggestion: nothing is saved until staff press Quick match.
+  app.post('/v3/bank/quick-suggestions', async (c: any) => {
+    const denied = requirePermission(c, 'bills.read'); if (denied) return denied;
+    const body = await c.req.json().catch(() => ({}));
+    const items = (Array.isArray(body.items) ? body.items : []).slice(0, 200).map((item: any) => ({ id: String(item?.id || ''), description: String(item?.description || ''), amount: Number(item?.amount) })).filter((item: any) => item.id && item.amount < 0);
+    if (!items.length) return c.json({ success: true, suggestions: {} });
+    const loose = (value: unknown) => normalizeBankVendorDescription(value).replace(/\[[^\]]*\]/g, ' ').replace(/[#\d]+/g, ' ').replace(/[^a-z&/ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const [ruleRows, billRows, accountRows] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT data,updated_at FROM sync_records WHERE type='bankVendorRules' AND is_deleted=0 ORDER BY updated_at DESC"),
+      c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.isPayroll'),0)=0 AND COALESCE(json_extract(data,'$.bankTransactionId'),'')='' AND COALESCE(json_extract(data,'$.status'),'')<>'void'"),
+      c.env.DB.prepare("SELECT id,json_extract(data,'$.name') AS name,json_extract(data,'$.currency') AS currency FROM sync_records WHERE type='accounts' AND is_deleted=0"),
+    ]);
+    const accountName = new Map((accountRows.results as any[]).map(row => [String(row.id), String(row.name || '')]));
+    const bankCurrency = String((accountRows.results as any[]).find(row => String(row.id) === String(body.accountId || ''))?.currency || 'CAD');
+    const exact = new Map<string, any>(); const byLoose = new Map<string, any>();
+    for (const row of ruleRows.results as any[]) { const rule = parseSetting(row.data, null); if (!rule?.normalizedDescription || !rule.vendor || !rule.category) continue; if (!exact.has(rule.normalizedDescription)) exact.set(rule.normalizedDescription, rule); const key = loose(rule.normalizedDescription); if (key && !byLoose.has(key)) byLoose.set(key, rule); }
+    const bills = (billRows.results as any[]).map(row => ({ ...parseSetting(row.data, {}), id: String(row.id), revision: Number(row.revision) }));
+    const usedBills = new Set<string>(); const suggestions: Record<string, any> = {};
+    for (const item of items) {
+      const amount = Math.abs(item.amount); const normalized = normalizeBankVendorDescription(item.description);
+      const rule = exact.get(normalized) || byLoose.get(loose(normalized)) || null;
+      const billAmount = (bill: any) => bankCurrency === 'CAD' && bill.currency === 'USD' ? Number(bill.amount) * Number(bill.exchangeRate || 1.35) : Number(bill.amount);
+      const sameAmount = bills.filter(bill => !usedBills.has(bill.id) && Math.abs(billAmount(bill) - amount) < 0.005);
+      // A bill already entered for this payee and amount comes first, so the expense is not entered twice.
+      const ruleBills = rule ? sameAmount.filter(bill => String(bill.vendor || '').trim().toLowerCase() === String(rule.vendor).trim().toLowerCase()) : [];
+      if (ruleBills.length === 1 || (!rule && sameAmount.length === 1 && loose(sameAmount[0].vendor) && loose(normalized).includes(loose(sameAmount[0].vendor).split(' ')[0]))) {
+        const bill = ruleBills[0] || sameAmount[0]; usedBills.add(bill.id);
+        suggestions[item.id] = { kind: 'existing_bill', billId: bill.id, revision: bill.revision, vendor: bill.vendor, dueDate: bill.dueDate, label: `Bill already entered: ${bill.vendor} (${bill.dueDate})` };
+      } else if (rule && ruleBills.length === 0) {
+        suggestions[item.id] = { kind: 'expense', vendor: rule.vendor, category: rule.category, categoryName: accountName.get(String(rule.category)) || '', internalCategory: rule.internalCategory || '', taxable: Boolean(rule.taxable), ...(rule.projectId ? { projectId: rule.projectId } : {}), ...(rule.creditAccountId ? { creditAccountId: rule.creditAccountId } : {}), isPayrollExpense: Boolean(rule.isPayrollExpense), ...(rule.employeeId ? { employeeId: rule.employeeId } : {}), t4aEligible: Boolean(rule.t4aEligible), sameWording: exact.has(normalized), label: `${rule.vendor} → ${accountName.get(String(rule.category)) || 'expense'}` };
+      }
+    }
+    return c.json({ success: true, suggestions });
+  });
+
   app.get('/v3/bank/bill-candidates', async (c: any) => {
     const denied = requirePermission(c, 'bills.read');
     if (denied) return denied;
