@@ -168,8 +168,16 @@ export const registerReportDataRoutes = (app: any) => {
     const texts: Record<string, any> = {}; for (const [key, value] of Object.entries(body.texts || {})) { const text = cleanText(value); if (text && Number(key) >= 1 && Number(key) <= 30) texts[key] = text; }
     // Pieces of the patron section moved (points) or hidden.
     const pieces: Record<string, any> = {}; const move = (value: any) => { const n = Number(value); return Number.isFinite(n) ? Math.round(Math.max(-1300, Math.min(1300, n)) * 10) / 10 : 0; };
-    for (const [key, value] of Object.entries(body.pieces && typeof body.pieces === 'object' ? body.pieces : {})) { if (!['title', 'intro', 'name', 'strip', 'band', 'dedication'].includes(key) || !value || typeof value !== 'object') continue; const spot: any = { dx: move((value as any).dx), dy: move((value as any).dy) }; if ((value as any).hidden === true) spot.hidden = true; if (spot.dx || spot.dy || spot.hidden) pieces[key] = spot; }
-    const layout = { boxes, labels, monthTitle: String(body.monthTitle || '').trim().slice(0, 40), bandMonth: String(body.bandMonth || '').trim().slice(0, 40), texts, patronText: cleanText(body.patronText), pieces: Object.keys(pieces).length ? pieces : undefined };
+    for (const [key, value] of Object.entries(body.pieces && typeof body.pieces === 'object' ? body.pieces : {})) { if (!['title', 'intro', 'name', 'strip', 'band', 'dedication'].includes(key) || !value || typeof value !== 'object') continue; const spot: any = { dx: move((value as any).dx), dy: move((value as any).dy) }; if ((value as any).hidden === true) spot.hidden = true; for (const field of ['dw', 'dh']) { const size = Math.max(-200, Math.min(800, move((value as any)[field]))); if (size) spot[field] = size; } if (spot.dx || spot.dy || spot.dw || spot.dh || spot.hidden) pieces[key] = spot; }
+    // Text laid out by hand (lines, each word its own size / color / bold) for the patron name and dedication.
+    const rich: Record<string, any> = {};
+    for (const key of ['name', 'dedication']) {
+      const raw = body.rich?.[key]; if (!Array.isArray(raw)) continue;
+      const lines = raw.slice(0, 12).map((line: any) => (Array.isArray(line) ? line : []).slice(0, 40).flatMap((run: any) => { if (!run || typeof run.t !== 'string' || !run.t) return []; const out: any = { t: run.t.slice(0, 300) }; const size = Number(run.s); if (Number.isFinite(size)) out.s = Math.round(Math.max(4, Math.min(80, size)) * 2) / 2; if (['red', 'teal', 'ink'].includes(run.c)) out.c = run.c; if (run.b === true) out.b = true; return [out]; }));
+      while (lines.length && !lines[lines.length - 1].length) lines.pop();
+      if (lines.some((line: any[]) => line.some(run => run.t.trim()))) rich[key] = lines;
+    }
+    const layout = { boxes, labels, monthTitle: String(body.monthTitle || '').trim().slice(0, 40), bandMonth: String(body.bandMonth || '').trim().slice(0, 40), texts, patronText: cleanText(body.patronText), pieces: Object.keys(pieces).length ? pieces : undefined, rich: Object.keys(rich).length ? rich : undefined };
     if (body.reset) { await c.env.DB.prepare('DELETE FROM sync_metadata WHERE key=?').bind(`sponsor_sheet_layout_${hebYear}_${hebMonth}`).run(); return c.json({ success: true, layout: null }); }
     await c.env.DB.prepare('INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind(`sponsor_sheet_layout_${hebYear}_${hebMonth}`, JSON.stringify(layout), Date.now()).run();
     return c.json({ success: true, layout });

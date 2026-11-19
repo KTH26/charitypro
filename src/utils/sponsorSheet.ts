@@ -17,9 +17,32 @@ export const TEXT_FIELDS = ['title', 'first', 'last', 'end', 'honoree', 'notes']
  * boxes: the days of each box, in the order they are shown. labels: a day's text on its tab when it was changed.
  * texts: text typed by hand for a box (by the box's first day); patronText: the same for the month patron.
  */
-export type SheetLayout = { boxes: number[][]; labels?: Record<string, string>; monthTitle?: string; bandMonth?: string; texts?: Record<string, SheetText>; patronText?: SheetText; pieces?: Record<string, PieceSpot> };
-/** Where a piece of the patron section was moved to (points from its regular place), or hidden. */
-export type PieceSpot = { dx: number; dy: number; hidden?: boolean };
+export type SheetLayout = { boxes: number[][]; labels?: Record<string, string>; monthTitle?: string; bandMonth?: string; texts?: Record<string, SheetText>; patronText?: SheetText; pieces?: Record<string, PieceSpot>; rich?: Record<string, RichLines> };
+/** Where a piece of the patron section was moved to (points from its regular place), how much wider / taller it was made, or hidden. */
+export type PieceSpot = { dx: number; dy: number; dw?: number; dh?: number; hidden?: boolean };
+/** Text laid out by hand: lines of pieces of text, each with its own size (points), color and boldness. */
+export type RichRun = { t: string; s?: number; c?: 'red' | 'teal' | 'ink'; b?: boolean };
+export type RichLines = RichRun[][];
+export const RICH_COLORS = { red: '#f94b33', teal: '#2c585c', ink: '#2c2e35' } as const;
+export const RICH_KEYS = ['name', 'dedication'];
+/** Keeps hand-laid-out text safe: at most 12 lines, sizes 4–80 pt, only the sheet's colors. */
+export const cleanRich = (raw: any): RichLines | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  const lines: RichLines = raw.slice(0, 12).map((line: any) => (Array.isArray(line) ? line : []).slice(0, 40).flatMap((run: any) => {
+    if (!run || typeof run.t !== 'string' || !run.t) return [];
+    const out: RichRun = { t: run.t.slice(0, 300) }; const size = Number(run.s);
+    if (Number.isFinite(size)) out.s = Math.round(Math.max(4, Math.min(80, size)) * 2) / 2;
+    if (run.c === 'red' || run.c === 'teal' || run.c === 'ink') out.c = run.c; if (run.b === true) out.b = true;
+    return [out];
+  }));
+  while (lines.length && !lines[lines.length - 1].length) lines.pop();
+  return lines.some(line => line.some(run => run.t.trim())) ? lines : undefined;
+};
+export const cleanRichMap = (raw: any): Record<string, RichLines> | undefined => {
+  const out: Record<string, RichLines> = {};
+  for (const key of RICH_KEYS) { const lines = cleanRich(raw?.[key]); if (lines) out[key] = lines; }
+  return Object.keys(out).length ? out : undefined;
+};
 /** The pieces of the patron section, at their regular place on the sheet (points). */
 export const PIECES = [
   { key: 'title', label: 'Heading פטרון החודש', x: 981, y: 546.3, w: 153, h: 31 },
@@ -39,7 +62,8 @@ export const cleanPieces = (raw: any): Record<string, PieceSpot> | undefined => 
   for (const [key, value] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
     if (!PIECE_KEYS.includes(key) || !value || typeof value !== 'object') continue;
     const spot: PieceSpot = { dx: clampMove((value as any).dx), dy: clampMove((value as any).dy) }; if ((value as any).hidden === true) spot.hidden = true;
-    if (spot.dx || spot.dy || spot.hidden) out[key] = spot;
+    const dw = Math.max(-200, Math.min(800, clampMove((value as any).dw))); const dh = Math.max(-200, Math.min(800, clampMove((value as any).dh))); if (dw) spot.dw = dw; if (dh) spot.dh = dh;
+    if (spot.dx || spot.dy || spot.dw || spot.dh || spot.hidden) out[key] = spot;
   }
   return Object.keys(out).length ? out : undefined;
 };
@@ -47,7 +71,8 @@ export const pieceSpot = (layout: SheetLayout, key: string): PieceSpot => layout
 /** Moves a piece by (dx, dy) points, or sets it hidden / shown. */
 export const changePiece = (layout: SheetLayout, key: string, change: Partial<PieceSpot>): SheetLayout => {
   const now = pieceSpot(layout, key);
-  const next = { ...now, ...change, dx: change.dx !== undefined ? now.dx + change.dx : now.dx, dy: change.dy !== undefined ? now.dy + change.dy : now.dy };
+  const add = (field: 'dx' | 'dy' | 'dw' | 'dh') => Number(now[field] || 0) + Number(change[field] || 0);
+  const next = { ...now, ...change, dx: add('dx'), dy: add('dy'), dw: add('dw'), dh: add('dh') };
   return { ...layout, pieces: cleanPieces({ ...(layout.pieces || {}), [key]: next }) };
 };
 export type PlacedBox = { index: number; days: number[]; row: number; col: number; span: number };
@@ -97,7 +122,7 @@ export const normalizeLayout = (raw: any, daysInMonth: number): SheetLayout => {
   for (const [key, value] of Object.entries(raw?.labels || {})) { const text = String(value || '').trim().slice(0, 12); if (text && Number(key) >= 1 && Number(key) <= daysInMonth) labels[key] = text; }
   const texts: Record<string, SheetText> = {};
   for (const [key, value] of Object.entries(raw?.texts || {})) { const text = cleanText(value); if (text && Number(key) >= 1 && Number(key) <= daysInMonth) texts[key] = text; }
-  return { boxes, labels, monthTitle: String(raw?.monthTitle || '').trim().slice(0, 40) || undefined, bandMonth: String(raw?.bandMonth || '').trim().slice(0, 40) || undefined, texts, patronText: cleanText(raw?.patronText), pieces: cleanPieces(raw?.pieces) };
+  return { boxes, labels, monthTitle: String(raw?.monthTitle || '').trim().slice(0, 40) || undefined, bandMonth: String(raw?.bandMonth || '').trim().slice(0, 40) || undefined, texts, patronText: cleanText(raw?.patronText), pieces: cleanPieces(raw?.pieces), rich: cleanRichMap(raw?.rich) };
 };
 
 /** One box over all the chosen boxes' days, at the place of the first one. At most 7 days in a box. */

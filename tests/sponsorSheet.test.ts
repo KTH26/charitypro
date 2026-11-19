@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changePiece, cleanPieces, dayLabel, pieceSpot, dayLetters, defaultLayout, endLine, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, titleLine } from '../src/utils/sponsorSheet';
+import { changePiece, cleanRich, cleanPieces, dayLabel, pieceSpot, dayLetters, defaultLayout, endLine, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, titleLine } from '../src/utils/sponsorSheet';
 
 const rowsOf = (layout: ReturnType<typeof defaultLayout>) => { const { placed } = placeBoxes(layout); const rows: string[][] = []; for (const box of placed) (rows[box.row] ||= []).push(box.days.map(day => dayLabel(layout, day)).join(',')); return rows; };
 
@@ -66,5 +66,19 @@ describe('patron section pieces', () => {
     expect(layout.pieces?.title).toBeUndefined();
     expect(cleanPieces({ strip: { dx: 'x', dy: 99999 }, other: { dx: 5, dy: 5 }, band: { dx: 0, dy: 0 } })).toEqual({ strip: { dx: 0, dy: 1300 } });
     expect(normalizeLayout({ boxes: [], pieces: { name: { dx: 4, dy: 3, hidden: true } } }, 30).pieces).toEqual({ name: { dx: 4, dy: 3, hidden: true } });
+  });
+});
+
+describe('patron text laid out by hand', () => {
+  it('keeps lines, word sizes, colors and bold; drops unsafe values', () => {
+    const lines = cleanRich([[{ t: 'לזכות ', s: 13, c: 'ink' }, { t: 'יעקב', s: 27, c: 'red', b: true }], [], [{ t: 'x', s: 999, c: 'blue', b: 'yes' }, { t: '' }, { s: 5 }], []]);
+    expect(lines).toEqual([[{ t: 'לזכות ', s: 13, c: 'ink' }, { t: 'יעקב', s: 27, c: 'red', b: true }], [], [{ t: 'x', s: 80 }]]);
+    expect(cleanRich([[{ t: '  ' }]])).toBeUndefined();
+    expect(normalizeLayout({ boxes: [], rich: { name: [[{ t: 'a' }]], other: [[{ t: 'b' }]] } }, 30).rich).toEqual({ name: [[{ t: 'a' }]] });
+  });
+  it('makes a piece bigger or smaller', () => {
+    let layout = changePiece(defaultLayout(30), 'name', { dw: 20, dh: 10 });
+    layout = changePiece(layout, 'name', { dh: -4 });
+    expect(pieceSpot(layout, 'name')).toEqual({ dx: 0, dy: 0, dw: 20, dh: 6 });
   });
 });

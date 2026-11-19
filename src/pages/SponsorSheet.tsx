@@ -1,9 +1,9 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Combine, MoveLeft, MoveRight, Pencil, Printer, RotateCcw, Split, X } from 'lucide-react';
+import { Bold, Combine, Minus, MoveLeft, MoveRight, Pencil, Plus, Printer, RotateCcw, Split, X } from 'lucide-react';
 import { HDate } from '@hebcal/core';
 import { MonthNav } from '../components/HebrewCalendar';
 import { hebMonthName, hebYearText, todayHebrew } from '../utils/hebrewCalendar';
-import { type PieceKey, type PieceSpot, type SheetDay, type SheetLayout, type SheetText, PIECES, TEXT_FIELDS, changePiece, cleanPieces, pieceSpot, dayLabel, defaultLayout, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, systemText } from '../utils/sponsorSheet';
+import { type PieceKey, type PieceSpot, type RichLines, type RichRun, RICH_COLORS, type SheetDay, type SheetLayout, type SheetText, PIECES, TEXT_FIELDS, changePiece, cleanPieces, pieceSpot, dayLabel, defaultLayout, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, systemText } from '../utils/sponsorSheet';
 
 type Item = SheetDay & { id: string; kind: 'day' | 'month' };
 
@@ -34,6 +34,10 @@ const Fit: React.FC<{ children: React.ReactNode; deps: unknown[] }> = ({ childre
       while (k > 0.25 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) { k -= 0.03; el.style.setProperty('--k', String(k)); }
     };
     run(); void document.fonts?.ready.then(run);
+    // Fit again when its box is made bigger or smaller.
+    let size = ''; const observer = typeof ResizeObserver === 'undefined' || !el.parentElement ? null : new ResizeObserver(() => { const now = `${el.parentElement?.clientWidth}x${el.parentElement?.clientHeight}`; if (now !== size) { size = now; run(); } });
+    if (observer && el.parentElement) observer.observe(el.parentElement);
+    return () => observer?.disconnect();
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
   return <div ref={ref} className="ss-fit">{children}</div>;
 };
@@ -70,6 +74,104 @@ const TextEditor: React.FC<{ heading: string; system: SheetText; typed?: SheetTe
   </div></div>;
 };
 
+/** Text laid out by hand, as it is drawn on the sheet. */
+const RichView: React.FC<{ lines: RichLines }> = ({ lines }) => <Fit deps={[lines]}>
+  {lines.map((line, index) => <div key={index} className="ss-nowrap ss-rline">{line.length ? line.map((run, at) => <span key={at} style={{ fontSize: fs(run.s ?? 14), color: RICH_COLORS[run.c || 'ink'], fontWeight: run.b ? 800 : 400, fontStretch: run.b ? '80%' : '90%' }}>{run.t}</span>) : ' '}</div>)}
+</Fit>;
+
+const nearestColor = (css: string): RichRun['c'] => {
+  const [r, g, b] = (css.match(/\d+(\.\d+)?/g) || ['0', '0', '0']).map(Number);
+  let best: RichRun['c'] = 'ink'; let bestDistance = Infinity;
+  for (const [name, hex] of Object.entries(RICH_COLORS)) { const value = parseInt(hex.slice(1), 16); const distance = Math.abs(r - (value >> 16)) + Math.abs(g - ((value >> 8) & 255)) + Math.abs(b - (value & 255)); if (distance < bestDistance) { bestDistance = distance; best = name as RichRun['c']; } }
+  return best;
+};
+/** Reads the editor back into lines: each word keeps the size, color and boldness it shows. */
+const readEditor = (editor: HTMLElement): RichLines => {
+  const lines: RichLines = [[]]; const current = () => lines[lines.length - 1];
+  const walk = (node: Node) => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = (child as Text).data.replace(/ /g, ' '); if (!text) continue;
+        const style = getComputedStyle(child.parentElement || editor);
+        const run: RichRun = { t: text, s: Math.round(parseFloat(style.fontSize) * 0.75 * 2) / 2, c: nearestColor(style.color) }; if (Number(style.fontWeight) >= 600) run.b = true;
+        const last = current()[current().length - 1];
+        if (last && last.s === run.s && last.c === run.c && Boolean(last.b) === Boolean(run.b)) last.t += run.t; else current().push(run);
+      } else if (child.nodeName === 'BR') {
+        if (child.parentNode !== editor && child === child.parentNode?.lastChild) continue; // the empty-line marker inside a line
+        lines.push([]);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const block = /^(DIV|P)$/.test(child.nodeName);
+        if (block && current().length) lines.push([]);
+        walk(child);
+        if (block) lines.push([]);
+      }
+    }
+  };
+  walk(editor);
+  while (lines.length && !lines[lines.length - 1].length) lines.pop();
+  return lines;
+};
+const fillEditor = (editor: HTMLElement, lines: RichLines) => {
+  editor.textContent = '';
+  for (const line of lines.length ? lines : [[]]) {
+    const row = document.createElement('div');
+    if (!line.length) row.appendChild(document.createElement('br'));
+    for (const run of line) { const span = document.createElement('span'); span.textContent = run.t; span.style.fontSize = `${run.s ?? 14}pt`; span.style.color = RICH_COLORS[run.c || 'ink']; span.style.fontWeight = run.b ? '800' : '400'; row.appendChild(span); }
+    editor.appendChild(row);
+  }
+};
+/** Lay out a text by hand: Enter for a new line, choose words and make them bigger or smaller, bold, or another color. */
+const RichEditor: React.FC<{ heading: string; start: RichLines; isTyped: boolean; onSave: (lines: RichLines | undefined) => void; onClose: () => void; onFields?: () => void }> = ({ heading, start, isTyped, onSave, onClose, onFields }) => {
+  const ref = useRef<HTMLDivElement>(null); const [hint, setHint] = useState('');
+  useEffect(() => { if (ref.current) fillEditor(ref.current, start); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Changes the chosen words only. */
+  const restyle = (change: { grow?: number; color?: RichRun['c']; bold?: 'toggle' }) => {
+    const editor = ref.current; const selection = window.getSelection(); if (!editor || !selection || !selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (range.collapsed || !editor.contains(range.commonAncestorContainer)) { setHint('First choose the words (drag over them with the mouse).'); return; }
+    setHint('');
+    const { startContainer, startOffset, endContainer, endOffset } = range;
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT); const nodes: Text[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) if (range.intersectsNode(node) && (node as Text).data.length) nodes.push(node as Text);
+    const firstBold = nodes.length ? Number(getComputedStyle(nodes[0].parentElement || editor).fontWeight) >= 600 : false;
+    const spans: HTMLSpanElement[] = [];
+    for (const original of nodes) {
+      let node = original;
+      if (node === endContainer && endOffset < node.length) node.splitText(endOffset);
+      if (node === startContainer && startOffset > 0) { if (startOffset >= node.length) continue; node = node.splitText(startOffset); }
+      if (!node.data.length) continue;
+      const style = getComputedStyle(node.parentElement || editor); const span = document.createElement('span');
+      const size = parseFloat(style.fontSize) * 0.75 + (change.grow || 0);
+      span.style.fontSize = `${Math.max(4, Math.min(80, Math.round(size * 2) / 2))}pt`;
+      span.style.color = change.color ? RICH_COLORS[change.color] : style.color;
+      span.style.fontWeight = change.bold ? (firstBold ? '400' : '800') : style.fontWeight;
+      node.replaceWith(span); span.appendChild(node); spans.push(span);
+    }
+    if (spans.length) { const again = document.createRange(); again.setStartBefore(spans[0]); again.setEndAfter(spans[spans.length - 1]); selection.removeAllRanges(); selection.addRange(again); }
+  };
+  const keep = (event: React.MouseEvent) => event.preventDefault(); // keeps the chosen words chosen when a button is clicked
+  return <div className="modal-overlay no-print" onClick={onClose}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 820, width: '96%' }}>
+    <div className="modal-header"><h2 style={{ margin: 0 }} dir="rtl">{heading}</h2><button className="modal-close" onClick={onClose}><X size={20} /></button></div>
+    <div className="modal-body" style={{ display: 'grid', gap: 10 }}>
+      <div className="ss-rich-tools">
+        <button className="btn btn-secondary btn-sm" onMouseDown={keep} onClick={() => restyle({ grow: 2 })}><Plus size={14} /> Bigger</button>
+        <button className="btn btn-secondary btn-sm" onMouseDown={keep} onClick={() => restyle({ grow: -2 })}><Minus size={14} /> Smaller</button>
+        <button className="btn btn-secondary btn-sm" onMouseDown={keep} onClick={() => restyle({ bold: 'toggle' })}><Bold size={14} /> Bold</button>
+        {(Object.keys(RICH_COLORS) as Array<keyof typeof RICH_COLORS>).map(color => <button key={color} className="btn btn-secondary btn-sm" onMouseDown={keep} onClick={() => restyle({ color })} title={`Color: ${color}`}><span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: RICH_COLORS[color] }} /> {color === 'red' ? 'Red' : color === 'teal' ? 'Green' : 'Black'}</button>)}
+      </div>
+      <div ref={ref} className="ss-rich-edit" dir="rtl" contentEditable suppressContentEditableWarning spellCheck={false} />
+      {hint && <div className="pay-error">{hint}</div>}
+      <small style={{ color: 'var(--text-muted)' }}>Press Enter to start a new line. Choose words with the mouse, then press Bigger / Smaller (each press is 2 points), Bold, or a color. On the sheet the whole text gets smaller by itself if it does not fit its box (make the box bigger by dragging its corner).</small>
+    </div>
+    <div className="modal-footer">
+      <button className="btn btn-secondary" style={{ marginRight: 'auto' }} disabled={!isTyped} onClick={() => onSave(undefined)}>Use the regular text</button>
+      {onFields && <button className="btn btn-ghost" onClick={onFields}>Edit the name fields</button>}
+      <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+      <button className="btn btn-primary" onClick={() => { const lines = ref.current ? readEditor(ref.current) : []; onSave(lines.some(line => line.some(run => run.t.trim())) ? lines : undefined); }}>Save</button>
+    </div>
+  </div></div>;
+};
+
 /** The monthly sponsor list, printed exactly on the designer's sheet. */
 export const SponsorSheet: React.FC = () => {
   const today = todayHebrew();
@@ -79,7 +181,7 @@ export const SponsorSheet: React.FC = () => {
   const [items, setItems] = useState<Item[]>([]); const [error, setError] = useState('');
   const [layout, setLayout] = useState<SheetLayout>(defaultLayout(daysInMonth)); const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<number[]>([]); const [dragging, setDragging] = useState<number | null>(null);
-  const [editing, setEditing] = useState<{ kind: 'box'; day: number; label: string } | { kind: 'patron' } | null>(null);
+  const [editing, setEditing] = useState<{ kind: 'box'; day: number; label: string } | { kind: 'patron' } | { kind: 'rich'; key: 'name' | 'dedication' } | null>(null);
   const [status, setStatus] = useState(''); const [scale, setScale] = useState(0.6); const wrap = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number | undefined>(undefined);
   const [piece, setPiece] = useState<string | null>(null); // the chosen piece of the patron section
@@ -126,7 +228,16 @@ export const SponsorSheet: React.FC = () => {
   // The month patron: 'כבוד מוה"ר' above the name, unless typed over.
   const patronSystem: SheetText = patron ? { ...systemText(patron), title: 'כבוד מוה"ר' } : {};
   const patronShown: SheetText = { ...patronSystem, ...(layout.patronText || {}) };
-  const saveBoxText = (day: number, typed: SheetText | undefined) => { const texts = { ...(layout.texts || {}) }; if (typed) texts[String(day)] = typed; else delete texts[String(day)]; save({ ...layout, texts }); setEditing(null); };
+  // The patron name and dedication as lines, to start laying them out by hand.
+  const regularRich = (key: 'name' | 'dedication'): RichLines => {
+    const run = (t: string | undefined, s: number, c: RichRun['c'], b = false): RichRun[] => (t ? [b ? { t, s, c, b } : { t, s, c }] : []);
+    const lines: RichLines = key === 'name'
+      ? [[...run(patronShown.title ? `${patronShown.title} ` : '', 13, 'ink'), ...run(patronShown.first, 25, 'teal', true)], [...run(patronShown.last, 25, 'teal', true), ...run(patronShown.end ? ` ${patronShown.end}` : '', 14, 'ink')]]
+      : [run(patronShown.honoree, 8, 'ink'), run(patronShown.notes, 7, 'ink')];
+    return lines.filter(line => line.length);
+  };
+  const saveRich = (key: string, lines: RichLines | undefined) => { const rich = { ...(layout.rich || {}) }; if (lines) rich[key] = lines; else delete rich[key]; save({ ...layout, rich: Object.keys(rich).length ? rich : undefined }); setEditing(null); };
+  const saveBoxText =(day: number, typed: SheetText | undefined) => { const texts = { ...(layout.texts || {}) }; if (typed) texts[String(day)] = typed; else delete texts[String(day)]; save({ ...layout, texts }); setEditing(null); };
 
   const toggle = (index: number) => setSelected(current => current.includes(index) ? current.filter(at => at !== index) : [...current, index]);
   const merge = () => { try { save(mergeBoxes(layout, selected)); setSelected([]); setError(''); } catch (reason: any) { setError(reason.message); } };
@@ -135,10 +246,10 @@ export const SponsorSheet: React.FC = () => {
   const editLabel = (day: number) => { const text = window.prompt('Text on this day tab (for example יא):', dayLabel(layout, day)); if (text === null) return; const labels = { ...(layout.labels || {}) }; if (text.trim()) labels[String(day)] = text.trim(); else delete labels[String(day)]; save({ ...layout, labels }); };
   // Patron section: every piece can be dragged, moved with the arrow keys, hidden, or put back.
   const setSpot = (key: string, spot: PieceSpot) => save({ ...layoutRef.current, pieces: cleanPieces({ ...(layoutRef.current.pieces || {}), [key]: spot }) });
-  const startDrag = (key: string) => (event: React.PointerEvent) => {
+  const startDrag = (key: string, resize = false) => (event: React.PointerEvent) => {
     if (event.button !== 0) return; event.stopPropagation(); setPiece(key); setSelected([]);
     const perPx = 1 / (scale * 4 / 3); let last = { x: event.clientX, y: event.clientY }; let current = layoutRef.current; let moved = false;
-    const onMove = (ev: PointerEvent) => { const dx = (ev.clientX - last.x) * perPx; const dy = (ev.clientY - last.y) * perPx; if (!dx && !dy) return; last = { x: ev.clientX, y: ev.clientY }; current = changePiece(current, key, { dx, dy }); moved = true; setLayout(current); };
+    const onMove = (ev: PointerEvent) => { const dx = (ev.clientX - last.x) * perPx; const dy = (ev.clientY - last.y) * perPx; if (!dx && !dy) return; last = { x: ev.clientX, y: ev.clientY }; current = changePiece(current, key, resize ? { dw: dx, dh: dy } : { dx, dy }); moved = true; setLayout(current); };
     const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); if (moved) save(current); };
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
   };
@@ -155,8 +266,10 @@ export const SponsorSheet: React.FC = () => {
   }, [piece]); // eslint-disable-line react-hooks/exhaustive-deps
   const pieceBox = (key: PieceKey, children: React.ReactNode, onEdit?: () => void) => {
     const spec = PIECES.find(item => item.key === key)!; const spot = pieceSpot(layout, key); if (spot.hidden) return null;
-    return <div key={key} className={`ss-abs ss-piece ${piece === key ? 'ss-piece-on' : ''}`} style={{ left: pt(spec.x + spot.dx), top: pt(spec.y + spot.dy), width: pt(spec.w), height: pt(spec.h) }}
-      onPointerDown={startDrag(key)} onDoubleClick={onEdit} title={`${spec.label}: drag to move${onEdit ? ', double-click to change the text' : ''}`}>{children}</div>;
+    return <div key={key} className={`ss-abs ss-piece ${piece === key ? 'ss-piece-on' : ''}`} style={{ left: pt(spec.x + spot.dx), top: pt(spec.y + spot.dy), width: pt(Math.max(20, spec.w + (spot.dw || 0))), height: pt(Math.max(10, spec.h + (spot.dh || 0))) }}
+      onPointerDown={startDrag(key)} onDoubleClick={onEdit} title={`${spec.label}: drag to move${onEdit ? ', double-click to change the text and its layout' : ''}`}>{children}
+      {piece === key && <div className="ss-resize no-print" onPointerDown={startDrag(key, true)} onDoubleClick={event => event.stopPropagation()} title="Drag to make it bigger or smaller" />}
+    </div>;
   };
   const chosenPiece = PIECES.find(item => item.key === piece);
   const mixed = placed.filter(box => new Set(box.days.map(day => byDay.get(day)?.donorId || '')).size > 1);
@@ -175,7 +288,8 @@ export const SponsorSheet: React.FC = () => {
         <button className="btn btn-secondary btn-sm" disabled={selected.length !== 1} onClick={() => move(-1)} title="Move one place to the right (earlier)"><MoveRight size={14} /> Earlier</button>
         <button className="btn btn-secondary btn-sm" disabled={selected.length !== 1} onClick={() => move(1)} title="Move one place to the left (later)"><MoveLeft size={14} /> Later</button>
         <button className="btn btn-secondary btn-sm" disabled={selected.length !== 1} onClick={() => { const days = layout.boxes[selected[0]] || []; if (days.length) setEditing({ kind: 'box', day: days[0], label: days.map(day => dayLabel(layout, day)).join(', ') }); }}><Pencil size={14} /> Edit text</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => setEditing({ kind: 'patron' })}><Pencil size={14} /> Edit patron text</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setEditing({ kind: 'rich', key: 'name' })}><Pencil size={14} /> Edit patron text</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setEditing({ kind: 'rich', key: 'dedication' })}><Pencil size={14} /> Edit patron dedication</button>
         {selected.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setSelected([])}>Clear choice ({selected.length})</button>}
         <button className="btn btn-ghost btn-sm" onClick={() => { if (window.confirm('Go back to one box per day in the regular order, with the regular dates?')) { save(defaultLayout(daysInMonth), true); setSelected([]); } }}><RotateCcw size={14} /> Regular order</button>
         <label>Month title <input dir="rtl" value={layout.monthTitle ?? ''} placeholder={`${monthName} ${plain(hebYearText(view.year))}`} onChange={event => save({ ...layout, monthTitle: event.target.value })} /></label>
@@ -216,14 +330,15 @@ export const SponsorSheet: React.FC = () => {
         {pieceBox('intro', <img className="ss-pimg" src="/sponsor-sheet/intro.png" alt="" draggable={false} />)}
         {pieceBox('band', <><img className="ss-pimg" src="/sponsor-sheet/band.png" alt="" draggable={false} /><div className="ss-band"><Fit deps={[bandMonth]}><span className="ss-nowrap">פטרון הצלה לחודש {bandMonth}</span></Fit></div></>, () => { const text = window.prompt('Month in the red band:', bandMonth); if (text !== null) save({ ...layout, bandMonth: text }); })}
         {pieceBox('strip', <img className="ss-pimg" src="/sponsor-sheet/strip.png" alt="" draggable={false} />)}
-        {hasText(patronShown) && pieceBox('name', <div className="ss-patron"><Fit deps={[patronShown]}>
+        {(layout.rich?.name || hasText(patronShown)) && pieceBox('name', <div className="ss-patron">{layout.rich?.name ? <RichView lines={layout.rich.name} /> : <Fit deps={[patronShown]}>
           <div className="ss-nowrap">{patronShown.title && <span className="ss-ink" style={{ fontSize: fs(13) }}>{patronShown.title}</span>} <span className="ss-pname">{patronShown.first}</span></div>
           <div className="ss-nowrap"><span className="ss-pname">{patronShown.last}</span> {patronShown.end && <span className="ss-ink" style={{ fontSize: fs(14) }}>{patronShown.end}</span>}</div>
-        </Fit></div>, () => setEditing({ kind: 'patron' }))}
-        {(patronShown.honoree || patronShown.notes) && pieceBox('dedication', <div className="ss-phon"><Fit deps={[patronShown]}>{patronShown.honoree && <div>{patronShown.honoree}</div>}{patronShown.notes && <div style={{ fontSize: fs(7) }}>{patronShown.notes}</div>}</Fit></div>, () => setEditing({ kind: 'patron' }))}
+        </Fit>}</div>, () => setEditing({ kind: 'rich', key: 'name' }))}
+        {(layout.rich?.dedication || patronShown.honoree || patronShown.notes) && pieceBox('dedication', <div className="ss-phon">{layout.rich?.dedication ? <RichView lines={layout.rich.dedication} /> : <Fit deps={[patronShown]}>{patronShown.honoree && <div>{patronShown.honoree}</div>}{patronShown.notes && <div style={{ fontSize: fs(7) }}>{patronShown.notes}</div>}</Fit>}</div>, () => setEditing({ kind: 'rich', key: 'dedication' }))}
       </div>
     </div>
     {editing?.kind === 'box' && <TextEditor heading={`Box ${editing.label}`} system={systemText(byDay.get(editing.day) || null)} typed={layout.texts?.[String(editing.day)]} onClose={() => setEditing(null)} onSave={typed => saveBoxText(editing.day, typed)} />}
+    {editing?.kind === 'rich' && <RichEditor heading={editing.key === 'name' ? 'פטרון החודש – layout of the name' : 'פטרון החודש – layout of the dedication'} start={layout.rich?.[editing.key] || regularRich(editing.key)} isTyped={Boolean(layout.rich?.[editing.key])} onClose={() => setEditing(null)} onSave={lines => saveRich(editing.key, lines)} onFields={() => setEditing({ kind: 'patron' })} />}
     {editing?.kind === 'patron' && <TextEditor heading="פטרון החודש" system={patronSystem} typed={layout.patronText} onClose={() => setEditing(null)} onSave={typed => { save({ ...layout, patronText: typed }); setEditing(null); }} />}
   </div>;
 };
@@ -254,6 +369,11 @@ const SHEET_CSS = `
 .ss-piece{cursor:move;user-select:none;-webkit-user-select:none;touch-action:none}
 .ss-piece:hover{outline:1.5pt dashed rgba(37,99,235,.45);outline-offset:1pt}
 .ss-piece-on{outline:2.5pt solid #2563eb!important;outline-offset:1pt}
+.ss-resize{position:absolute;right:-7pt;bottom:-7pt;width:14pt;height:14pt;background:#2563eb;border:2pt solid #fff;border-radius:50%;cursor:nwse-resize;box-sizing:border-box;z-index:2}
+.ss-rline{line-height:1.02}
+.ss-rich-tools{display:flex;gap:6px;flex-wrap:wrap}
+.ss-rich-edit{min-height:140px;padding:14px;border:1px solid var(--border,#d0d7de);border-radius:8px;background:#fffcf5;font-family:'Noto Serif Hebrew',serif;font-size:14pt;color:${INK};text-align:center;line-height:1.1;outline:none;overflow:auto;max-height:50vh}
+.ss-rich-edit:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
 .ss-pimg{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
 .ss-patron{position:absolute;inset:0;display:flex;align-items:center;line-height:.98;color:${TEAL}}
 .ss-pname{font-size:calc(25pt * var(--k, 1));font-weight:800;font-stretch:80%;color:${TEAL}}
