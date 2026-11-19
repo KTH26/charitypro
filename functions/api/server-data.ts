@@ -472,6 +472,24 @@ const resolveCoveredDeclines = async (db: any) => {
  * Pages that load one donor's own payments add these, so the brothers' pledges show as paid.
  * Returns: donor id (the pledge's donor) → those payments.
  */
+/**
+ * Whose pledges a payment of this donor may go on: the donor's own, and for a business account
+ * (one check from a company, the receipt in the company's name) also the pledges of the donors linked to it.
+ */
+/** A business account's linked donors: real donors only, not itself, at most 200. */
+export const cleanBusinessMembers = async (db: any, selfId: string, raw: unknown) => {
+  const ids = [...new Set((Array.isArray(raw) ? raw : []).map(String).filter(id => id && id !== selfId))].slice(0, 200);
+  if (!ids.length) return [];
+  const rows = await db.prepare("SELECT id FROM sync_records WHERE type='donors' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all();
+  const found = new Set((rows.results as any[]).map(row => String(row.id)));
+  return ids.filter(id => found.has(id));
+};
+export const pledgeOwnersFor = async (db: any, donorId: string) => {
+  const row: any = donorId ? await db.prepare("SELECT data FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first() : null;
+  const donor = parseSetting(row?.data, {});
+  const members = donor.isBusiness === true && Array.isArray(donor.businessMemberIds) ? donor.businessMemberIds.map(String).filter(Boolean) : [];
+  return new Set([donorId, ...members]);
+};
 export const paymentsFromOtherDonors = async (db: any, donorIds: string[]) => {
   const wanted = new Set(donorIds.map(String).filter(Boolean)); const byDonor = new Map<string, Map<string, any>>();
   if (!wanted.size) return new Map<string, any[]>();
@@ -1391,7 +1409,22 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     ]);
     const fromOthers = (await paymentsFromOtherDonors(c.env.DB, [donorId])).get(donorId) || [];
     const financials = calculatePledgeFinancials(pledgeRows.results.map(parseRecord), [...paymentRows.results.map(parseRecord), ...fromOthers], scheduleRows.results.map(parseRecord));
-    return c.json({ success: true, items: financials.map(({ appliedPayments: _appliedPayments, pendingPayments: _pendingPayments, ...item }) => item).sort((left, right) => Number(left.balance <= 0) - Number(right.balance <= 0) || String(right.date).localeCompare(String(left.date))) });
+    const clean = (list: any[]) => list.map(({ appliedPayments: _appliedPayments, pendingPayments: _pendingPayments, ...item }) => item);
+    const items: any[] = clean(financials);
+    // A business account: also its donors' pledges, so one check can be divided between them.
+    const members = [...(await pledgeOwnersFor(c.env.DB, donorId))].filter(id => id !== donorId);
+    for (const memberId of members) {
+      const [memberPledges, memberPayments, memberSchedules, memberRow] = await c.env.DB.batch([
+        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.date'),id LIMIT ?").bind(memberId, limit),
+        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(memberId),
+        c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(memberId),
+        c.env.DB.prepare("SELECT data FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(memberId)
+      ]);
+      const memberName = String(parseSetting((memberRow.results as any[])[0]?.data, {}).name || 'Donor');
+      const memberFromOthers = (await paymentsFromOtherDonors(c.env.DB, [memberId])).get(memberId) || [];
+      items.push(...clean(calculatePledgeFinancials(memberPledges.results.map(parseRecord), [...memberPayments.results.map(parseRecord), ...memberFromOthers], memberSchedules.results.map(parseRecord))).map(item => ({ ...item, donorName: memberName, forMember: true })));
+    }
+    return c.json({ success: true, items: items.sort((left, right) => Number(left.balance <= 0) - Number(right.balance <= 0) || Number(Boolean(left.forMember)) - Number(Boolean(right.forMember)) || String(right.date).localeCompare(String(left.date))) });
   });
 
   app.get('/v3/pledges/:id/details', async (c: any) => {
@@ -3435,7 +3468,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     };
     return c.json({
       success: true,
-      donor: { ...parseRecord(donor), totalGiven: approvedTotal },
+      donor: { ...parseRecord(donor), totalGiven: approvedTotal, ...(await (async () => {
+        // Business accounts: the donors of this business, and the businesses this donor belongs to.
+        const self: any = parseRecord(donor);
+        const memberIds = self.isBusiness === true && Array.isArray(self.businessMemberIds) ? self.businessMemberIds.map(String) : [];
+        const members = memberIds.length ? ((await c.env.DB.prepare("SELECT id,json_extract(data,'$.name') AS name FROM sync_records WHERE type='donors' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(memberIds)).all()).results as any[]).map(row => ({ id: String(row.id), name: String(row.name || '') })) : [];
+        const businesses = ((await c.env.DB.prepare("SELECT d.id,json_extract(d.data,'$.name') AS name FROM sync_records d, json_each(CASE WHEN json_type(d.data,'$.businessMemberIds')='array' THEN json_extract(d.data,'$.businessMemberIds') ELSE '[]' END) m WHERE d.type='donors' AND d.is_deleted=0 AND json_extract(d.data,'$.isBusiness') IN (1,'true') AND m.value=?").bind(id).all()).results as any[]).map(row => ({ id: String(row.id), name: String(row.name || '') }));
+        return { businessMembers: members, memberOfBusinesses: businesses };
+      })()) },
       payments: withCampaigns.payments, pledges: withCampaigns.pledges, recurring: withCampaigns.recurring, contacts: contacts.results.map((row:any)=>({...parseRecord(row),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')})),
       summary: { paymentCount: paymentItems.length, approvedTotal, declinedCount: paymentItems.filter(payment => payment.type === 'declined').length, pledgeCount: Number(pledgeStats.count || 0), pledgedTotal: Number(pledgeStats.total || 0), pledgePaidTotal, pledgePendingTotal, scheduledTotal, pledgeBalance, unappliedTotal: approvedTotal - pledgePaidTotal, recurringCount: recurringItems.length, activeRecurringCount: recurringItems.filter(item => item.active).length, activeRecurringTotal: scheduledTotal, contactCount: contacts.results.length }
     });
@@ -3493,7 +3533,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const refs = await c.env.DB.prepare("SELECT type,id,data FROM sync_records WHERE is_deleted=0 AND ((type='donors' AND id=?) OR (type='paymentMethods' AND id=? AND json_extract(data,'$.donorId')=?) OR (type='accounts' AND id IN (?,?)))").bind(donorId,paymentMethodId,donorId,sourceAccountId,offsetAccountId).all();
     const donorRow: any = refs.results.find((row: any) => row.type === 'donors'); const methodRow: any = refs.results.find((row: any) => row.type === 'paymentMethods'); const accountIds = new Set(refs.results.filter((row: any) => row.type === 'accounts').map((row: any) => String(row.id)));
     if (!donorRow || !methodRow || !accountIds.has(sourceAccountId) || !accountIds.has(offsetAccountId)) return c.json({ success: false, error: 'The donor, saved card, or selected account no longer exists.' }, 409);
-    if (requestedAllocations.length) { const rows=await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(requestedAllocations.map((allocation:any)=>allocation.pledgeId))).all();const valid=new Set((rows.results as any[]).filter(row=>String(parseSetting(row.data,{}).donorId||'')===donorId).map(row=>String(row.id)));if(requestedAllocations.some((allocation:any)=>!valid.has(allocation.pledgeId)))return c.json({success:false,error:'Every allocated pledge must belong to this donor.'},409); }
+    if (requestedAllocations.length) { const rows=await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(requestedAllocations.map((allocation:any)=>allocation.pledgeId))).all();const owners=await pledgeOwnersFor(c.env.DB,donorId);const valid=new Set((rows.results as any[]).filter(row=>owners.has(String(parseSetting(row.data,{}).donorId||''))).map(row=>String(row.id)));if(requestedAllocations.some((allocation:any)=>!valid.has(allocation.pledgeId)))return c.json({success:false,error:'Every allocated pledge must belong to this donor (or, for a business account, to one of its donors).'},409); }
     const method = parseSetting(methodRow.data, {}); if (method.status !== 'active') return c.json({ success: false, error: 'This saved card is paused.' }, 409);
     const tokenRow: any = await c.env.DB.prepare('SELECT value FROM server_secrets WHERE key=?').bind(`PAYMENT_METHOD_TOKEN:${paymentMethodId}`).first(); const key = await getSolaKey(c);
     if (!tokenRow?.value || !key) return c.json({ success: false, error: 'The saved card token or Sola server key is unavailable.' }, 409);
@@ -3539,7 +3579,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const lastName = String(body.lastName || '').trim();
     const phone = String(body.phone || '').trim();
     const email = String(body.email || '').trim();
-    if (!firstName || !lastName || !phone) return c.json({ success: false, error: 'First name, last name, and phone are required.' }, 400);
+    if (!firstName || (!lastName && body.isBusiness !== true) || !phone) return c.json({ success: false, error: 'First name, last name, and phone are required (a business needs only its name and phone).' }, 400);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ success: false, error: 'Enter a valid email address.' }, 400);
 
     const id = crypto.randomUUID();
@@ -3552,7 +3592,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       address: text('address'), notes: text('notes', 2000), totalGiven: 0, balanceOwed: 0,
       preTitle: text('preTitle'), hebFirstName: text('hebFirstName'), hebLastName: text('hebLastName'),
       title: text('title'), postTitle: text('postTitle'), homePhone: text('homePhone'), mobilePhone: text('mobilePhone'), receiptName: text('receiptName'),
-      cards: [], sponsorshipDays: []
+      cards: [], sponsorshipDays: [],
+      ...(body.isBusiness === true ? { isBusiness: true, businessMemberIds: await cleanBusinessMembers(c.env.DB, id, body.businessMemberIds) } : {})
     };
     const now = Date.now();
     const data = JSON.stringify(record);
@@ -3597,11 +3638,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const lastName = String(body.lastName ?? existing.lastName ?? '').trim();
     const phone = String(body.phone ?? existing.phone ?? '').trim();
     const email = String(body.email ?? existing.email ?? '').trim();
-    if (!firstName || !lastName || !phone) return c.json({ success: false, error: 'First name, last name, and phone are required.' }, 400);
+    if (!firstName || (!lastName && !(body.isBusiness ?? existing.isBusiness)) || !phone) return c.json({ success: false, error: 'First name, last name, and phone are required (a business needs only its name and phone).' }, 400);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ success: false, error: 'Enter a valid email address.' }, 400);
     const textFields = ['address','notes','preTitle','hebFirstName','hebLastName','title','postTitle','homePhone','mobilePhone','receiptName'];
     const next: any = { ...existing, firstName, lastName, name: `${firstName} ${lastName}`.trim(), phone, email };
     for (const field of textFields) if (body[field] !== undefined) next[field] = String(body[field] || '').trim().slice(0, field === 'notes' ? 2000 : 500);
+    // Business account: one check from a company, divided between its donors; the receipt is in the company's name.
+    if (body.isBusiness !== undefined) next.isBusiness = body.isBusiness === true;
+    if (body.businessMemberIds !== undefined || body.isBusiness === false) next.businessMemberIds = next.isBusiness ? await cleanBusinessMembers(c.env.DB, id, body.businessMemberIds ?? existing.businessMemberIds) : [];
     if (body.displayId !== undefined) next.displayId = String(body.displayId || '').trim() || existing.displayId || `D-${id.slice(0, 8).toUpperCase()}`;
     const duplicate = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id<>? AND is_deleted=0 AND lower(json_extract(data,'$.displayId'))=lower(?) LIMIT 1").bind(id, next.displayId).first();
     if (duplicate) return c.json({ success: false, error: 'That donor ID is already in use.' }, 409);
@@ -4902,8 +4946,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (pledgeId && (!pledgeRow || String(JSON.parse(String(pledgeRow.data)).donorId||'')!==donorId)) return c.json({ success:false,error:'The selected pledge does not belong to this donor.' },409);
     if (requestedAllocations.length) {
       const allocationPledges = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(requestedAllocations.map((allocation: any) => allocation.pledgeId))).all();
-      const valid = new Set((allocationPledges.results as any[]).filter(row => String(parseSetting(row.data, {}).donorId || '') === donorId).map(row => String(row.id)));
-      if (requestedAllocations.some((allocation: any) => !valid.has(allocation.pledgeId))) return c.json({ success: false, error: 'Every allocated pledge must belong to the selected donor.' }, 409);
+      const owners = await pledgeOwnersFor(c.env.DB, donorId);
+      const valid = new Set((allocationPledges.results as any[]).filter(row => owners.has(String(parseSetting(row.data, {}).donorId || ''))).map(row => String(row.id)));
+      if (requestedAllocations.some((allocation: any) => !valid.has(allocation.pledgeId))) return c.json({ success: false, error: 'Every allocated pledge must belong to the selected donor (or, for a business account, to one of its donors).' }, 409);
     }
 
     const id = crypto.randomUUID();
@@ -4998,7 +5043,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const requested = Array.isArray(body.allocations) ? body.allocations.map((allocation: any) => ({ pledgeId: String(allocation?.pledgeId || '').trim(), amount: Number(allocation?.amount) })).filter((allocation: any) => allocation.pledgeId || allocation.amount) : [];
     if (requested.some((allocation: any) => !allocation.pledgeId || !Number.isFinite(allocation.amount) || allocation.amount <= 0) || new Set(requested.map((allocation: any) => allocation.pledgeId)).size !== requested.length) return c.json({ success: false, error: 'Each allocation needs one unique pledge and a positive amount.' }, 400);
     if (requested.reduce((sum: number, allocation: any) => sum + allocation.amount, 0) - amount > 0.005) return c.json({ success: false, error: 'Pledge allocations cannot exceed the payment amount.' }, 400);
-    if (requested.length) { const rows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(requested.map((allocation: any) => allocation.pledgeId))).all(); const valid = new Set((rows.results as any[]).filter(row => String(parseSetting(row.data, {}).donorId || '') === donorId).map(row => String(row.id))); if (requested.some((allocation: any) => !valid.has(allocation.pledgeId))) return c.json({ success: false, error: 'Every allocated pledge must belong to this payment donor.' }, 409); }
+    if (requested.length) { const rows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(requested.map((allocation: any) => allocation.pledgeId))).all(); const owners = await pledgeOwnersFor(c.env.DB, donorId); const valid = new Set((rows.results as any[]).filter(row => owners.has(String(parseSetting(row.data, {}).donorId || ''))).map(row => String(row.id))); if (requested.some((allocation: any) => !valid.has(allocation.pledgeId))) return c.json({ success: false, error: 'Every allocated pledge must belong to this payment donor.' }, 409); }
     const now = Date.now(); const allocations = requested.map((allocation: any) => ({ id: crypto.randomUUID(), paymentId: id, donorId, pledgeId: allocation.pledgeId, amount: allocation.amount, amountCAD: currency === 'USD' ? allocation.amount * exchangeRate : allocation.amount, currency, createdAt: new Date(now).toISOString() })); const next = { ...payment, pledgeId: null, pledgeAllocations: allocations }; const revision = expectedRevision + 1; const data = JSON.stringify(next); const operationId = `${mutationId}-payment`; const response = { success: true, item: { ...next, id, revision, updatedAt: now }, allocations };
     const existing = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='paymentAllocations' AND is_deleted=0 AND json_extract(data,'$.paymentId')=?").bind(id).all(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown'); const statements: any[] = [
       c.env.DB.prepare("INSERT INTO sync_batch_assertions(id,assertion_value) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM sync_records WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0) THEN 1 ELSE 0 END").bind(operationId,id,expectedRevision),

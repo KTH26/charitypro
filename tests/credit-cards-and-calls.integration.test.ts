@@ -99,7 +99,8 @@ describe('credit cards due', () => {
     expect(visa).toMatchObject({ dueDate: '2026-12-15', statementDate: '2026-11-24', periodCharges: 250, amountDue: 250 });
     // Paid the November bill (100) on Nov 14, during this period: it was for the previous bill, so December still owes 250.
     const paid = await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'visa', amount: 100, date: '2026-11-14' } });
-    expect(paid.status).toBe(201);
+    expect(paid.body.error || '').toBe('');
+    expect(paid.body.success).toBe(true);
     result = await call('GET', '/v3/credit-cards-due?today=2026-11-26');
     visa = result.body.items.find((item: any) => item.id === 'visa');
     expect(visa.amountDue).toBe(250);
@@ -649,5 +650,32 @@ describe('payments sheets', () => {
     const saved = await call('PUT', '/v3/list-views', { list: 'payments', views: [{ name: 'Checks 2025', base: 'all', columns: ['date', 'donor', 'campaign'], filters: { campaignYear: '2025..2025' }, sort: 'amount', direction: 'asc', method: 'check' }] });
     expect(saved.body.views[0]).toMatchObject({ name: 'Checks 2025', base: 'all', columns: ['date', 'donor', 'campaign'], filters: { campaignYear: '2025..2025' }, sort: 'amount', direction: 'asc', method: 'check' });
     expect((await call('GET', '/v3/list-views?list=payments')).body.views).toHaveLength(1);
+  });
+});
+
+describe('business accounts', () => {
+  it('one company check is divided between its donors pledges; the receipt is the company for the full amount', async () => {
+    const { db, call } = setup();
+    seed(db, 'accounts', 'donations', { name: 'Donations', type: 'revenue', currency: 'CAD' });
+    seed(db, 'donors', 'd2', { name: 'Abraham Klein', phone: '514-555-0101' });
+    seed(db, 'pledges', 'p1', { donorId: 'd1', amount: 600, currency: 'CAD', date: '2026-04-01' });
+    seed(db, 'pledges', 'p2', { donorId: 'd2', amount: 400, currency: 'CAD', date: '2026-04-01' });
+    const made = await call('POST', '/v3/donors', { requestId: crypto.randomUUID(), firstName: 'Klein Holdings Inc', lastName: '', phone: '514-555-0199', receiptName: 'Klein Holdings Inc.', isBusiness: true, businessMemberIds: ['d1', 'd2', 'nobody'] });
+    expect(made.body.success).toBe(true);
+    const business = made.body.item;
+    expect(business).toMatchObject({ isBusiness: true, businessMemberIds: ['d1', 'd2'] });
+    const choices = (await call('GET', `/v3/donors/${business.id}/pledge-choices`)).body.items;
+    expect(choices.map((item: any) => [item.id, item.donorName])).toEqual(expect.arrayContaining([['p1', 'Moshe Cohen'], ['p2', 'Abraham Klein']]));
+    const paid = await call('POST', '/v3/payments', { requestId: crypto.randomUUID(), donorId: business.id, amount: 1000, currency: 'CAD', method: 'e_transfer', date: '2026-05-01', sourceAccountId: 'bmo', offsetAccountId: 'donations', type: 'approved', allocations: [{ pledgeId: 'p1', amount: 600 }, { pledgeId: 'p2', amount: 400 }] });
+    expect(paid.body.error || '').toBe('');
+    expect(paid.body.success).toBe(true);
+    const p2 = (await call('GET', '/v3/donors/d2/profile')).body;
+    expect(p2.pledges.find((item: any) => item.id === 'p2')).toMatchObject({ paid: 400, balance: 0 });
+    expect(p2.donor.memberOfBusinesses).toEqual([{ id: business.id, name: 'Klein Holdings Inc' }]);
+    const gift = await loadGift(db as any, paid.body.item.id);
+    expect(gift).toMatchObject({ donorName: 'Klein Holdings Inc.', amount: 1000 });
+    // a normal donor still cannot put money on someone else's pledge
+    const blocked = await call('POST', '/v3/payments', { requestId: crypto.randomUUID(), donorId: 'd1', amount: 50, currency: 'CAD', method: 'cash', date: '2026-05-02', sourceAccountId: 'bmo', offsetAccountId: 'donations', type: 'approved', allocations: [{ pledgeId: 'p2', amount: 50 }] });
+    expect(blocked.status).toBe(409);
   });
 });

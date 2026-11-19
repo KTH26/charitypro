@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { BusinessMembersField } from './BusinessMembersField';
 
 export type OnlineDonor = {
   id: string;
@@ -20,6 +21,9 @@ export type OnlineDonor = {
   mobilePhone?: string;
   /** The legal name printed on official receipts (a company, the wife's name …). Empty = the donor's name. */
   receiptName?: string;
+  /** A business account: one check from a company, divided between its donors. */
+  isBusiness?: boolean;
+  businessMemberIds?: string[];
   totalGiven: number;
   openBalance?: number;
 };
@@ -36,6 +40,7 @@ export const OnlineDonorForm: React.FC<{
     preTitle: donor?.preTitle || '', hebFirstName: donor?.hebFirstName || '', hebLastName: donor?.hebLastName || '',
     title: donor?.title || '', postTitle: donor?.postTitle || '', homePhone: donor?.homePhone || '', mobilePhone: donor?.mobilePhone || '', receiptName: donor?.receiptName || ''
   });
+  const [business, setBusiness] = useState({ isBusiness: Boolean(donor?.isBusiness), memberIds: donor?.businessMemberIds || [] });
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -45,8 +50,8 @@ export const OnlineDonorForm: React.FC<{
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
-    if (!form.firstName.trim() || !form.lastName.trim() || !form.phone.trim()) {
-      setError('First name, last name, and phone are required.');
+    if (!form.firstName.trim() || (!form.lastName.trim() && !business.isBusiness) || !form.phone.trim()) {
+      setError(business.isBusiness ? 'Enter the business name (in First name) and a phone.' : 'First name, last name, and phone are required.');
       return;
     }
     setSaving(true);
@@ -56,7 +61,7 @@ export const OnlineDonorForm: React.FC<{
       const response = await fetch(donor ? `/api/v3/donors/${encodeURIComponent(donor.id)}` : '/api/v3/donors', {
         method: donor ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ ...form, requestId, ...(donor ? { revision: donor.revision } : {}) })
+        body: JSON.stringify({ ...form, isBusiness: business.isBusiness, businessMemberIds: business.isBusiness ? business.memberIds : [], requestId, ...(donor ? { revision: donor.revision } : {}) })
       });
       const data = await response.json();
       if (!response.ok || !data.success) {
@@ -90,6 +95,7 @@ export const OnlineDonorForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Donor ID</span><input value={form.displayId} onChange={e => set('displayId', e.target.value)} placeholder="Generated automatically if blank" /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Address</span><input value={form.address} onChange={e => set('address', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Legal name for receipts</span><input value={form.receiptName} onChange={e => set('receiptName', e.target.value)} placeholder={`${[form.firstName, form.lastName].filter(Boolean).join(' ') || 'Same as the donor name'}`} /><small style={{ color: 'var(--text-muted)' }}>A company, the wife's name … Leave empty to use the donor's name.</small></label>
+          <BusinessMembersField isBusiness={business.isBusiness} memberIds={business.memberIds} selfId={donor?.id} onChange={next => setBusiness(next)} />
         </div>
         <label className="form-group" style={{ margin: '14px 0 0' }}><span>Notes</span><textarea rows={3} maxLength={2000} value={form.notes} onChange={e => set('notes', e.target.value)} /></label>
         <button type="button" className="btn btn-ghost" style={{ marginTop: 10 }} onClick={() => setAdvanced(value => !value)}>{advanced ? 'Hide additional fields' : 'Show Hebrew and additional phone fields'}</button>
