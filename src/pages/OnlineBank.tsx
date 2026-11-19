@@ -13,6 +13,9 @@ type BankAccount = {
   revision: number;
   bankConnected: boolean;
   savedTransactionCount?: number;
+  unmatchedCount?: number;
+  unmatchedIn?: number;
+  unmatchedOut?: number;
 };
 type CloudAccount = {
   id: string;
@@ -349,7 +352,7 @@ export const OnlineBank: React.FC = () => {
       if (!response.ok || !data.success) throw new Error(data.error || "Unable to update this bank transaction.");
       removeMatchedFromVisibleFeed(transaction.id);
       setNotice(action === "dismiss" ? "Transaction moved to Dismissed. No accounting entry was created." : action === "delete" ? "Transaction deleted forever." : "Transaction restored to Unmatched and is ready to review.");
-      await loadFeed(true);
+      await Promise.all([loadFeed(true), loadState(true)]);
     } catch (reason: any) { setError(reason.message || "Unable to update this bank transaction."); }
     finally { setSaving(false); }
   };
@@ -645,8 +648,8 @@ export const OnlineBank: React.FC = () => {
                 >
                   <strong>{account.name}</strong>
                   <small>
-                    {Number(account.savedTransactionCount || 0).toLocaleString()} saved transaction
-                    {Number(account.savedTransactionCount || 0) === 1 ? "" : "s"}
+                    {Number(account.unmatchedCount || 0) > 0 ? <span style={{ color: "var(--red)", fontWeight: 700 }}>{Number(account.unmatchedCount).toLocaleString()} to match</span> : <span style={{ color: "var(--green)", fontWeight: 700 }}>All matched</span>}
+                    {" "}· {Number(account.savedTransactionCount || 0).toLocaleString()} in all
                     {account.bankConnected ? "" : " · reconnect required"}
                   </small>
                 </button>
@@ -1173,7 +1176,7 @@ export const OnlineBank: React.FC = () => {
                 setFeedPage(1);
               }}
             >
-              Unmatched
+              Unmatched{selectedAccount ? ` (${Number(selectedAccount.unmatchedCount || 0).toLocaleString()})` : ""}
             </button>
             <button
               className={`btn ${tab === "matched" ? "btn-primary" : "btn-secondary"}`}

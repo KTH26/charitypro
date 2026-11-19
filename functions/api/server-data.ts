@@ -3711,9 +3711,19 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare("SELECT data,revision,updated_at FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0").first()
     ]);
     const matchedIds = matchRecord ? JSON.parse(String((matchRecord as any).data)) : [];
+    // Still to match per account: not matched and not dismissed (the same rule as the Unmatched tab).
+    const matchedSet = new Set<string>((Array.isArray(matchedIds) ? matchedIds : []).map((id: any) => String(id)));
+    const feedRows = await c.env.DB.prepare("SELECT json_extract(data,'$.id') AS id,json_extract(data,'$.accountId') AS account,COALESCE(json_extract(data,'$.reviewStatus'),'') AS review,json_extract(data,'$.amount') AS amount FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0").all();
+    const unmatched = new Map<string, { count: number; moneyIn: number; moneyOut: number }>();
+    for (const row of feedRows.results as any[]) {
+      if (matchedSet.has(String(row.id)) || row.review === 'dismissed') continue;
+      const entry = unmatched.get(String(row.account)) || { count: 0, moneyIn: 0, moneyOut: 0 }; entry.count++;
+      const amount = Number(row.amount || 0); if (amount > 0) entry.moneyIn += amount; else entry.moneyOut += -amount;
+      unmatched.set(String(row.account), entry);
+    }
     return c.json({
       success: true,
-      accounts: accountResult.results.map((row: any) => ({ ...parseRecord(row), bankConnected: Boolean(row.has_token), lastBankSync:Number(row.last_bank_sync||0), savedTransactionCount:Number(row.saved_transaction_count||0) })),
+      accounts: accountResult.results.map((row: any) => { const open = unmatched.get(String(row.id)) || { count: 0, moneyIn: 0, moneyOut: 0 }; return { ...parseRecord(row), bankConnected: Boolean(row.has_token), lastBankSync:Number(row.last_bank_sync||0), savedTransactionCount:Number(row.saved_transaction_count||0), unmatchedCount: open.count, unmatchedIn: Math.round(open.moneyIn * 100) / 100, unmatchedOut: Math.round(open.moneyOut * 100) / 100 }; }),
       matchedIds: Array.isArray(matchedIds) ? matchedIds : [],
       matchedRevision: Number((matchRecord as any)?.revision || 0),
       updatedAt: Number((matchRecord as any)?.updated_at || 0)
