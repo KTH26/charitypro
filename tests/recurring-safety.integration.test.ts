@@ -112,6 +112,25 @@ describe('recurring card runner safety', () => {
     // Bringing it in again adds nothing.
     const again = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
     expect(again).toMatchObject({ imported: 0, skipped: 1 });
+    // Hide it: it stays in Sola (no call to Sola at all), comes off the donor's profile, and is marked hidden in the list.
+    const callsBefore = calls.length;
+    const hide = await (await app.request('/v3/sola/saved-cards/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentMethodIds: ['c1_pm1'] }) }, { DB: db } as any)).json() as any;
+    expect(hide).toMatchObject({ success: true, hidden: 1, removedFromProfiles: 1, blocked: [] });
+    expect(calls.length).toBe(callsBefore);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(0);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM server_secrets WHERE key LIKE 'PAYMENT_METHOD_TOKEN:%'").get().count).toBe(0);
+    const list = await (await app.request('/v3/sola/saved-cards/preview', { method: 'POST' }, { DB: db } as any)).json() as any;
+    expect(list.items[0]).toMatchObject({ paymentMethodId: 'c1_pm1', hidden: true, alreadyInCharityPro: false });
+    const hiddenImport = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
+    expect(hiddenImport).toMatchObject({ imported: 0, skipped: 1 });
+    // Show it again, bring it in, put it on a CharityPro schedule: then it cannot be hidden.
+    await app.request('/v3/sola/saved-cards/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentMethodIds: ['c1_pm1'], hidden: false }) }, { DB: db } as any);
+    await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any);
+    const cardId = String((db.database.prepare("SELECT id FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get() as any).id);
+    seedRecord(db, 'recurringPayments', 'local-schedule', { id: 'local-schedule', donorId: 'donor', active: true, method: 'credit_card', paymentMethodIds: [cardId] });
+    const blocked = await (await app.request('/v3/sola/saved-cards/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentMethodIds: ['c1_pm1'] }) }, { DB: db } as any)).json() as any;
+    expect(blocked).toMatchObject({ hidden: 0, removedFromProfiles: 0, blocked: ['c1_pm1'] });
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(1);
   });
 
   it('retries a declined card only on its retry date', async () => {

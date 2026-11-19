@@ -2864,9 +2864,40 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       return { paymentMethodId, customerId, name, email: String(customer.Email || ''), phone: phones[0] || '', brand: String(method.Issuer || 'Card'), last4, expiryMonth, expiryYear, expired, donorId, donorName: donorName.get(donorId) || '', matchedBy, alreadyInCharityPro: Boolean(already), token: String(method.Token) };
     });
   };
+  // Cards hidden in CharityPro (they stay in Sola untouched).
+  const hiddenSavedCards = async (db: any) => { const row: any = await db.prepare("SELECT value FROM sync_metadata WHERE key='sola_hidden_saved_cards'").first(); const list = parseSetting(row?.value, []); return new Set<string>(Array.isArray(list) ? list.map(String) : []); };
+  app.post('/v3/sola/saved-cards/hide', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const body = await c.req.json().catch(() => ({})); const ids = [...new Set((Array.isArray(body.paymentMethodIds) ? body.paymentMethodIds : []).map(String).filter(Boolean))].slice(0, 2000) as string[]; const hide = body.hidden !== false;
+    if (!ids.length) return c.json({ success: false, error: 'Choose the cards.' }, 400);
+    const hidden = await hiddenSavedCards(c.env.DB); const now = Date.now(); const statements: any[] = []; const blocked: string[] = []; let removed = 0;
+    if (hide) {
+      // Also take them off the donors' profiles, unless a CharityPro schedule charges that card.
+      const cards = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.solaPaymentMethodId') IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all();
+      const schedules = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND COALESCE(json_extract(data,'$.active'),0)=1").all();
+      const inUse = new Set<string>(); for (const row of schedules.results as any[]) { const schedule = parseSetting(row.data, {}); for (const id of [schedule.paymentMethodId, ...(Array.isArray(schedule.paymentMethodIds) ? schedule.paymentMethodIds : [])]) if (id) inUse.add(String(id)); }
+      const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
+      for (const row of cards.results as any[]) {
+        const card = parseSetting(row.data, {});
+        if (inUse.has(String(row.id))) { blocked.push(String(card.solaPaymentMethodId)); continue; }
+        const revision = Number(row.revision) + 1; const operation = `hide-sola-card-${row.id}-${now}`;
+        statements.push(
+          c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=?,updated_at=?,last_operation_id=? WHERE type='paymentMethods' AND id=? AND revision=? AND is_deleted=0").bind(revision, now, operation, row.id, row.revision),
+          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentMethods',?,'delete',?,?,?,?)").bind(row.id, revision, row.data, now, operation, operation),
+          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentMethods','delete',?,?,?,NULL,?,?,?,?,?,?)").bind(row.id, row.revision, revision, row.data, userId, userEmail, now, operation, operation, 'Saved Sola card hidden in CharityPro (still in Sola)'),
+          c.env.DB.prepare("DELETE FROM server_secrets WHERE key=?").bind(`PAYMENT_METHOD_TOKEN:${row.id}`),
+        );
+        removed++;
+      }
+      for (const id of ids) if (!blocked.includes(id)) hidden.add(id);
+    } else for (const id of ids) hidden.delete(id);
+    statements.push(c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_hidden_saved_cards',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify([...hidden]), now));
+    try { await c.env.DB.batch(statements); } catch { return c.json({ success: false, error: 'Something changed at the same time. Reload and try again.' }, 409); }
+    return c.json({ success: true, hidden: hide ? ids.length - blocked.length : 0, shown: hide ? 0 : ids.length, removedFromProfiles: removed, blocked });
+  });
   app.post('/v3/sola/saved-cards/preview', async (c: any) => {
     const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
-    try { const items = (await solaSavedCards(c)).map(({ token: _token, ...item }: any) => item); return c.json({ success: true, items }); }
+    try { const hidden = await hiddenSavedCards(c.env.DB); const items = (await solaSavedCards(c)).map(({ token: _token, ...item }: any) => ({ ...item, hidden: hidden.has(item.paymentMethodId) })); return c.json({ success: true, items }); }
     catch (reason: any) { return c.json({ success: false, error: String(reason.message || 'Could not read the saved cards from Sola.') }, reason.status || 502); }
   });
   app.post('/v3/sola/saved-cards/import', async (c: any) => {
@@ -2880,9 +2911,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const existing = await c.env.DB.prepare("SELECT json_extract(data,'$.donorId') AS donor,json_extract(data,'$.solaPaymentMethodId') AS pm,json_extract(data,'$.last4') AS last4,json_extract(data,'$.expiryMonth') AS em,json_extract(data,'$.expiryYear') AS ey,json_extract(data,'$.priority') AS priority,json_extract(data,'$.isDefault') AS isDefault,json_extract(data,'$.status') AS status FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.donorId') IN (SELECT value FROM json_each(?))").bind(JSON.stringify(donorIds)).all();
     const perDonor = new Map<string, any[]>(); for (const row of existing.results as any[]) perDonor.set(String(row.donor), [...(perDonor.get(String(row.donor)) || []), row]);
     const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
-    const summary = { imported: 0, skipped: 0, errors: [] as string[] };
+    const summary = { imported: 0, skipped: 0, errors: [] as string[] }; const hidden = await hiddenSavedCards(c.env.DB);
     for (const card of cards) {
       const donorId = wanted.get(card.paymentMethodId); if (!donorId) continue;
+      if (hidden.has(card.paymentMethodId)) { summary.skipped++; continue; }
       if (!validDonors.has(donorId)) { summary.errors.push(`${card.name || card.paymentMethodId}: donor not found`); continue; }
       const list = perDonor.get(donorId) || [];
       if (card.expired || !/^\d{4}$/.test(card.last4) || list.some(row => String(row.pm || '') === card.paymentMethodId || (String(row.last4) === card.last4 && Number(row.em) === card.expiryMonth && Number(row.ey) === card.expiryYear))) { summary.skipped++; continue; }
