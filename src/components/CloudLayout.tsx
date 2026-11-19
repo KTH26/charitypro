@@ -1,59 +1,67 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  BarChart3, Bell, Building, FileCheck2, Calendar, CalendarClock, CheckSquare, FileText,
-  HeartHandshake, LayoutDashboard, Link as LinkIcon, List, LogOut, Megaphone, Printer,
-  Menu, Settings, ShieldCheck, Store, Users, Wallet, X, PhoneCall, UserCheck } from 'lucide-react';
+  BarChart3, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, House, Landmark, ListChecks,
+  LogOut, Menu, Receipt, Settings, ShieldCheck, Users, X } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
 import { PageExportButton } from './PageExportButton';
 import { startLiveRefresh, subscribeLiveStatus, type LiveStatus } from '../utils/liveUpdates';
 
-type NavItem = { path: string; label: string; icon: React.ElementType; ready?: boolean };
-type NavCategory = { label: string; items: NavItem[] };
+type NavItem = { path: string; label: string };
+type NavCategory = { label: string; icon: React.ElementType; items: NavItem[] };
 
+// Menu groups fold open and closed, like DonorFuse. Same pages and links as before.
 const categories: NavCategory[] = [
-  { label: 'HOME', items: [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard, ready: true },
-    { path: '/calendar', label: 'Calendar', icon: Calendar, ready: true },
-    { path: '/reminders', label: 'Reminders', icon: Bell, ready: true }
+  { label: 'Home', icon: House, items: [
+    { path: '/', label: 'Dashboard' },
+    { path: '/calendar', label: 'Calendar' },
+    { path: '/reminders', label: 'Reminders' }
   ] },
-  { label: 'CONTACTS', items: [
-    { path: '/donors', label: 'Donors', icon: Users, ready: true },
-    { path: '/tracker', label: 'Call Tracker', icon: PhoneCall, ready: true },
-    { path: '/fundraisers', label: 'Fundraisers', icon: UserCheck, ready: true }
+  { label: 'Contacts', icon: Users, items: [
+    { path: '/donors', label: 'Donors' },
+    { path: '/tracker', label: 'Call Tracker' },
+    { path: '/fundraisers', label: 'Fundraisers' }
   ] },
-  { label: 'DONATIONS', items: [
-    { path: '/campaigns', label: 'Campaigns', icon: Megaphone, ready: true },
-    { path: '/pledges', label: 'Pledges', icon: HeartHandshake, ready: true },
-    { path: '/payments', label: 'Payments', icon: Wallet, ready: true },
-    { path: '/pending-payments', label: 'Pending Verification', icon: CalendarClock, ready: true },
-    { path: '/receipts', label: 'Official Receipts', icon: FileCheck2, ready: true },
-    { path: '/schedules', label: 'Schedules', icon: CalendarClock, ready: true }
+  { label: 'Donations', icon: CircleDollarSign, items: [
+    { path: '/pledges', label: 'Pledges' },
+    { path: '/payments', label: 'Payments' },
+    { path: '/schedules', label: 'Schedules' },
+    { path: '/campaigns', label: 'Campaigns' },
+    { path: '/pending-payments', label: 'Pending Verification' },
+    { path: '/receipts', label: 'Official Receipts' }
   ] },
-  { label: 'EXPENSES', items: [
-    { path: '/vendors', label: 'Vendors', icon: Store, ready: true },
-    { path: '/expenses', label: 'Bills & Expenses', icon: FileText, ready: true },
-    { path: '/write-checks', label: 'Write Checks', icon: Printer, ready: true }
+  { label: 'Expenses', icon: Receipt, items: [
+    { path: '/vendors', label: 'Vendors' },
+    { path: '/expenses', label: 'Bills & Expenses' },
+    { path: '/write-checks', label: 'Write Checks' }
   ] },
-  { label: 'ACCOUNTING', items: [
-    { path: '/transactions', label: 'Transactions', icon: Wallet, ready: true },
-    { path: '/chart-of-accounts', label: 'Chart of Accounts', icon: List, ready: true },
-    { path: '/bank-feed', label: 'Bank Feed', icon: Building, ready: true },
-    { path: '/payroll', label: 'Payroll & T4A', icon: Users, ready: true },
-    { path: '/reconciliation', label: 'Reconciliation', icon: CheckSquare, ready: true },
-    { path: '/sola-sync', label: 'Sola Payments Sync', icon: LinkIcon, ready: true },
-    { path: '/stripe-sync', label: 'Stripe Sync (USD)', icon: LinkIcon, ready: true }
+  { label: 'Accounting', icon: Landmark, items: [
+    { path: '/transactions', label: 'Transactions' },
+    { path: '/chart-of-accounts', label: 'Chart of Accounts' },
+    { path: '/bank-feed', label: 'Bank Feed' },
+    { path: '/payroll', label: 'Payroll & T4A' },
+    { path: '/reconciliation', label: 'Reconciliation' },
+    { path: '/sola-sync', label: 'Sola Payments Sync' },
+    { path: '/stripe-sync', label: 'Stripe Sync (USD)' }
   ] },
-  { label: 'REPORTS', items: [
-    { path: '/reports', label: 'Reports', icon: BarChart3, ready: true },
-    { path: '/profit-loss', label: 'Profit & Loss', icon: BarChart3, ready: true }
+  { label: 'Reports', icon: BarChart3, items: [
+    { path: '/reports', label: 'Reports' },
+    { path: '/profit-loss', label: 'Profit & Loss' }
   ] },
-  { label: 'SYSTEM', items: [
-    { path: '/tasks', label: 'Tasks', icon: CheckSquare, ready: true },
-    { path: '/audit-history', label: 'Audit History', icon: ShieldCheck, ready: true },
-    { path: '/settings', label: 'Settings', icon: Settings, ready: true }
+  { label: 'Tasks & Activities', icon: ListChecks, items: [
+    { path: '/tasks', label: 'Tasks' }
+  ] },
+  { label: 'Settings', icon: Settings, items: [
+    { path: '/settings', label: 'Settings' }
+  ] },
+  { label: 'System', icon: ShieldCheck, items: [
+    { path: '/audit-history', label: 'Audit History' }
   ] }
 ];
+
+const groupOf = (path: string) => categories.find(category => category.items.some(item => item.path === path))?.label;
+const readStored = (key: string) => { try { return window.localStorage.getItem(key); } catch { return null; } };
+const writeStored = (key: string, value: string) => { try { window.localStorage.setItem(key, value); } catch { /* private window */ } };
 
 export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
@@ -61,6 +69,25 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
   const pageLabel = categories.flatMap(category => category.items).find(item => item.path === location.pathname)?.label || 'CharityPro';
 
   useEffect(() => setNavigationOpen(false), [location.pathname]);
+
+  // Which menu groups are open. The group of the current page always opens.
+  const [openGroups, setOpenGroups] = useState<string[]>(() => {
+    const current = groupOf(location.pathname);
+    let saved: unknown = [];
+    try { saved = JSON.parse(readStored('cp-open-menu-groups') || '[]'); } catch { saved = []; }
+    const list = Array.isArray(saved) ? saved.filter((value): value is string => typeof value === 'string') : [];
+    return Array.from(new Set([...list, ...(current ? [current] : [])]));
+  });
+  useEffect(() => {
+    const current = groupOf(location.pathname);
+    if (current) setOpenGroups(groups => groups.includes(current) ? groups : [...groups, current]);
+  }, [location.pathname]);
+  useEffect(() => writeStored('cp-open-menu-groups', JSON.stringify(openGroups)), [openGroups]);
+  const toggleGroup = (label: string) => setOpenGroups(groups => groups.includes(label) ? groups.filter(group => group !== label) : [...groups, label]);
+
+  // The arrow next to the page name hides or shows the menu on a computer screen.
+  const [menuHidden, setMenuHidden] = useState(() => readStored('cp-menu-hidden') === '1');
+  useEffect(() => writeStored('cp-menu-hidden', menuHidden ? '1' : '0'), [menuHidden]);
 
   // Keep the live-update check running on every page and show its real status.
   const [liveStatus, setLiveStatus] = useState<LiveStatus>('connecting');
@@ -74,7 +101,7 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       : 'Connecting to live updates…';
 
   return (
-    <div className={`app-container ${navigationOpen ? 'navigation-open' : ''}`}>
+    <div className={`app-container ${navigationOpen ? 'navigation-open' : ''} ${menuHidden ? 'menu-hidden' : ''}`}>
       <button className="navigation-scrim" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />
       <aside className="sidebar" aria-label="Main navigation">
         <div className="sidebar-logo">
@@ -83,19 +110,27 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           <button className="sidebar-close" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)}><X size={20} /></button>
         </div>
         <nav className="sidebar-nav">
-          {categories.map(category => <div className="sidebar-section" key={category.label}>
-            <div className="sidebar-section-label">{category.label}</div>
-            {category.items.map(item => <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === '/'}
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-            >
-              <span className="nav-icon"><item.icon size={18} /></span>
-              <span className="nav-label">{item.label}</span>
-              {!item.ready && <span title="Being rebuilt for cloud" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--yellow)', opacity: 0.8 }} />}
-            </NavLink>)}
-          </div>)}
+          {categories.map(category => {
+            const open = openGroups.includes(category.label);
+            const hasActive = category.items.some(item => item.path === location.pathname);
+            return <div className={`nav-group${open ? ' is-open' : ''}${hasActive ? ' has-active' : ''}`} key={category.label}>
+              <button type="button" className="nav-group-head" aria-expanded={open} onClick={() => toggleGroup(category.label)}>
+                <span className="nav-icon"><category.icon size={17} /></span>
+                <span className="nav-label">{category.label}</span>
+                <ChevronDown className="nav-chevron" size={15} />
+              </button>
+              {open && <div className="nav-group-items">
+                {category.items.map(item => <NavLink
+                  key={item.path}
+                  to={item.path}
+                  end={item.path === '/'}
+                  className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                >
+                  <span className="nav-label">{item.label}</span>
+                </NavLink>)}
+              </div>}
+            </div>;
+          })}
         </nav>
         <div className="sidebar-footer">
           <button
@@ -110,7 +145,11 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       </aside>
       <main className="main-content">
         <header className="topbar">
-          <div className="topbar-brand"><button className="menu-button" type="button" aria-label="Open navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><Menu size={22} /></button><img src="/charitypro-kth-company-logo.png" alt="" /><div><span className="topbar-eyebrow">Hatzolah Tosh</span><h1>{pageLabel}</h1></div></div>
+          <div className="topbar-brand">
+            <button className="menu-button" type="button" aria-label="Open navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><Menu size={22} /></button>
+            <button className="menu-toggle" type="button" aria-label={menuHidden ? 'Show menu' : 'Hide menu'} title={menuHidden ? 'Show menu' : 'Hide menu'} onClick={() => setMenuHidden(value => !value)}>{menuHidden ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}</button>
+            <h1>{pageLabel}</h1>
+          </div>
           <div className="topbar-actions"><PageExportButton path={location.pathname}/><ReminderBell/><div className={`cloud-status cloud-status-${liveStatus}`} title={liveTitle} role="status" aria-live="polite"><span />{liveLabel}</div></div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>

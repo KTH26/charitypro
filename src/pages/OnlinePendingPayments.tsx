@@ -2,14 +2,16 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { ListFooter, ListToolbar, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 
 type PendingPayment = { id: string; revision: number; donorId: string; donorName: string; amount: number; amountCAD?: number; currency: string; date: string; method: string; notes?: string; [key: string]: any };
 const money = (value: number) => Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const today = () => new Date().toISOString().slice(0, 10);
 
 export const OnlinePendingPayments: React.FC = () => {
   const [items, setItems] = useState<PendingPayment[]>([]);
   const [page, setPage] = useState(1); const [totalPages, setTotalPages] = useState(1); const [total, setTotal] = useState(0); const [totalCAD, setTotalCAD] = useState(0);
-  const [search, setSearch] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [search, setSearch] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState(today);
   const [status,setStatus]=useState<'pending'|'declined'>('pending');
   const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [selected, setSelected] = useState<PendingPayment | null>(null);
   const [sort, setSort] = useState('date'); const [direction, setDirection] = useState<SortDirection>('desc');
@@ -37,15 +39,37 @@ export const OnlinePendingPayments: React.FC = () => {
       setNotice('Payment moved to Declined for follow-up.'); await load(true);
     } catch (reason: any) { setError(reason.message || 'Unable to update the payment.'); }
   };
-  return <main className="page"><div className="page-inner">
-    <div className="page-intro"><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">{status==='pending'?'Pending Sola Verification':'Declined Payment Work Queue'} ({total.toLocaleString()})</h1><div className="page-sub">{status==='pending'?'Scheduled payments awaiting Sola confirmation.':'Failed card attempts requiring follow-up. Declines never reduce a donor balance.'}</div><div style={{ color: status==='pending'?'var(--blue)':'var(--red)', fontWeight: 600, marginTop: 5 }}>{status==='pending'?'Pending':'Declined'} total: CAD ${money(totalCAD)}</div></div>
-    {notice && <div className="card" style={{ color: 'var(--green)', fontWeight: 600, marginBottom: 10 }}>{notice}</div>}{error && <div className="card" style={{ color: 'var(--red)', marginBottom: 10 }}>{error}</div>}
-    <section className="filter-strip"><button className={`btn ${status==='pending'?'btn-primary':'btn-secondary'}`} onClick={()=>{setStatus('pending');setPage(1);}}>Pending</button><button className={`btn ${status==='declined'?'btn-danger':'btn-secondary'}`} onClick={()=>{setStatus('declined');setPage(1);}}>Declined</button><input className="search-field" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search donor, amount, notes or failure reason" /><input type="date" value={from} onChange={event => { setFrom(event.target.value); setPage(1); }} title="From date" /><input type="date" value={to} onChange={event => { setTo(event.target.value); setPage(1); }} title="To date" /></section>
-    <section className="card" style={{ padding: 0, overflow: 'hidden' }}>{loading ? <div style={{ padding: 24, textAlign: 'center' }}>Loading pending payments…</div> : <div className="table-container"><table><thead><tr>
-      <SortableTh column="date" label="Due Date" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="method" label="Method" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="notes" label="Notes" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="amount" label="Amount" sort={sort} direction={direction} onSort={changeSort} align="right"/><th />
-    </tr></thead><tbody>{items.map(item => <tr key={item.id} onClick={() => setSelected(item)} style={{ cursor: 'pointer' }}><td>{item.date}</td><td><strong>{item.donorName}</strong></td><td>{String(item.method).replaceAll('_', ' ')}</td><td>{status==='declined'?(item.declineReason||item.notes||'Declined'):(item.notes||'Scheduled payment awaiting Sola verification')}{status==='pending'&&Array.isArray(item.maybeSameAs)&&item.maybeSameAs.length>0?<div style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}} onClick={event=>event.stopPropagation()}>{item.maybeSameAs.map((other:any)=><button key={other.paymentId} className="btn btn-secondary btn-sm" onClick={()=>void sameCharge(item,true,other.paymentId)} title="The card payment already in is this schedule payment: remove this waiting copy">Same charge as {other.date}</button>)}<button className="btn btn-ghost btn-sm" onClick={()=>void sameCharge(item,false)} title="It is a second, real charge: keep both">Separate charge</button></div>:null}{item.scheduledDate?<div style={{fontSize:12,color:'var(--text-muted)'}}>Scheduled: {item.scheduledDate}{item.paymentMethodId?' · Saved card attempt':''}</div>:null}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{item.currency} ${money(item.amount)}</td><td style={{ textAlign: 'right' }}>{status==='pending'?<button className="btn btn-danger btn-sm" onClick={event => { event.stopPropagation(); void decline(item); }}>Declined</button>:<span className="badge badge-red">Follow up</span>}</td></tr>)}{items.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center' }}>No {status} Sola payments.</td></tr>}</tbody></table></div>}
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: 12, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>Next</button></div></div>
-    </section>
+  const filtered = search !== '' || from !== '' || to !== today();
+  const resetFilters = () => { setSearch(''); setFrom(''); setTo(today()); setPage(1); };
+  return <main className="page list-page"><div className="page-inner">
+    <ViewTabs
+      views={[
+        { key: 'pending', label: 'Pending', count: status === 'pending' ? total : undefined },
+        { key: 'declined', label: 'Declined', count: status === 'declined' ? total : undefined },
+      ]}
+      value={status}
+      onChange={key => { setStatus(key as 'pending' | 'declined'); setPage(1); }}
+    />
+    <div className="list-body">
+      <ListToolbar>
+        <input className="search-field" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search donor, amount, notes or failure reason" />
+        <input type="date" value={from} onChange={event => { setFrom(event.target.value); setPage(1); }} title="From date" />
+        <input type="date" value={to} onChange={event => { setTo(event.target.value); setPage(1); }} title="To date" />
+        {filtered && <ResetLink onClick={resetFilters} />}
+      </ListToolbar>
+      {notice && <div className="list-notice ok">{notice}</div>}{error && <div className="list-notice bad">{error}</div>}
+      <div className="list-summary" style={{ marginBottom: 10 }}>{status==='pending'?'Pending Sola Verification: scheduled payments awaiting Sola confirmation.':'Declined Payment Work Queue: failed card attempts requiring follow-up. Declines never reduce a donor balance.'}</div>
+      <section className="list-table">{loading ? <div className="list-loading">Loading pending payments…</div> : <div className="list-scroll"><table><thead><tr>
+        <SortableTh column="date" label="Due Date" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="method" label="Method" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="notes" label="Notes" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="amount" label="Amount" sort={sort} direction={direction} onSort={changeSort} align="right"/><th className="row-actions" />
+      </tr></thead><tbody>{items.map(item => <tr key={item.id} onClick={() => setSelected(item)} style={{ cursor: 'pointer' }}><td>{item.date}</td><td className="cell-main">{item.donorName}</td><td>{String(item.method).replaceAll('_', ' ')}</td><td>{status==='declined'?(item.declineReason||item.notes||'Declined'):(item.notes||'Scheduled payment awaiting Sola verification')}{status==='pending'&&Array.isArray(item.maybeSameAs)&&item.maybeSameAs.length>0?<div style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}} onClick={event=>event.stopPropagation()}>{item.maybeSameAs.map((other:any)=><button key={other.paymentId} className="btn btn-secondary btn-sm" onClick={()=>void sameCharge(item,true,other.paymentId)} title="The card payment already in is this schedule payment: remove this waiting copy">Same charge as {other.date}</button>)}<button className="btn btn-ghost btn-sm" onClick={()=>void sameCharge(item,false)} title="It is a second, real charge: keep both">Separate charge</button></div>:null}{item.scheduledDate?<div className="cell-sub">Scheduled: {item.scheduledDate}{item.paymentMethodId?' · Saved card attempt':''}</div>:null}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{item.currency} ${money(item.amount)}</td><td className="row-actions"><div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>{status==='declined'&&<span className="badge badge-red">Follow up</span>}<RowMenu items={[
+        { label: 'Open payment', onClick: () => setSelected(item) },
+        { label: 'Declined', danger: true, hidden: status !== 'pending', onClick: () => void decline(item) },
+      ]} /></div></td></tr>)}{items.length === 0 && <tr><td colSpan={6} className="list-empty">No {status} Sola payments.</td></tr>}</tbody></table></div>}
+        <ListFooter page={page} totalPages={totalPages} total={total} pageSize={50} shown={items.length} loading={loading} onPage={setPage}>
+          <span style={{ color: status==='pending'?'var(--blue)':'var(--red)' }}>{status==='pending'?'Pending':'Declined'} total: CAD ${money(totalCAD)}</span>
+        </ListFooter>
+      </section>
+    </div>
     {selected && <CloudPaymentDetailsModal payment={selected} onClose={() => setSelected(null)} onUpdated={payment => { setSelected(payment); void load(true); }} />}
   </div></main>;
 };

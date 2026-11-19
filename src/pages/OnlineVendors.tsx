@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
-import { Search } from 'lucide-react';
 import { CloudVendorDetailsModal } from '../components/CloudVendorDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { ListFooter, ListToolbar, ResetLink, RowMenu, SingleView } from '../components/ListLayout';
 
 type VendorSummary = { name: string; billCount: number; totalBilled: number; balanceOwed: number };
 const money = (value: number) => Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -22,14 +22,19 @@ export const OnlineVendors: React.FC = () => {
     finally { if (!silent) setLoading(false); }
   }, [page, search, sort, direction]);
   useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
-  return <main className="page"><div className="page-inner">
-    <div className="page-intro"><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Vendors ({total.toLocaleString()})</h1><div className="page-sub">Shared vendor totals calculated from cloud bills · 50 vendors per page</div></div>
-    <section className="filter-strip"><div className="search-box" style={{ maxWidth: 420 }}><Search className="search-icon" size={18} /><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search vendors..." /></div></section>
-    {error && <div className="card" style={{ padding: 12, color: 'var(--red)', fontWeight: 600, marginBottom: 12 }}>{error}</div>}
-    <section className="card" style={{ padding: 0, overflow: 'hidden' }}>{loading ? <div style={{ padding: 24, textAlign: 'center' }}>Loading vendors...</div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%' }}><thead><tr>
-      <SortableTh column="name" label="Vendor Name" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="total" label="Total Billed" sort={sort} direction={direction} onSort={changeSort} align="right"/><SortableTh column="balance" label="Balance Owed" sort={sort} direction={direction} onSort={changeSort} align="right"/><SortableTh column="count" label="Bill Count" sort={sort} direction={direction} onSort={changeSort} align="right"/>
-    </tr></thead><tbody>{items.map(vendor => <tr key={vendor.name} onClick={() => setSelectedVendor(vendor.name)} style={{ cursor: 'pointer' }}><td style={{ fontWeight: 600, color: 'var(--navy)' }}>{vendor.name}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>${money(vendor.totalBilled)}</td><td style={{ textAlign: 'right', fontWeight: 600, color: vendor.balanceOwed > 0 ? 'var(--red)' : 'var(--text-muted)' }}>${money(vendor.balanceOwed)}</td><td style={{ textAlign: 'right' }}>{vendor.billCount} bills</td></tr>)}{items.length === 0 && <tr><td colSpan={4} style={{ padding: 24, textAlign: 'center' }}>No vendors found.</td></tr>}</tbody></table></div>}
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: 12, borderTop: '1px solid var(--border)' }}><span>Page {page} of {totalPages}</span><div style={{ display: 'flex', gap: 8 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>Next</button></div></div>
-    </section>
+  return <main className="page list-page"><div className="page-inner">
+    <SingleView label="All Vendors" count={total} />
+    <div className="list-body">
+      <ListToolbar>
+        <input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search vendors..." />
+        {search && <ResetLink onClick={() => { setSearch(''); setPage(1); }} />}
+      </ListToolbar>
+      {error && <div className="list-notice bad">{error}</div>}
+      <section className="list-table">{loading ? <div className="list-loading">Loading vendors...</div> : <div className="list-scroll"><table><thead><tr>
+        <SortableTh column="name" label="Vendor Name" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="total" label="Total Billed" sort={sort} direction={direction} onSort={changeSort} align="right"/><SortableTh column="balance" label="Balance Owed" sort={sort} direction={direction} onSort={changeSort} align="right"/><SortableTh column="count" label="Bill Count" sort={sort} direction={direction} onSort={changeSort} align="right"/><th className="row-actions" />
+      </tr></thead><tbody>{items.map(vendor => <tr key={vendor.name} onClick={() => setSelectedVendor(vendor.name)} style={{ cursor: 'pointer' }}><td className="cell-main">{vendor.name}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>${money(vendor.totalBilled)}</td><td style={{ textAlign: 'right', fontWeight: 600, color: vendor.balanceOwed > 0 ? 'var(--red)' : 'var(--text-muted)' }}>${money(vendor.balanceOwed)}</td><td style={{ textAlign: 'right' }}>{vendor.billCount} bills</td><td className="row-actions"><RowMenu items={[{ label: 'Open vendor', onClick: () => setSelectedVendor(vendor.name) }]} /></td></tr>)}{items.length === 0 && <tr><td colSpan={5} className="list-empty">No vendors found.</td></tr>}</tbody></table></div>}
+        <ListFooter page={page} totalPages={totalPages} total={total} pageSize={50} shown={items.length} loading={loading} onPage={setPage} />
+      </section>
+    </div>
   </div>{selectedVendor && <CloudVendorDetailsModal vendorName={selectedVendor} onClose={() => setSelectedVendor(null)} />}</main>;
 };

@@ -61,9 +61,9 @@ describe('Backend API & Security Rules', () => {
     expect(appSource).not.toContain('SyncEngineHardened');
     expect(appSource).not.toContain('path="/legacy/');
     const layoutSource = readFileSync(join(process.cwd(), 'src', 'components', 'CloudLayout.tsx'), 'utf8');
-    expect(layoutSource).toContain("label: 'DONATIONS'");
-    expect(layoutSource).toContain("label: 'ACCOUNTING'");
-    expect(layoutSource).toContain("label: 'REPORTS'");
+    expect(layoutSource).toContain("label: 'Donations'");
+    expect(layoutSource).toContain("label: 'Accounting'");
+    expect(layoutSource).toContain("label: 'Reports'");
     expect(layoutSource).not.toContain("from '../store'");
     expect(appSource).toContain('path="*" element={cloudPage(<NotFound />)}');
     expect(appSource).toContain('path="/online/accounts"');

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FileCheck2, Send, Settings2 } from 'lucide-react';
+import { Send, Settings2 } from 'lucide-react';
+import { ListFooter, ListToolbar, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 import { startLiveRefresh } from '../utils/liveUpdates';
 
 type Waiting = { paymentId: string; donorId: string; donorName: string; email: string; amount: number; date: string; method: string; receiptNumber: string; error: string };
@@ -109,18 +110,20 @@ export const OnlineReceipts: React.FC = () => {
   };
   const withEmail = useMemo(() => waiting.filter(item => item.email), [waiting]);
   const toggle = (id: string) => setSelected(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-  const pager = <div className="receipt-pager"><span>Page {page} of {totals.totalPages} · {totals.total.toLocaleString()} {tab === 'waiting' ? 'payments' : 'receipts'} · {money(totals.totalAmount)}</span><div style={{ display: 'flex', gap: 6 }}><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(1)}>First</button><button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn btn-secondary btn-sm" disabled={page >= totals.totalPages} onClick={() => setPage(value => value + 1)}>Next</button><button className="btn btn-secondary btn-sm" disabled={page >= totals.totalPages} onClick={() => setPage(totals.totalPages)}>Last</button></div></div>;
+  const views = ([['waiting', 'To send'], ['sent', 'Sent'], ['failed', 'Not sent (error)'], ['void', 'Cancelled']] as const).map(([key, label]) => ({ key, label, count: tab === key ? totals.total : null }));
 
-  return <div className="page page-inner" style={{ display: 'grid', gap: 12 }}>
-    <div className="page-head">
-      <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title"><FileCheck2 size={24} /> Official Receipts</h1><div className="page-sub">Tax receipts in the Hatzolah design, sent by email as a PDF. Email must be connected in <Link to="/settings">Settings</Link>.</div></div>
-      <button className="btn btn-secondary" onClick={() => setShowSettings(value => !value)}><Settings2 size={15} /> Receipt settings</button>
-    </div>
+  return <main className="page list-page"><div className="page-inner">
+    <ViewTabs views={views} value={tab} onChange={key => setTab(key as Tab)} />
+    <div className="list-body">
+    <ListToolbar end={<button className="btn btn-secondary" onClick={() => setShowSettings(value => !value)}><Settings2 size={15} /> Receipt settings</button>}>
+      <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search donor or amount" /><input type="date" value={from} onChange={event => setFrom(event.target.value)} title="From date" /><input type="date" value={to} onChange={event => setTo(event.target.value)} title="To date" />
+      {(search || from || to) && <ResetLink onClick={() => { setSearch(''); setFrom(''); setTo(''); }} />}
+    </ListToolbar>
+    <div className="list-summary" style={{ marginBottom: 12 }}>Tax receipts in the Hatzolah design, sent by email as a PDF. Email must be connected in <Link to="/settings">Settings</Link>.</div>
     {showSettings && <ReceiptSettingsBox onClose={() => setShowSettings(false)} />}
-    <div className="account-view-tabs">{([['waiting', 'To send'], ['sent', 'Sent'], ['failed', 'Not sent (error)'], ['void', 'Cancelled']] as const).map(([value, label]) => <button key={value} type="button" className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{label}</button>)}</div>
-    <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div className="filter-strip"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search donor or amount" /><input type="date" value={from} onChange={event => setFrom(event.target.value)} title="From date" /><input type="date" value={to} onChange={event => setTo(event.target.value)} title="To date" /></div>
-      {message && <div style={{ padding: '10px 16px', fontWeight: 600, color: message.ok ? 'var(--green)' : 'var(--red)' }}>{message.text}</div>}
+    {message && <div className={`list-notice ${message.ok ? 'ok' : 'bad'}`}>{message.text}</div>}
+    {!sending && progress && <div className={`list-notice ${progress.failed ? 'bad' : 'ok'}`}>Done: {progress.sent} sent{progress.failed ? `, ${progress.failed} not sent (${progress.errors.slice(0, 3).join(' · ')})` : ''}.</div>}
+    <section className="list-table">
       {tab === 'waiting' && <div className="receipt-summary">
         <div><strong>{totals.total.toLocaleString()}</strong><small>payments waiting</small></div>
         <div><strong>{totals.withEmail.toLocaleString()}</strong><small>have an email</small></div>
@@ -129,31 +132,35 @@ export const OnlineReceipts: React.FC = () => {
         {sending && progress ? <div className="receipt-progress"><strong>Sending… {progress.sent} sent{progress.failed ? `, ${progress.failed} not sent` : ''}, {Math.max(0, progress.remaining - progress.failed)} left</strong><button className="btn btn-secondary btn-sm" onClick={() => { stopRef.current = true; }}>Stop</button></div>
           : <button className="btn btn-primary" disabled={sending || totals.withEmail === 0} onClick={() => { if (window.confirm(`Email all ${totals.withEmail.toLocaleString()} waiting receipts that have an email${from || to || search ? ' (with the filters above)' : ''}? They go out 25 at a time; you can stop any time.`)) void sendAll(); }}><Send size={15} /> Send all {totals.withEmail.toLocaleString()}</button>}
       </div>}
-      {!sending && progress && <div style={{ padding: '8px 16px', fontWeight: 600, color: progress.failed ? 'var(--red)' : 'var(--green)' }}>Done: {progress.sent} sent{progress.failed ? `, ${progress.failed} not sent (${progress.errors.slice(0, 3).join(' · ')})` : ''}.</div>}
       {tab === 'waiting' && <div className="receipt-actions">
         <label className="msg-check"><input type="checkbox" checked={withEmail.length > 0 && withEmail.every(item => selected.has(item.paymentId))} onChange={event => setSelected(event.target.checked ? new Set(withEmail.map(item => item.paymentId)) : new Set())} /> Select this page ({withEmail.length} with email)</label>
         <button className="btn btn-secondary" style={{ marginLeft: 'auto' }} disabled={sending || selected.size === 0} onClick={() => void send([...selected])}><Send size={15} /> Send {selected.size || ''} selected</button>
       </div>}
-      <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        {tab === 'waiting' ? <><thead><tr><th /><th>Date</th><th>Donor</th><th>Email</th><th>Paid by</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead><tbody>
+      <div className="list-scroll"><table>
+        {tab === 'waiting' ? <><thead><tr><th /><th>Date</th><th>Donor</th><th>Email</th><th>Paid by</th><th style={{ textAlign: 'right' }}>Amount</th><th className="row-actions" /></tr></thead><tbody>
           {waiting.map(item => <tr key={item.paymentId}>
             <td><input type="checkbox" disabled={!item.email} checked={selected.has(item.paymentId)} onChange={() => toggle(item.paymentId)} /></td>
             <td>{item.date}</td><td style={{ fontWeight: 600 }}>{item.donorName}</td>
             <td>{item.email || <span style={{ color: 'var(--red)' }}>No email – add it on the donor</span>}{item.error && <div style={{ color: 'var(--red)', fontSize: 12 }}>Last try: {item.error}</div>}</td>
             <td>{METHODS[item.method] || item.method}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{money(item.amount)}</td>
-            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><button className="btn btn-ghost btn-sm" onClick={() => void openPdf(item.paymentId)}>View</button> <button className="btn btn-secondary btn-sm" disabled={!item.email || sending} onClick={() => void send([item.paymentId])}>Send</button></td>
+            <td className="row-actions" style={{ whiteSpace: 'nowrap' }}><button className="btn btn-secondary btn-sm" disabled={!item.email || sending} onClick={() => void send([item.paymentId])}>Send</button> <RowMenu items={[{ label: 'View', onClick: () => void openPdf(item.paymentId) }]} /></td>
           </tr>)}
-          {waiting.length === 0 && <tr><td colSpan={7} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Every payment got its receipt.</td></tr>}
-        </tbody></> : <><thead><tr><th>Receipt #</th><th>Date of gift</th><th>Donor</th><th>Paid by</th><th style={{ textAlign: 'right' }}>Amount</th><th>{tab === 'void' ? 'Why cancelled' : tab === 'failed' ? 'Problem' : 'Sent to'}</th><th /></tr></thead><tbody>
+          {waiting.length === 0 && <tr><td colSpan={7} className="list-empty">Every payment got its receipt.</td></tr>}
+        </tbody></> : <><thead><tr><th>Receipt #</th><th>Date of gift</th><th>Donor</th><th>Paid by</th><th style={{ textAlign: 'right' }}>Amount</th><th>{tab === 'void' ? 'Why cancelled' : tab === 'failed' ? 'Problem' : 'Sent to'}</th><th className="row-actions" /></tr></thead><tbody>
           {receipts.map(item => <tr key={item.id}>
             <td style={{ fontWeight: 600 }}>{item.receiptNumber}</td><td>{item.giftDate}</td><td style={{ fontWeight: 600 }}>{item.donorName}</td><td>{METHODS[item.method] || item.method}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{money(item.amount)}</td>
             <td style={{ fontSize: 13 }}>{tab === 'void' ? `${item.voidReason || '—'} (${String(item.voidedAt || '').slice(0, 10)})` : tab === 'failed' ? <span style={{ color: 'var(--red)' }}>{item.error}</span> : `${item.sentTo || ''} · ${String(item.sentAt || '').slice(0, 10)}`}</td>
-            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><button className="btn btn-ghost btn-sm" onClick={() => void openPdf(item.paymentId, tab === 'void' ? item.receiptNumber : '')}>View</button>{tab !== 'void' && <> <button className="btn btn-secondary btn-sm" disabled={sending} onClick={() => void send([item.paymentId], true)}>{tab === 'failed' ? 'Try again' : 'Send again'}</button> <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => void cancel(item)}>Cancel</button></>}</td>
+            <td className="row-actions"><RowMenu items={[
+              { label: 'View', onClick: () => void openPdf(item.paymentId, tab === 'void' ? item.receiptNumber : '') },
+              { label: tab === 'failed' ? 'Try again' : 'Send again', onClick: () => void send([item.paymentId], true), disabled: sending, hidden: tab === 'void' },
+              { label: 'Cancel', onClick: () => void cancel(item), danger: true, hidden: tab === 'void' }
+            ]} /></td>
           </tr>)}
-          {receipts.length === 0 && <tr><td colSpan={7} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Nothing here.</td></tr>}
+          {receipts.length === 0 && <tr><td colSpan={7} className="list-empty">Nothing here.</td></tr>}
         </tbody></>}
       </table></div>
-      {pager}
+      <ListFooter page={page} totalPages={totals.totalPages} total={totals.total} pageSize={50} shown={tab === 'waiting' ? waiting.length : receipts.length} onPage={setPage}>{totals.total.toLocaleString()} {tab === 'waiting' ? 'payments' : 'receipts'} · {money(totals.totalAmount)}</ListFooter>
     </section>
-  </div>;
+    </div>
+  </div></main>;
 };

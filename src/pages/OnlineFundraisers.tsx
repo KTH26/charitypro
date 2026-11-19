@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Users, UserPlus, X } from 'lucide-react';
+import { Users, X } from 'lucide-react';
+import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { FundraiserAllocationEditor, type FundraiserAllocationDraft } from '../components/FundraiserAllocationEditor';
 import { LoanDueDateField, isLoanAccount } from '../components/LoanDueDateField';
@@ -89,43 +90,44 @@ export const OnlineFundraisers: React.FC = () => {
     catch (reason: any) { setError(reason.message); }
   };
 
-  return <main className="page"><div className="page-inner">
-    <div className="page-head">
-      <div><div className="page-eyebrow">CHARITYPRO CLOUD</div><h1 className="page-title">Fundraisers</h1><div className="page-sub">Fundraisers, their commission %, teams, and how much we owe each one.</div></div>
-      <div className="page-actions">{tab === 'fundraisers' ? <button className="btn btn-primary" onClick={() => { setError(''); setEditing({ percentage: 10 }); }}><UserPlus size={16} /> New Fundraiser</button> : <button className="btn btn-primary" disabled={!fundraisers.length} onClick={() => { setError(''); setEditingTeam({ allocations: [] }); }}><Plus size={16} /> New Team</button>}</div>
-    </div>
+  return <main className="page list-page"><div className="page-inner">
+    <ViewTabs views={[{ key: 'fundraisers', label: 'Fundraisers', count: tab === 'fundraisers' ? fundraisers.length : null }, { key: 'teams', label: 'Teams', count: tab === 'teams' ? teams.length : null }]} value={tab} onChange={key => setTab(key as 'fundraisers' | 'teams')} />
+    <div className="list-body">
+    <ListToolbar end={tab === 'fundraisers' ? <NewButton onClick={() => { setError(''); setEditing({ percentage: 10 }); }}>New Fundraiser</NewButton> : <NewButton disabled={!fundraisers.length} onClick={() => { setError(''); setEditingTeam({ allocations: [] }); }}>New Team</NewButton>}>
+      {tab === 'fundraisers' && <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search fundraisers" />}
+      {tab === 'fundraisers' && search && <ResetLink onClick={() => setSearch('')} />}
+    </ListToolbar>
     <div className="fundraiser-totals">
       <div><span>Commission earned</span><strong>{money(totals.earned)}</strong></div>
       <div><span>Paid to fundraisers</span><strong>{money(totals.paid)}</strong></div>
       <div className="owed"><span>We owe now</span><strong>{money(totals.owed)}</strong></div>
     </div>
-    <div className="account-view-tabs" role="tablist">
-      <button type="button" role="tab" aria-selected={tab === 'fundraisers'} className={tab === 'fundraisers' ? 'active' : ''} onClick={() => setTab('fundraisers')}>Fundraisers ({fundraisers.length})<small>Name, commission %, and balance</small></button>
-      <button type="button" role="tab" aria-selected={tab === 'teams'} className={tab === 'teams' ? 'active' : ''} onClick={() => setTab('teams')}>Teams ({teams.length})<small>Fundraisers who share a pledge</small></button>
-    </div>
-    {notice && <div className="card" style={{ padding: 12, color: 'var(--green)', fontWeight: 600, marginBottom: 10 }}>{notice}</div>}
-    {error && !editing && !editingTeam && !paying && <div className="card" style={{ padding: 12, color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{error}</div>}
+    {notice && <div className="list-notice ok">{notice}</div>}
+    {error && !editing && !editingTeam && !paying && <div className="list-notice bad">{error}</div>}
 
-    {tab === 'fundraisers' && <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search fundraisers" /></div>
-      {loading ? <div style={{ padding: 24, textAlign: 'center' }}>Loading fundraisers…</div> : <div className="table-container"><table><thead><tr><th>Name</th><th>Phone</th><th style={{ textAlign: 'right' }}>Commission</th><th style={{ textAlign: 'right' }}>Raised</th><th style={{ textAlign: 'right' }}>Earned</th><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>We owe</th><th /></tr></thead><tbody>
+    {tab === 'fundraisers' && <section className="list-table">
+      {loading ? <div className="list-loading">Loading fundraisers…</div> : <div className="list-scroll"><table><thead><tr><th>Name</th><th>Phone</th><th style={{ textAlign: 'right' }}>Commission</th><th style={{ textAlign: 'right' }}>Raised</th><th style={{ textAlign: 'right' }}>Earned</th><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>We owe</th><th className="row-actions" /></tr></thead><tbody>
         {shown.map(item => <tr key={item.id}>
           <td style={{ fontWeight: 600 }}>{item.name}</td><td>{item.phone ? <a href={`tel:${item.phone}`}>{item.phone}</a> : '—'}</td>
           <td style={{ textAlign: 'right' }}>{Number(item.percentage || 0)}%</td><td style={{ textAlign: 'right' }}>{money(item.totalRaised)}</td><td style={{ textAlign: 'right' }}>{money(item.commissionEarned)}</td><td style={{ textAlign: 'right' }}>{money(item.commissionPaid)}</td>
           <td style={{ textAlign: 'right', fontWeight: 600, color: Number(item.balanceOwed || 0) > 0.005 ? 'var(--red)' : 'var(--green)' }}>{money(item.balanceOwed)}</td>
-          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><button className="btn btn-secondary btn-sm" onClick={() => { setError(''); setEditing(item); }}>Edit</button> <button className="btn btn-primary btn-sm" disabled={Number(item.balanceOwed || 0) < 0.005} onClick={() => { setError(''); setPaying(item); }}>Pay</button></td>
+          <td className="row-actions" style={{ whiteSpace: 'nowrap' }}><button className="btn btn-primary btn-sm" disabled={Number(item.balanceOwed || 0) < 0.005} onClick={() => { setError(''); setPaying(item); }}>Pay</button> <RowMenu items={[{ label: 'Edit', onClick: () => { setError(''); setEditing(item); } }]} /></td>
         </tr>)}
-        {!shown.length && <tr><td colSpan={8} style={{ padding: 20, textAlign: 'center' }}>{fundraisers.length ? 'No fundraiser matches this search.' : 'No fundraisers yet. Click "New Fundraiser" to add the first one.'}</td></tr>}
+        {!shown.length && <tr><td colSpan={8} className="list-empty">{fundraisers.length ? 'No fundraiser matches this search.' : 'No fundraisers yet. Click "New Fundraiser" to add the first one.'}</td></tr>}
       </tbody></table></div>}
+      <ListFooter page={1} totalPages={1} total={shown.length} pageSize={shown.length || 1} shown={shown.length} loading={loading} />
     </section>}
 
-    {tab === 'teams' && <section className="card" style={{ padding: 0, overflow: 'hidden' }}><div className="table-container"><table><thead><tr><th>Team</th><th>Fundraisers and their share</th><th style={{ textAlign: 'right' }}>Total</th><th /></tr></thead><tbody>
+    {tab === 'teams' && <section className="list-table"><div className="list-scroll"><table><thead><tr><th>Team</th><th>Fundraisers and their share</th><th style={{ textAlign: 'right' }}>Total</th><th className="row-actions" /></tr></thead><tbody>
       {teams.map(team => { const total = team.allocations.reduce((sum, item) => sum + Number(item.percentage || 0), 0); return <tr key={team.id}>
         <td style={{ fontWeight: 600 }}>{team.name}</td><td>{team.allocations.map(item => `${nameOf(item.fundraiserId)} ${Number(item.percentage)}%`).join(' · ') || '—'}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{total}%</td>
-        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><button className="btn btn-secondary btn-sm" onClick={() => { setError(''); setEditingTeam({ ...team, allocations: team.allocations.map(item => ({ ...item })) }); }}>Edit</button> <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => void deleteTeam(team)}>Delete</button></td>
+        <td className="row-actions"><RowMenu items={[{ label: 'Edit', onClick: () => { setError(''); setEditingTeam({ ...team, allocations: team.allocations.map(item => ({ ...item })) }); } }, { label: 'Delete', onClick: () => void deleteTeam(team), danger: true }]} /></td>
       </tr>; })}
-      {!teams.length && <tr><td colSpan={4} style={{ padding: 20, textAlign: 'center' }}>No teams yet. A team is a group of fundraisers who share a pledge, for example Yossi 5% and Moshe 5%.</td></tr>}
-    </tbody></table></div></section>}
+      {!teams.length && <tr><td colSpan={4} className="list-empty">No teams yet. A team is a group of fundraisers who share a pledge, for example Yossi 5% and Moshe 5%.</td></tr>}
+    </tbody></table></div>
+      <ListFooter page={1} totalPages={1} total={teams.length} pageSize={teams.length || 1} shown={teams.length} />
+    </section>}
+    </div>
     </div>
 
     {editing && <div className="modal-overlay" onClick={() => setEditing(null)}><form className="modal" onClick={event => event.stopPropagation()} onSubmit={saveFundraiser} style={{ maxWidth: 560, width: '94%' }}>

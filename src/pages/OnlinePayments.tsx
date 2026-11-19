@@ -3,6 +3,7 @@ import { startLiveRefresh } from '../utils/liveUpdates';
 import { OnlinePaymentForm } from '../components/OnlinePaymentForm';
 import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
 import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 
 type OnlinePayment = {
   id: string;
@@ -155,83 +156,83 @@ export const OnlinePayments: React.FC = () => {
     }
   };
 
+  const filtered = searchInput !== '' || method !== '' || from !== '' || to !== '';
+  const resetFilters = () => { setSearchInput(''); setMethod(''); setFrom(''); setTo(''); };
+
   return (
-    <main className="page">
+    <main className="page list-page">
       <div className="page-inner">
-        <div className="page-head">
-          <div>
-            <div className="page-eyebrow">CHARITYPRO CLOUD</div>
-            <h1 className="page-title">Donor Payments ({total.toLocaleString()})</h1>
-            <div style={{ color: 'var(--green)', fontWeight: 600 }}>{status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD</div>
-            <div className="page-sub">Live cloud data — updates automatically every 3 seconds</div>
-          </div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <ViewTabs
+          views={[
+            { key: 'approved', label: 'Received', count: status === 'approved' ? total : undefined },
+            { key: 'pending', label: 'Pending checks', count: status === 'pending' ? total : undefined },
+          ]}
+          value={status}
+          onChange={key => setStatus(key as 'approved' | 'pending')}
+        />
+        <div className="list-body">
+          <ListToolbar end={<>
             <input ref={reviewedImportRef} type="file" accept="application/json,.json" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void importReviewedPayments(file); }} />
             <button className="btn btn-secondary" onClick={() => reviewedImportRef.current?.click()} disabled={importing}>{importing ? 'Importing Reviewed…' : 'Import Reviewed Payments'}</button>
             <button className="btn btn-secondary" onClick={() => void exportAllPayments()} disabled={exporting}>{exporting ? 'Preparing Export…' : 'Export All Payments'}</button>
-            <button className="btn btn-primary" onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</button>
-          </div>
-        </div>
-
-        {showCreate && <div className="modal-overlay" onClick={() => setShowCreate(false)}><div className="pay-modal" onClick={event => event.stopPropagation()}><OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {
-          setShowCreate(false);
-          setNotice(createdStatus === 'pending'
-            ? 'Check saved safely in the cloud as pending. You can view it under Pending checks when you are ready.'
-            : 'Payment saved safely in the cloud.');
-          setPage(1);
-          // Saving a payment must never move the operator to another view or tab.
-          // The three-second cloud refresh will show it here when it belongs to the
-          // current filter; pending checks remain available under Pending checks.
-          if (status === createdStatus) void load();
-        }} /></div></div>}
-        {notice && <div className="card" style={{ padding: 12, color: 'var(--green)', fontWeight: 600, marginBottom: 12 }}>{notice}</div>}
-
-        <section className="card" style={{ padding: 12, marginBottom: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 160px 145px 145px 145px', gap: 10 }}>
+            <NewButton onClick={() => { setShowCreate(true); setNotice(''); }}>New Payment</NewButton>
+          </>}>
             <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Live search: donor, amount, notes or account" />
-            <select value={status} onChange={e => setStatus(e.target.value as 'approved' | 'pending')}><option value="approved">Received</option><option value="pending">Pending checks</option></select>
             <select value={method} onChange={e => setMethod(e.target.value)}>
               <option value="">All methods</option>
               {Object.entries(methodLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
             <input type="date" value={from} onChange={e => setFrom(e.target.value)} title="From date" />
             <input type="date" value={to} onChange={e => setTo(e.target.value)} title="To date" />
-          </div>
-        </section>
+            {filtered && <ResetLink onClick={resetFilters} />}
+          </ListToolbar>
 
-        {error && <div className="card" style={{ padding: 12, color: 'var(--red)', marginBottom: 12 }}>{error}</div>}
-        <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {loading ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>Loading 50 payments from the cloud…</div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><SortableTh column="date" label="Date" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="status" label="Status" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="method" label="Method" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="notes" label="Notes" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="amount" label="Amount" sort={sort} direction={direction} onSort={changeSort} align="right" /><th /></tr></thead>
-                <tbody>
-                  {items.map(payment => (
-                    <tr key={payment.id} onClick={() => setSelectedPayment(payment)} style={{ cursor: 'pointer' }}>
-                      <td>{payment.date}</td>
-                      <td style={{ fontWeight: 600 }}>{payment.donorName}</td>
-                      <td>{payment.type === 'pending' ? 'Pending' : 'Received'}</td>
-                      <td>{methodLabel[payment.method] || payment.method}</td>
-                      <td style={{ color: 'var(--text-muted)', maxWidth: 420 }}>{payment.notes || ''}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{payment.currency} ${payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={event => { event.stopPropagation(); void removePayment(payment); }}>Delete</button></td>
-                    </tr>
-                  ))}
-                  {items.length === 0 && <tr><td colSpan={7} style={{ padding: 20, textAlign: 'center' }}>No matching payments.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderTop: '1px solid var(--border)' }}>
-            <span>Page {page} of {totalPages}</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-secondary btn-sm" disabled={page <= 1 || loading} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</button>
-              <button className="btn btn-secondary btn-sm" disabled={page >= totalPages || loading} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
-            </div>
-          </div>
-        </section>
+          {showCreate && <div className="modal-overlay" onClick={() => setShowCreate(false)}><div className="pay-modal" onClick={event => event.stopPropagation()}><OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {
+            setShowCreate(false);
+            setNotice(createdStatus === 'pending'
+              ? 'Check saved safely in the cloud as pending. You can view it under Pending checks when you are ready.'
+              : 'Payment saved safely in the cloud.');
+            setPage(1);
+            // Saving a payment must never move the operator to another view or tab.
+            // The three-second cloud refresh will show it here when it belongs to the
+            // current filter; pending checks remain available under Pending checks.
+            if (status === createdStatus) void load();
+          }} /></div></div>}
+          {notice && <div className="list-notice ok">{notice}</div>}
+          {error && <div className="list-notice bad">{error}</div>}
+
+          <section className="list-table">
+            {loading ? (
+              <div className="list-loading">Loading 50 payments from the cloud…</div>
+            ) : (
+              <div className="list-scroll">
+                <table>
+                  <thead><tr><SortableTh column="date" label="Date" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="status" label="Status" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="method" label="Method" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="notes" label="Notes" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="amount" label="Amount" sort={sort} direction={direction} onSort={changeSort} align="right" /><th className="row-actions" /></tr></thead>
+                  <tbody>
+                    {items.map(payment => (
+                      <tr key={payment.id} onClick={() => setSelectedPayment(payment)} style={{ cursor: 'pointer' }}>
+                        <td>{payment.date}</td>
+                        <td className="cell-main">{payment.donorName}</td>
+                        <td>{payment.type === 'pending' ? 'Pending' : 'Received'}</td>
+                        <td>{methodLabel[payment.method] || payment.method}</td>
+                        <td style={{ color: 'var(--text-muted)', maxWidth: 420 }}>{payment.notes || ''}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{payment.currency} ${payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td className="row-actions"><RowMenu items={[
+                          { label: 'Open payment', onClick: () => setSelectedPayment(payment) },
+                          { label: 'Delete', danger: true, onClick: () => void removePayment(payment) },
+                        ]} /></td>
+                      </tr>
+                    ))}
+                    {items.length === 0 && <tr><td colSpan={7} className="list-empty">No matching payments.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <ListFooter page={page} totalPages={totalPages} total={total} pageSize={50} shown={items.length} loading={loading} onPage={setPage}>
+              {status === 'approved' ? 'Total received' : 'Pending total'}: ${totalCAD.toLocaleString('en-CA', { minimumFractionDigits: 2 })} CAD
+            </ListFooter>
+          </section>
+        </div>
       </div>
       {selectedPayment && <CloudPaymentDetailsModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} onUpdated={payment => { setSelectedPayment(payment); void load(true); }} />}
     </main>
