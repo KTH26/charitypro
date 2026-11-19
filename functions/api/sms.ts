@@ -49,7 +49,7 @@ export const balanceLines = (pledges: any[], year: number) => {
 const METHODS: Record<string, string> = { credit_card: 'card', check: 'check', cash: 'cash', e_transfer: 'e-transfer', wire: 'wire', vouchers: 'vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'other', ach: 'ACH' };
 const xml = (text: string) => text.replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[ch]);
 const twiml = (text: string) => new Response(`<?xml version="1.0" encoding="UTF-8"?><Response>${text ? `<Message>${xml(text.slice(0, 1550))}</Message>` : ''}</Response>`, { headers: { 'Content-Type': 'text/xml' } });
-const HELP = 'Send the last 4 digits of the donor\'s phone (for example 2163) to get his balance. Then: P = payments this year, A = all payments, L = pledges.';
+const HELP = 'Send the last 4 digits of the donor\'s phone (for example 2163) to get his balance. Then: P = payments this year, A = all payments, L = pledges, C = his cards, PAID 250 check = he says he paid (a reminder to confirm on the site).';
 
 /** Donors whose phone (any of his phones) ends with these digits. */
 export const findDonorsByPhoneEnding = async (db: any, digits: string) => {
@@ -67,7 +67,7 @@ export const smsReply = async (db: any, deps: Deps, from: string, rawBody: strin
     const account = await deps.loadDonorAccount(db, donorId); if (!account) return 'That donor was not found.';
     await saveSession({ donorId });
     const name = deps.donorDisplayName(account.donor); const english = String(account.donor.name || '');
-    return `${name}${english && english !== name ? ` (${english})` : ''}\n${balanceLines(account.pledges || [], account.year).join('\n')}\nReply P = payments ${account.year}, A = all payments, L = pledges.`;
+    return `${name}${english && english !== name ? ` (${english})` : ''}\n${balanceLines(account.pledges || [], account.year).join('\n')}\nReply P = payments ${account.year}, A = all payments, L = pledges, C = cards, PAID 250 = he paid.`;
   };
   if (!body || /^(\?|help|h)$/i.test(body)) return HELP;
   if (/^\d{4}$/.test(body)) {
@@ -80,6 +80,32 @@ export const smsReply = async (db: any, deps: Deps, from: string, rawBody: strin
   const fresh = session.at && Date.now() - Number(session.at) < 6 * 60 * 60 * 1000;
   if (/^[1-9]$/.test(body) && fresh && Array.isArray(session.choices)) {
     const donorId = session.choices[Number(body) - 1]; return donorId ? summary(donorId) : 'Please answer with one of the numbers in the list.';
+  }
+  // "C": his saved cards.  "PAID 250 check" : he says he paid → a reminder on the site to confirm it and enter it.
+  const paidMatch = body.match(/^paid\b\s*(.*)$/i);
+  if (/^c$/i.test(body) || paidMatch) {
+    if (!fresh || !session.donorId) return 'First send the last 4 digits of the donor\'s phone.';
+    const account = await deps.loadDonorAccount(db, session.donorId); if (!account) return 'That donor was not found.';
+    await saveSession({ donorId: session.donorId });
+    const name = deps.donorDisplayName(account.donor);
+    if (!paidMatch) {
+      const rows = await db.prepare("SELECT data FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY COALESCE(json_extract(data,'$.isDefault'),0) DESC,COALESCE(json_extract(data,'$.priority'),999)").bind(session.donorId).all();
+      const now = new Date(); const thisMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
+      const cards = (rows.results || []).map((row: any) => parse(row.data, {})).filter((card: any) => card.kind !== 'bank' && card.last4);
+      if (!cards.length) return `${name}: no saved card.`;
+      return `${name} – cards:\n${cards.slice(0, 8).map((card: any) => { const expired = Number(card.expiryYear) * 12 + Number(card.expiryMonth) - 1 < thisMonth; return `${card.brand || 'Card'} ****${card.last4} exp ${String(card.expiryMonth || '').padStart(2, '0')}/${String(card.expiryYear || '').slice(-2)}${card.isDefault ? ' (main)' : ''}${expired ? ' EXPIRED' : card.status === 'paused' ? ' (paused)' : card.oneTime ? ' (one time)' : ''}`; }).join('\n')}`;
+    }
+    const rest = paidMatch[1].trim(); const amountText = rest.match(/\$?\s*(\d[\d,]*(?:\.\d{1,2})?)/)?.[1]; const amount = amountText ? Number(amountText.replace(/,/g, '')) : 0;
+    const what = rest.replace(/\$?\s*\d[\d,]*(?:\.\d{1,2})?/, '').trim();
+    const now = Date.now(); const today = new Date(now).toISOString().slice(0, 10); const id = `texted-payment-${now}-${Math.random().toString(36).slice(2, 8)}`;
+    const english = String(account.donor.name || '');
+    const task = { id, donorId: session.donorId, title: `Confirm payment (texted): ${english || name}${amount ? ` $${amount.toLocaleString('en-CA')}` : ''}`, notes: `${from} texted on ${today} that ${name}${english && english !== name ? ` (${english})` : ''} paid${amount ? ` $${amount.toLocaleString('en-CA')}` : ''}${what ? ` – "${what.slice(0, 200)}"` : ''}. Check that it really came in, then enter the payment. Nothing was entered yet.`, dueDate: today, priority: 'high', type: 'payment_report', completed: false, reportedBy: from, reportedAmount: amount || undefined, createdAt: new Date(now).toISOString() };
+    const data = JSON.stringify(task);
+    await db.batch([
+      db.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?)").bind(id, data, now, `${id}-insert`),
+      db.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',1,'insert',?,?,?,?)").bind(id, data, now, `sms-${id}`, `${id}-insert`),
+    ]);
+    return `Noted: ${name}${amount ? ` paid $${amount.toLocaleString('en-CA')}` : ' paid'}${what ? ` (${what.slice(0, 60)})` : ''}. It's in the reminders on the site to confirm and enter. Nothing was entered yet.`;
   }
   if (/^[PAL]$/i.test(body)) {
     if (!fresh || !session.donorId) return 'First send the last 4 digits of the donor\'s phone.';

@@ -225,6 +225,15 @@ describe('balance text number', () => {
     expect(two.text).toContain('2 donors have a phone ending 1111');
     expect((await text('+15145559999', '2')).text).toContain('יואל ווייס (Yoel Weiss)');
     expect((await text('+15145559999', '0000')).text).toBe('No donor has a phone ending with 0000.');
+    // Cards and "he paid": back on Moshe Klein.
+    seed(db, 'paymentMethods', 'card1', { donorId: 'd1', kind: 'card', brand: 'Visa', last4: '4242', expiryMonth: 3, expiryYear: 2099, isDefault: true, status: 'active' });
+    await text('+15145559999', '2163');
+    expect((await text('+15145559999', 'c')).text).toContain('Visa ****4242 exp 03/99 (main)');
+    const paid = await text('+15145559999', 'PAID 1,300 check 88');
+    expect(paid.text).toContain('paid $1,300 (check 88)'); expect(paid.text).toContain('Nothing was entered yet');
+    const task: any = db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND json_extract(data,'$.type')='payment_report'").get();
+    expect(JSON.parse(task.data)).toMatchObject({ donorId: 'd1', completed: false, reportedAmount: 1300, priority: 'high' });
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.donorId')='d1'").get().count).toBe(1); // no payment entered
   });
 });
 

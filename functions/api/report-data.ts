@@ -85,7 +85,7 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
     const pledgeTagById = new Map(list('pledges').map(item => [String(item.id), item.tags]));
     return pledgeFinancials().map(item => {
       const balance = round(num(item.balance)); const periodEnd = day(item.periodEnd); const overdue = balance > 0.005 ? daysBetween(periodEnd, today) : 0;
-      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', phone: donors.get(String(item.donorId))?.phone || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: num(item.amountCAD ?? item.amount), paid: round(num(item.paid)), pending: round(num(item.pending)), scheduled: round(num(item.scheduled)), balance, open: balance > 0.005 ? 'Open' : 'Paid up', tags: tagList(pledgeTagById.get(String(item.id))).join(', '), periodEnd, daysPastPeriod: Math.max(0, overdue), aging: balance > 0.005 ? agingBucket(overdue) : '', category: item.category || '', campaign: campaigns.get(String(item.campaignId || ''))?.name || '', sponsor: item.sponsor || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
+      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', phone: donors.get(String(item.donorId))?.phone || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: num(item.amountCAD ?? item.amount), paid: round(num(item.paid)), pending: round(num(item.pending)), scheduled: round(num(item.scheduled)), balance, open: balance > 0.005 ? 'Open' : 'Paid up', tags: tagList(pledgeTagById.get(String(item.id))).join(', '), periodEnd, daysPastPeriod: Math.max(0, overdue), aging: balance > 0.005 ? agingBucket(overdue) : '', category: item.category || '', campaign: campaigns.get(String(item.campaignId || ''))?.name || '', campaignId: campaigns.has(String(item.campaignId || '')) ? String(item.campaignId) : '', sponsor: item.sponsor || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
     });
   }
   if (source === 'donors') {
@@ -122,7 +122,16 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
   if (source === 'accounts') return list('accounts').map(item => ({ id: item.id, name: item.name || '', type: item.type || '', subType: item.subType || '', currency: item.currency || 'CAD', startingBalance: num(item.startingBalance), number: item.number || item.code || '' }));
   if (source === 'campaigns') {
     const financials = pledgeFinancials();
-    return list('campaigns').map(item => { const mine = financials.filter(pledge => String(pledge.campaignId || '') === String(item.id)); return { id: item.id, campaign: item.name || '', year: item.year || '', startDate: day(item.startDate), endDate: day(item.endDate), status: item.status || '', pledges: mine.length, pledged: round(mine.reduce((t, p) => t + num(p.amountCAD ?? p.amount), 0)), paid: round(mine.reduce((t, p) => t + num(p.paid), 0)), balance: round(mine.reduce((t, p) => t + Math.max(0, num(p.balance)), 0)) }; });
+    const known = new Set(list('campaigns').map(item => String(item.id)));
+    const totals = (mine: any[]) => {
+      const open = mine.filter(p => num(p.balance) > 0.005);
+      const balance = round(open.reduce((t, p) => t + num(p.balance), 0)); const scheduled = round(open.reduce((t, p) => t + Math.min(num(p.scheduled), num(p.balance)), 0));
+      return { pledges: mine.length, donors: new Set(mine.map(p => String(p.donorId || ''))).size, openPledges: open.length, pledged: round(mine.reduce((t, p) => t + num(p.amountCAD ?? p.amount), 0)), paid: round(mine.reduce((t, p) => t + num(p.paid), 0)), pending: round(mine.reduce((t, p) => t + num(p.pending), 0)), balance, scheduled, notScheduled: round(Math.max(0, balance - scheduled)), overpaid: round(mine.reduce((t, p) => t + Math.max(0, -num(p.balance)), 0)) };
+    };
+    const rows = list('campaigns').map(item => ({ id: item.id, campaign: item.name || '', year: item.year || '', startDate: day(item.startDate), endDate: day(item.endDate), status: item.status || '', goal: num(item.goal), ...totals(financials.filter(pledge => String(pledge.campaignId || '') === String(item.id))) }));
+    const loose = financials.filter(pledge => !known.has(String(pledge.campaignId || '')));
+    if (loose.length) rows.push({ id: '', campaign: 'No campaign', year: '', startDate: '', endDate: '', status: '', goal: 0, ...totals(loose) });
+    return rows;
   }
   if (source === 'projects') {
     const projects = list('projects'); const bills = list('bills'); const names = new Map(projects.map(item => [String(item.id), String(item.name || '')]));

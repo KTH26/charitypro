@@ -1070,6 +1070,37 @@ describe('server-driven bank deposit matching', () => {
     expect(refreshed.sola).toEqual([]);
   });
 
+  it('never offers or imports again a Sola charge that was charged from CharityPro', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'solaTransactions', '11211027919', { ref: '11211027919', name: 'Card Donor', date: '2026-07-27 12:00:00', amount: 250, status: 'Approved', batch: 'b1' });
+    seedRecord(db, 'donors', 'card-donor', { id: 'card-donor', name: 'Card Donor' });
+    seedRecord(db, 'transactions', 'charged-here', { id: 'charged-here', donorId: 'card-donor', amount: 250, date: '2026-07-27', type: 'approved', method: 'credit_card', solaRef: '11211027919' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const view = await (await app.request('/v3/sola/view?startDate=2026-07-01&endDate=2026-07-31&limit=50', {}, { DB: db } as any)).json() as any;
+    expect(view.sola).toEqual([]);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='processedSolaRefs' AND id='11211027919'").get().count).toBe(1);
+    const imported = await app.request('/v3/sola/import-new', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'double-try' }, body: JSON.stringify({ ref: '11211027919', donorId: 'card-donor' }) }, { DB: db } as any);
+    expect(imported.status).toBe(409); expect(((await imported.json()) as any).existingTransactionId).toBe('charged-here');
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND is_deleted=0").get().count).toBe(1);
+  });
+
+  it('makes no waiting payment for a schedule date when that charge was already imported from Sola', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-25T12:00:00Z'));
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });
+    seedRecord(db, 'recurringPayments', 'schedule-imported', { id: 'schedule-imported', donorId: 'scheduled-donor', solaScheduleId: 'sola-s1', amount: 75, currency: 'CAD', frequency: 'monthly', nextDate: '2026-07-20', method: 'credit_card', active: true });
+    seedRecord(db, 'transactions', 'sola-payment-1', { id: 'sola-payment-1', donorId: 'scheduled-donor', amount: 75, date: '2026-07-20', type: 'approved', method: 'credit_card', notes: 'Imported as new via Sola Sync. Ref: 1234567' });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
+    const body = await (await app.request('/v3/schedules/process-due', { method: 'POST' }, { DB: db } as any)).json() as any;
+    expect(body.created).toBe(0);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.type')='pending'").get().count).toBe(0);
+    const paid: any = db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='sola-payment-1'").get();
+    expect(JSON.parse(paid.data)).toMatchObject({ scheduleId: 'schedule-imported', coveredScheduledPaymentIds: ['scheduled-payment-schedule-imported-2026-07-20'] });
+    const schedule: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='schedule-imported'").get();
+    expect(JSON.parse(schedule.data).nextDate).toBe('2026-08-20');
+    vi.useRealTimers();
+  });
+
   it('lists only approved Sola payments that still need pledge allocation', async () => {
     const db=new MockD1();databases.push(db);seedRecord(db,'donors','allocation-donor',{id:'allocation-donor',name:'Allocation Donor'});seedRecord(db,'transactions','unallocated-sola',{id:'unallocated-sola',donorId:'allocation-donor',amount:40,currency:'CAD',date:'2026-07-20',type:'approved',method:'credit_card',solaRef:'ref-unallocated'});seedRecord(db,'transactions','single-allocated-sola',{id:'single-allocated-sola',donorId:'allocation-donor',amount:50,currency:'CAD',date:'2026-07-20',type:'approved',method:'credit_card',solaRef:'ref-single',pledgeId:'pledge-one'});seedRecord(db,'transactions','split-allocated-sola',{id:'split-allocated-sola',donorId:'allocation-donor',amount:60,currency:'CAD',date:'2026-07-20',type:'approved',method:'credit_card',solaRef:'ref-split',pledgeAllocations:[{pledgeId:'pledge-one',amount:30},{pledgeId:'pledge-two',amount:30}]});
     const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);const response=await app.request('/v3/sola/unassigned?limit=50',{},{DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(body.total).toBe(1);expect(body.items[0]).toMatchObject({id:'unallocated-sola',donorName:'Allocation Donor',solaRef:'ref-unallocated'});
