@@ -95,12 +95,13 @@ describe('recurring card runner safety', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
       const url = String(input); calls.push(url);
       if (url.endsWith('/ListCustomers')) return new Response(JSON.stringify({ Result: 'S', Customers: [{ CustomerId: 'c1', BillFirstName: 'Moshe', BillLastName: 'Klein', BillPhone: '(514) 555-1234' }] }));
-      if (url.endsWith('/ListPaymentMethods')) return new Response(JSON.stringify({ Result: 'S', PaymentMethods: [{ PaymentMethodId: 'c1_pm1', Token: 'tok-1', TokenType: 'cc', Exp: '1230', Issuer: 'Visa', MaskedCardNumber: '4xxxxxxxxxxx4242' }] }));
+      // The same card twice for one person (Sola keeps one per schedule), and Sola handing back the same page again.
+      if (url.endsWith('/ListPaymentMethods')) return new Response(JSON.stringify({ Result: 'S', NextToken: 'again', PaymentMethods: [{ PaymentMethodId: 'c1_pm1', Token: 'tok-1', TokenType: 'cc', Exp: '1230', Issuer: 'Visa', MaskedCardNumber: '4xxxxxxxxxxx4242' }, { PaymentMethodId: 'c1_pm2', Token: 'tok-2', TokenType: 'cc', Exp: '1230', Issuer: 'Visa', MaskedCardNumber: '4xxxxxxxxxxx4242' }] }));
       return new Response(JSON.stringify({ xResult: 'A' }));
     });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'u'); c.set('userEmail', 'u@x'); await next(); }); registerServerDataRoutes(app as any);
     const preview = await (await app.request('/v3/sola/saved-cards/preview', { method: 'POST' }, { DB: db } as any)).json() as any;
-    expect(preview.items).toEqual([expect.objectContaining({ paymentMethodId: 'c1_pm1', last4: '4242', donorId: 'donor', matchedBy: 'phone', expired: false })]);
+    expect(preview.items).toEqual([expect.objectContaining({ paymentMethodId: 'c1_pm1', sameCardIds: ['c1_pm1', 'c1_pm2'], last4: '4242', donorId: 'donor', matchedBy: 'phone', expired: false })]);
     expect(JSON.stringify(preview)).not.toContain('tok-1'); // the token never leaves the server
     const imported = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
     expect(imported).toMatchObject({ success: true, imported: 1 });
@@ -109,7 +110,12 @@ describe('recurring card runner safety', () => {
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type IN ('transactions','paymentAllocations','recurringPayments')").get().count).toBe(0);
     const card: any = db.database.prepare("SELECT data FROM sync_records WHERE type='paymentMethods'").get();
     expect(JSON.parse(card.data)).toMatchObject({ donorId: 'donor', last4: '4242', expiryMonth: 12, expiryYear: 2030, status: 'active', solaPaymentMethodId: 'c1_pm1' });
-    // Bringing it in again adds nothing.
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(1); // one card, not two
+    const afterImport = await (await app.request('/v3/sola/saved-cards/preview', { method: 'POST' }, { DB: db } as any)).json() as any;
+    expect(afterImport.items).toEqual([expect.objectContaining({ alreadyInCharityPro: true })]); // after a refresh it shows as already in
+    // Bringing it in again (either copy) adds nothing.
+    const copy = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm2', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
+    expect(copy.imported).toBe(0);
     const again = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
     expect(again).toMatchObject({ imported: 0, skipped: 1 });
     // Hide it: it stays in Sola (no call to Sola at all), comes off the donor's profile, and is marked hidden in the list.

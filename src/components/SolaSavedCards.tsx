@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { CreditCard, Download, Eye, EyeOff, X } from 'lucide-react';
 import { DonorPicker, type PickedDonor } from './DonorPicker';
 
-type SavedCard = { paymentMethodId: string; customerId: string; name: string; email: string; phone: string; brand: string; last4: string; expiryMonth: number; expiryYear: number; expired: boolean; donorId: string; donorName: string; matchedBy: string; alreadyInCharityPro: boolean; hidden?: boolean };
+type SavedCard = { paymentMethodId: string; customerId: string; name: string; email: string; phone: string; brand: string; last4: string; expiryMonth: number; expiryYear: number; expired: boolean; donorId: string; donorName: string; matchedBy: string; alreadyInCharityPro: boolean; hidden?: boolean; sameCardIds?: string[] };
 type Filter = 'todo' | 'all' | 'in' | 'expired' | 'hidden';
 
 /**
@@ -13,8 +13,8 @@ export const SolaSavedCards: React.FC = () => {
   const [items, setItems] = useState<SavedCard[] | null>(null); const [loading, setLoading] = useState(false); const [message, setMessage] = useState(''); const [error, setError] = useState('');
   const [chosen, setChosen] = useState<Record<string, PickedDonor | null>>({}); const [filter, setFilter] = useState<Filter>('todo'); const [editing, setEditing] = useState('');
   const [ticked, setTicked] = useState<string[]>([]); const [search, setSearch] = useState('');
-  const load = async () => {
-    setLoading(true); setError(''); setMessage('');
+  const load = async (keepMessage = false) => {
+    setLoading(true); setError(''); if (!keepMessage) setMessage('');
     try {
       const response = await fetch('/api/v3/sola/saved-cards/preview', { method: 'POST' }); const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not read the saved cards from Sola.');
@@ -31,22 +31,24 @@ export const SolaSavedCards: React.FC = () => {
       const response = await fetch('/api/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: ready.map(item => ({ paymentMethodId: item.paymentMethodId, donorId: chosen[item.paymentMethodId]!.id })) }) });
       const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'The cards were not saved.');
       setMessage(`${data.imported} card${data.imported === 1 ? '' : 's'} added to the donors' profiles${data.skipped ? `, ${data.skipped} already there or expired` : ''}.${data.errors?.length ? ` Not saved: ${data.errors.join('; ')}` : ''}`);
-      setItems(current => (current || []).map(item => ready.some(done => done.paymentMethodId === item.paymentMethodId) ? { ...item, alreadyInCharityPro: true } : item));
+      setLoading(false); await load(true); // show what is really saved now
+      return;
     } catch (reason: any) { setError(reason.message); } finally { setLoading(false); }
   };
   /** Hide (or show again) cards. Hidden cards stay in Sola; in CharityPro they come off the donor's profile. */
-  const setHidden = async (ids: string[], hidden: boolean) => {
-    if (!ids.length) return;
-    const inProfiles = (items || []).filter(item => ids.includes(item.paymentMethodId) && item.alreadyInCharityPro).length;
-    if (hidden && !confirm(`Hide ${ids.length} card${ids.length === 1 ? '' : 's'}?\n\nThey stay in Sola untouched.${inProfiles ? `\n${inProfiles} of them ${inProfiles === 1 ? 'is' : 'are'} in a donor's profile in CharityPro and will be taken off it (you can bring ${inProfiles === 1 ? 'it' : 'them'} in again later).` : ''}`)) return;
+  const copiesOf = (rows: string[]) => [...new Set(rows.flatMap(id => (items || []).find(item => item.paymentMethodId === id)?.sameCardIds || [id]))];
+  const setHidden = async (rows: string[], hidden: boolean) => {
+    if (!rows.length) return; const ids = copiesOf(rows);
+    const inProfiles = (items || []).filter(item => rows.includes(item.paymentMethodId) && item.alreadyInCharityPro).length;
+    if (hidden && !confirm(`Hide ${rows.length} card${rows.length === 1 ? '' : 's'}?\n\nThey stay in Sola untouched.${inProfiles ? `\n${inProfiles} of them ${inProfiles === 1 ? 'is' : 'are'} in a donor's profile in CharityPro and will be taken off it (you can bring ${inProfiles === 1 ? 'it' : 'them'} in again later).` : ''}`)) return;
     setLoading(true); setError(''); setMessage('');
     try {
       const response = await fetch('/api/v3/sola/saved-cards/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentMethodIds: ids, hidden }) });
       const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Not saved.');
       const blocked: string[] = data.blocked || [];
-      setItems(current => (current || []).map(item => !ids.includes(item.paymentMethodId) || blocked.includes(item.paymentMethodId) ? item : { ...item, hidden, ...(hidden ? { alreadyInCharityPro: false } : {}) }));
+      setItems(current => (current || []).map(item => !rows.includes(item.paymentMethodId) || (item.sameCardIds || [item.paymentMethodId]).some(id => blocked.includes(id)) ? item : { ...item, hidden, ...(hidden ? { alreadyInCharityPro: false } : {}) }));
       setTicked([]);
-      setMessage(hidden ? `${data.hidden} card${data.hidden === 1 ? '' : 's'} hidden${data.removedFromProfiles ? `, ${data.removedFromProfiles} taken off donors' profiles` : ''}.${blocked.length ? ` ${blocked.length} not hidden: a CharityPro schedule charges ${blocked.length === 1 ? 'that card' : 'those cards'} – change the schedule first.` : ''}` : `${data.shown} card${data.shown === 1 ? '' : 's'} shown again.`);
+      setMessage(hidden ? `${rows.length - blocked.length > 0 ? rows.length : 0} card${rows.length === 1 ? '' : 's'} hidden${data.removedFromProfiles ? `, ${data.removedFromProfiles} taken off donors' profiles` : ''}.${blocked.length ? ` ${blocked.length} not hidden: a CharityPro schedule charges ${blocked.length === 1 ? 'that card' : 'those cards'} – change the schedule first.` : ''}` : `${rows.length} card${rows.length === 1 ? '' : 's'} shown again.`);
     } catch (reason: any) { setError(reason.message); } finally { setLoading(false); }
   };
   const tick = (id: string) => setTicked(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);

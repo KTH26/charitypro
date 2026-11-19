@@ -2820,14 +2820,18 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
   // ---- Saved cards in Sola (customers' payment methods) brought into the donors' profiles, so they can be charged from CharityPro. ----
   const solaRecurringList = async (key: string, endpoint: 'ListCustomers' | 'ListPaymentMethods', listName: 'Customers' | 'PaymentMethods') => {
-    const all: any[] = []; let nextToken = ''; let pages = 0;
+    const all: any[] = []; let nextToken = ''; let pages = 0; const seenTokens = new Set<string>();
     do {
+      if (nextToken) { if (seenTokens.has(nextToken)) break; seenTokens.add(nextToken); } // never read the same page twice
       const response = await fetch(`https://api.cardknox.com/v2/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: key, 'X-Recurring-Api-Version': '2.1' }, body: JSON.stringify({ SoftwareName: 'CharityPro', SoftwareVersion: '1.0', PageSize: 500, Filters: { IsDeleted: false }, ...(nextToken ? { NextToken: nextToken } : {}) }) });
       const text = await response.text(); let payload: any; try { payload = JSON.parse(text); } catch { throw new Error(`Sola ${endpoint} returned an unreadable answer (${response.status}).`); }
       if (!response.ok || String(payload?.Result || '').toUpperCase() === 'E') throw new Error(String(payload?.Error || `Sola ${endpoint} failed (${response.status}).`));
       all.push(...(Array.isArray(payload?.[listName]) ? payload[listName] : [])); nextToken = String(payload?.NextToken || '').trim(); pages++;
     } while (nextToken && pages < 60);
-    return all;
+    // The same record only once.
+    const idField = listName === 'Customers' ? 'CustomerId' : 'PaymentMethodId'; const byId = new Map<string, any>();
+    for (const item of all) { const id = String(item?.[idField] || ''); if (id && !byId.has(id)) byId.set(id, item); else if (!id) byId.set(`no-id-${byId.size}`, item); }
+    return [...byId.values()];
   };
   /** Every saved card in Sola, with the donor it most likely belongs to. Tokens stay on the server. */
   const solaSavedCards = async (c: any) => {
@@ -2849,7 +2853,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const saved = savedRows.results as any[];
     const customerById = new Map(customers.map((customer: any) => [String(customer.CustomerId || ''), customer]));
     const now = new Date(); const thisMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
-    return methods.filter((method: any) => String(method.TokenType || '').toLowerCase() === 'cc' && method.Token).map((method: any) => {
+    const cards = methods.filter((method: any) => String(method.TokenType || '').toLowerCase() === 'cc' && method.Token).map((method: any) => {
       const paymentMethodId = String(method.PaymentMethodId || ''); const customerId = String(method.CustomerId || paymentMethodId.split('_')[0] || '');
       const customer: any = customerById.get(customerId) || {};
       const name = String([customer.BillFirstName, customer.BillLastName].filter(Boolean).join(' ') || customer.BillCompany || '').trim();
@@ -2861,8 +2865,17 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (byCustomer.has(customerId)) { donorId = byCustomer.get(customerId)!; matchedBy = 'Sola schedule'; }
       else { const phoneHits = [...new Set(phones.flatMap(phone => byPhone.get(phone) || []))]; if (phoneHits.length === 1) { donorId = phoneHits[0]; matchedBy = 'phone'; } else if (byName.has(normalizeName(name))) { donorId = byName.get(normalizeName(name))!; matchedBy = 'name'; } }
       const already = saved.find(row => String(row.pm || '') === paymentMethodId) || (donorId ? saved.find(row => String(row.donor) === donorId && String(row.last4) === last4 && Number(row.em) === expiryMonth && Number(row.ey) === expiryYear) : null);
-      return { paymentMethodId, customerId, name, email: String(customer.Email || ''), phone: phones[0] || '', brand: String(method.Issuer || 'Card'), last4, expiryMonth, expiryYear, expired, donorId, donorName: donorName.get(donorId) || '', matchedBy, alreadyInCharityPro: Boolean(already), token: String(method.Token) };
+      return { paymentMethodId, customerId, name, email: String(customer.Email || ''), phone: phones[0] || '', brand: String(method.Issuer || 'Card'), last4, expiryMonth, expiryYear, expired, donorId, donorName: donorName.get(donorId) || '', matchedBy, alreadyInCharityPro: Boolean(already), token: String(method.Token), sameCardIds: [paymentMethodId] as string[] };
     });
+    // Sola often keeps the same card more than once for one person (e.g. once per schedule): show it once.
+    const byCard = new Map<string, any>();
+    for (const card of cards) {
+      const key = `${card.customerId || card.name.toLowerCase()}|${card.last4}|${card.expiryMonth}|${card.expiryYear}`;
+      const first = byCard.get(key);
+      if (!first) byCard.set(key, card);
+      else { first.sameCardIds.push(card.paymentMethodId); first.alreadyInCharityPro = first.alreadyInCharityPro || card.alreadyInCharityPro; if (!first.donorId && card.donorId) Object.assign(first, { donorId: card.donorId, donorName: card.donorName, matchedBy: card.matchedBy }); }
+    }
+    return [...byCard.values()];
   };
   // Cards hidden in CharityPro (they stay in Sola untouched).
   const hiddenSavedCards = async (db: any) => { const row: any = await db.prepare("SELECT value FROM sync_metadata WHERE key='sola_hidden_saved_cards'").first(); const list = parseSetting(row?.value, []); return new Set<string>(Array.isArray(list) ? list.map(String) : []); };
@@ -2897,7 +2910,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   });
   app.post('/v3/sola/saved-cards/preview', async (c: any) => {
     const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
-    try { const hidden = await hiddenSavedCards(c.env.DB); const items = (await solaSavedCards(c)).map(({ token: _token, ...item }: any) => ({ ...item, hidden: hidden.has(item.paymentMethodId) })); return c.json({ success: true, items }); }
+    try { const hidden = await hiddenSavedCards(c.env.DB); const items = (await solaSavedCards(c)).map(({ token: _token, ...item }: any) => ({ ...item, hidden: item.sameCardIds.some((id: string) => hidden.has(id)) })); return c.json({ success: true, items }); }
     catch (reason: any) { return c.json({ success: false, error: String(reason.message || 'Could not read the saved cards from Sola.') }, reason.status || 502); }
   });
   app.post('/v3/sola/saved-cards/import', async (c: any) => {
@@ -2912,28 +2925,36 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const perDonor = new Map<string, any[]>(); for (const row of existing.results as any[]) perDonor.set(String(row.donor), [...(perDonor.get(String(row.donor)) || []), row]);
     const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
     const summary = { imported: 0, skipped: 0, errors: [] as string[] }; const hidden = await hiddenSavedCards(c.env.DB);
+    await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
+    // Saved in groups of 20 cards (one database call each), so a big list is not cut off half way.
+    let group: { statements: any[]; names: string[] } = { statements: [], names: [] };
+    const flush = async () => {
+      if (!group.statements.length) return; const current = group; group = { statements: [], names: [] };
+      try { await c.env.DB.batch(current.statements); summary.imported += current.names.length; }
+      catch (reason: any) { summary.errors.push(`${current.names.length} card(s) not saved (${current.names.slice(0, 3).join(', ')}${current.names.length > 3 ? '…' : ''}): ${String(reason.message || 'database error')}`); }
+    };
     for (const card of cards) {
       const donorId = wanted.get(card.paymentMethodId); if (!donorId) continue;
-      if (hidden.has(card.paymentMethodId)) { summary.skipped++; continue; }
+      const ids: string[] = Array.isArray(card.sameCardIds) && card.sameCardIds.length ? card.sameCardIds : [card.paymentMethodId];
+      if (ids.some(id => hidden.has(id))) { summary.skipped++; continue; }
       if (!validDonors.has(donorId)) { summary.errors.push(`${card.name || card.paymentMethodId}: donor not found`); continue; }
       const list = perDonor.get(donorId) || [];
-      if (card.expired || !/^\d{4}$/.test(card.last4) || list.some(row => String(row.pm || '') === card.paymentMethodId || (String(row.last4) === card.last4 && Number(row.em) === card.expiryMonth && Number(row.ey) === card.expiryYear))) { summary.skipped++; continue; }
+      if (card.expired || !/^\d{4}$/.test(card.last4) || list.some(row => ids.includes(String(row.pm || '')) || (String(row.last4) === card.last4 && Number(row.em) === card.expiryMonth && Number(row.ey) === card.expiryYear))) { summary.skipped++; continue; }
       const id = crypto.randomUUID(); const now = Date.now(); const mutationId = `sola-saved-card-${card.paymentMethodId}`;
       const hasDefault = list.some(row => (row.isDefault === 1 || row.isDefault === true) && row.status !== 'paused');
-      const record = { id, donorId, kind: 'card', brand: card.brand.slice(0, 50), last4: card.last4, expiryMonth: card.expiryMonth, expiryYear: card.expiryYear, cardholderName: card.name.slice(0, 200), priority: list.reduce((maximum, row) => Math.max(maximum, Number(row.priority || 0)), 0) + 1, isDefault: !hasDefault, status: 'active', tokenProvider: 'sola-recurring', solaPaymentMethodId: card.paymentMethodId, solaCustomerId: card.customerId, createdAt: new Date(now).toISOString() };
+      const record = { id, donorId, kind: 'card', brand: card.brand.slice(0, 50), last4: card.last4, expiryMonth: card.expiryMonth, expiryYear: card.expiryYear, cardholderName: card.name.slice(0, 200), priority: list.reduce((maximum, row) => Math.max(maximum, Number(row.priority || 0)), 0) + 1, isDefault: !hasDefault, status: 'active', tokenProvider: 'sola-recurring', solaPaymentMethodId: card.paymentMethodId, solaPaymentMethodIds: ids, solaCustomerId: card.customerId, createdAt: new Date(now).toISOString() };
       const data = JSON.stringify(record); const operationId = `${mutationId}-method`;
-      try {
-        await c.env.DB.batch([
-          c.env.DB.prepare('CREATE TABLE IF NOT EXISTS server_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)'),
-          c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentMethods',?,?,1,0,?)").bind(id, data, now, operationId),
-          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentMethods',1,'insert',?,?,?,?)").bind(id, data, now, mutationId, operationId),
-          c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentMethods','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, mutationId, operationId, 'Saved card brought in from Sola'),
-          c.env.DB.prepare('INSERT INTO server_secrets(key,value,updated_at) VALUES(?,?,?)').bind(`PAYMENT_METHOD_TOKEN:${id}`, card.token, now),
-        ]);
-        perDonor.set(donorId, [...list, { donor: donorId, pm: card.paymentMethodId, last4: card.last4, em: card.expiryMonth, ey: card.expiryYear, priority: record.priority, isDefault: record.isDefault, status: 'active' }]);
-        summary.imported++;
-      } catch (reason: any) { summary.errors.push(`${card.name || card.paymentMethodId}: ${String(reason.message || 'not saved')}`); }
+      group.statements.push(
+        c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentMethods',?,?,1,0,?)").bind(id, data, now, operationId),
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentMethods',1,'insert',?,?,?,?)").bind(id, data, now, mutationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentMethods','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id, data, userId, userEmail, now, mutationId, operationId, 'Saved card brought in from Sola'),
+        c.env.DB.prepare('INSERT INTO server_secrets(key,value,updated_at) VALUES(?,?,?)').bind(`PAYMENT_METHOD_TOKEN:${id}`, card.token, now),
+      );
+      group.names.push(card.name || card.paymentMethodId);
+      perDonor.set(donorId, [...list, ...ids.map(pm => ({ donor: donorId, pm, last4: card.last4, em: card.expiryMonth, ey: card.expiryYear, priority: record.priority, isDefault: record.isDefault, status: 'active' }))]);
+      if (group.names.length >= 20) await flush();
     }
+    await flush();
     return c.json({ success: true, ...summary });
   });
 
