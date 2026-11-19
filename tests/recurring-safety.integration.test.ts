@@ -74,6 +74,46 @@ describe('recurring card runner safety', () => {
     expect(gateway).not.toHaveBeenCalled();
   });
 
+  it('never charges a schedule marked as charged by Sola, Stripe or DonorFuse, even with a card on it', async () => {
+    today('2026-11-12');
+    for (const chargedBy of ['sola', 'stripe', 'donorfuse', 'DonorFuse']) {
+      const gateway = gatewayReplies({ xResult: 'A' });
+      const { run, rows } = runnerSetup({ chargedBy });
+      expect((await run()).summary.due).toBe(0);
+      expect(gateway).not.toHaveBeenCalled(); expect(rows('transactions')).toEqual([]);
+      gateway.mockRestore();
+    }
+  });
+
+  it('bringing in saved cards from Sola only reads Sola: no charge, no payment', async () => {
+    const db = new MockD1(); databases.push(db);
+    seedRecord(db, 'donors', 'donor', { id: 'donor', name: 'Moshe Klein', phone: '514-555-1234' });
+    seedRecord(db, 'pledges', 'pledge', { id: 'pledge', donorId: 'donor', amount: 5000, date: '2026-01-01', currency: 'CAD' });
+    db.database.exec('CREATE TABLE server_secrets (key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at INTEGER NOT NULL)');
+    db.database.prepare("INSERT INTO server_secrets VALUES('SOLA_API_KEY','server-key',1)").run();
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+      const url = String(input); calls.push(url);
+      if (url.endsWith('/ListCustomers')) return new Response(JSON.stringify({ Result: 'S', Customers: [{ CustomerId: 'c1', BillFirstName: 'Moshe', BillLastName: 'Klein', BillPhone: '(514) 555-1234' }] }));
+      if (url.endsWith('/ListPaymentMethods')) return new Response(JSON.stringify({ Result: 'S', PaymentMethods: [{ PaymentMethodId: 'c1_pm1', Token: 'tok-1', TokenType: 'cc', Exp: '1230', Issuer: 'Visa', MaskedCardNumber: '4xxxxxxxxxxx4242' }] }));
+      return new Response(JSON.stringify({ xResult: 'A' }));
+    });
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'u'); c.set('userEmail', 'u@x'); await next(); }); registerServerDataRoutes(app as any);
+    const preview = await (await app.request('/v3/sola/saved-cards/preview', { method: 'POST' }, { DB: db } as any)).json() as any;
+    expect(preview.items).toEqual([expect.objectContaining({ paymentMethodId: 'c1_pm1', last4: '4242', donorId: 'donor', matchedBy: 'phone', expired: false })]);
+    expect(JSON.stringify(preview)).not.toContain('tok-1'); // the token never leaves the server
+    const imported = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
+    expect(imported).toMatchObject({ success: true, imported: 1 });
+    expect(calls.every(url => url.startsWith('https://api.cardknox.com/v2/List'))).toBe(true); // never the charge service
+    expect(calls.some(url => url.includes('gatewayjson'))).toBe(false);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type IN ('transactions','paymentAllocations','recurringPayments')").get().count).toBe(0);
+    const card: any = db.database.prepare("SELECT data FROM sync_records WHERE type='paymentMethods'").get();
+    expect(JSON.parse(card.data)).toMatchObject({ donorId: 'donor', last4: '4242', expiryMonth: 12, expiryYear: 2030, status: 'active', solaPaymentMethodId: 'c1_pm1' });
+    // Bringing it in again adds nothing.
+    const again = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
+    expect(again).toMatchObject({ imported: 0, skipped: 1 });
+  });
+
   it('retries a declined card only on its retry date', async () => {
     today('2026-11-12'); const gateway = gatewayReplies({ xResult: 'D', xError: 'Insufficient funds' }, { xResult: 'A', xRefNum: 'ok' });
     const { run, scheduleNow } = runnerSetup({});

@@ -1002,7 +1002,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const donor = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(String(record.donorId)).first(); if (!donor) return c.json({ success: false, error: 'The selected donor does not exist.' }, 409);
       if (record.pledgeId) { const pledge = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(String(record.pledgeId),String(record.donorId)).first();if(!pledge)return c.json({success:false,error:'The selected pledge does not belong to this donor.'},409); }
       // A card schedule charged by Sola or Stripe needs no saved card here - its payments come in through Sola Sync / Stripe Sync.
-      if (record.method === 'credit_card' && ['sola', 'stripe'].includes(String(record.chargedBy || ''))) { delete record.paymentMethodIds; delete record.paymentMethodId; }
+      if (record.method === 'credit_card' && (['sola', 'stripe', 'donorfuse'].includes(String(record.chargedBy || '').toLowerCase()) || String(record.solaScheduleId || ''))) { delete record.paymentMethodIds; delete record.paymentMethodId; }
       else if (record.method === 'credit_card') {
         const ids = Array.isArray(record.paymentMethodIds) ? [...new Set(record.paymentMethodIds.map((value:any)=>String(value)).filter(Boolean))] : [];
         if (!ids.length) return c.json({ success:false,error:'Choose at least one active saved card for this schedule.' },400);
@@ -1403,18 +1403,18 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const schedule = { ...JSON.parse(String(row.data)), id: String(row.id) };
       let occurrence = isoDate(schedule.nextDate);
       const endDate = isoDate(schedule.endDate);
-      const pending: any[] = []; const coveredBy: Array<{ paymentId: string; id: string }> = [];
+      const pending: any[] = [];
       let guard = 0;
       while (occurrence && occurrence <= today && (!endDate || occurrence <= endDate) && guard++ < 36) {
         const id = `scheduled-payment-${schedule.id}-${occurrence}`;
         const expectationId = `expected-payment-${schedule.id}-${occurrence}`;
         const existing = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='transactions' AND id=? LIMIT 1").bind(id).first();
-        // The charge may already be in CharityPro (imported from Sola a little earlier): then no "waiting" payment is made for it.
+        // A charge of the same amount may already be in CharityPro (imported from Sola a little earlier) – or it may be a second, real charge
+        // (a declined month charged again by hand). That is never decided here: the "waiting" payment is always made, with a note to check.
         const amountWanted = Number(schedule.amountCAD ?? schedule.amount ?? 0); const windowStart = addDays(occurrence, -5); const windowEnd = addDays(occurrence, 5);
-        const paidRows = existing ? { results: [] } : await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='transactions' AND is_deleted=0 AND lower(json_extract(data,'$.type'))='approved' AND json_extract(data,'$.donorId')=? AND json_extract(data,'$.method')=? AND abs(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'))-?)<0.005 AND json_extract(data,'$.date') BETWEEN ? AND ? AND COALESCE(json_array_length(json_extract(data,'$.coveredScheduledPaymentIds')),0)=0 AND COALESCE(json_extract(data,'$.scheduleId'),'')='' AND (COALESCE(json_extract(data,'$.solaRef'),'')<>'' OR json_extract(data,'$.notes') LIKE '%Ref: %') ORDER BY json_extract(data,'$.date') LIMIT 5").bind(String(schedule.donorId || ''), schedule.method || 'credit_card', amountWanted, windowStart, windowEnd).all();
-        const paidAlready = (paidRows.results as any[]).map(found => String(found.id)).find(paymentId => !coveredBy.some(item => item.paymentId === paymentId));
-        if (!existing && paidAlready) coveredBy.push({ paymentId: paidAlready, id });
-        else if (!existing) pending.push({ id, expectationId, donorId: schedule.donorId, ...(schedule.pledgeId ? { pledgeId: schedule.pledgeId } : {}), amount: Number(schedule.amount || 0), ...(schedule.amountCAD ? { amountCAD: Number(schedule.amountCAD) } : {}), currency: schedule.currency || 'CAD', date: occurrence, type: 'pending', method: schedule.method || 'credit_card', notes: 'Scheduled payment date reached; awaiting Sola verification.', scheduleId: schedule.id });
+        const maybeRows = existing ? { results: [] } : await c.env.DB.prepare("SELECT id,json_extract(data,'$.date') AS date,COALESCE(json_extract(data,'$.solaRef'),'') AS ref FROM sync_records WHERE type='transactions' AND is_deleted=0 AND lower(json_extract(data,'$.type'))='approved' AND json_extract(data,'$.donorId')=? AND json_extract(data,'$.method')=? AND abs(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'))-?)<0.005 AND json_extract(data,'$.date') BETWEEN ? AND ? AND COALESCE(json_array_length(json_extract(data,'$.coveredScheduledPaymentIds')),0)=0 AND COALESCE(json_extract(data,'$.scheduleId'),'')='' ORDER BY json_extract(data,'$.date') LIMIT 5").bind(String(schedule.donorId || ''), schedule.method || 'credit_card', amountWanted, windowStart, windowEnd).all();
+        const maybe = (maybeRows.results as any[]).map(found => ({ paymentId: String(found.id), date: String(found.date || ''), ref: String(found.ref || '') }));
+        if (!existing) pending.push({ id, expectationId, donorId: schedule.donorId, ...(schedule.pledgeId ? { pledgeId: schedule.pledgeId } : {}), amount: Number(schedule.amount || 0), ...(schedule.amountCAD ? { amountCAD: Number(schedule.amountCAD) } : {}), currency: schedule.currency || 'CAD', date: occurrence, type: 'pending', method: schedule.method || 'credit_card', notes: maybe.length ? `Scheduled payment date reached. CHECK: a card payment of the same amount is already in on ${maybe.map(item => item.date).join(', ')} – it may be this one, or a second real charge.` : 'Scheduled payment date reached; awaiting Sola verification.', scheduleId: schedule.id, ...(maybe.length ? { maybeSameAs: maybe } : {}) });
         occurrence = addUtc(occurrence, String(schedule.frequency || 'monthly'), schedule.intervalCount);
       }
       if (!occurrence || occurrence === schedule.nextDate) continue;
@@ -1437,13 +1437,6 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
           c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,'insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(item.id, 'transactions', data, userId, userEmail, now, mutationId, itemOperation, 'Materialized due schedule occurrence for Sola verification')
         );
       }
-      for (const cover of coveredBy) {
-        const coverOperation = `${mutationId}-covered-by-${cover.paymentId}`;
-        statements.push(
-          c.env.DB.prepare("UPDATE sync_records SET data=json_set(data,'$.coveredScheduledPaymentIds',json_array(?),'$.scheduleId',?),revision=revision+1,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND is_deleted=0").bind(cover.id, schedule.id, now, coverOperation, cover.paymentId),
-          c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) SELECT id,type,revision,'update',data,updated_at,?,? FROM sync_records WHERE type='transactions' AND id=?").bind(mutationId, coverOperation, cover.paymentId)
-        );
-      }
       const scheduleData = JSON.stringify(nextSchedule);
       statements.push(
         c.env.DB.prepare('UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type=? AND id=? AND revision=? AND is_deleted=0').bind(scheduleData, nextRevision, now, operationId, 'recurringPayments', schedule.id, Number(row.revision)),
@@ -1454,6 +1447,42 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       try { await c.env.DB.batch(statements); created += pending.length; } catch { /* Another request may have processed this schedule first. */ }
     }
     return c.json({ success: true, created, processed: dueRows.results.length, through: today });
+  });
+
+  // A "waiting" schedule payment next to a card payment of the same amount: staff decide if it is the same charge or a second real one.
+  app.post('/v3/payments/:id/same-charge', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    const id = String(c.req.param('id') || ''); const body = await c.req.json().catch(() => ({})); const same = body.same === true; const paymentId = String(body.paymentId || '');
+    const current: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id=? AND is_deleted=0").bind(id).first();
+    if (!current) return c.json({ success: false, error: 'This waiting payment is gone. Reload the page.' }, 404);
+    if (Number(body.revision) !== Number(current.revision)) return c.json({ success: false, error: 'This payment changed. Reload it and try again.', conflict: true }, 409);
+    const old = parseSetting(current.data, {}); if (String(old.type || '').toLowerCase() !== 'pending') return c.json({ success: false, error: 'Only a waiting payment can be checked this way.' }, 409);
+    const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown'); const mutationId = `same-charge-${id}-${now}`;
+    const audit = (recordId: string, type: string, action: string, oldRevision: number, newRevision: number, oldData: string, newData: string | null, reason: string) => c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(recordId, type, action, oldRevision, newRevision, oldData, newData, userId, userEmail, now, mutationId, `${mutationId}-${recordId}`, reason);
+    const revision = Number(current.revision) + 1; const statements: any[] = [];
+    if (!same) {
+      // A second, real charge: keep the waiting payment, just drop the warning.
+      const { maybeSameAs: _maybe, ...rest } = old; const next = { ...rest, notes: 'Scheduled payment date reached; awaiting Sola verification. (Checked: not the same as the other charge.)' }; const data = JSON.stringify(next);
+      statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data, revision, now, `${mutationId}-${id}`, id, current.revision), c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(id, revision, data, now, mutationId, `${mutationId}-${id}`), audit(id, 'transactions', 'update', Number(current.revision), revision, String(current.data), data, 'Checked: a separate charge, not the same as the other one'));
+      await c.env.DB.batch(statements); return c.json({ success: true, same: false, item: { ...next, id, revision } });
+    }
+    const paid: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id=? AND is_deleted=0").bind(paymentId).first();
+    if (!paid) return c.json({ success: false, error: 'The other payment is gone. Reload the page.' }, 404);
+    const paidOld = parseSetting(paid.data, {});
+    if (String(paidOld.type || '').toLowerCase() !== 'approved' || String(paidOld.donorId || '') !== String(old.donorId || '')) return c.json({ success: false, error: 'That payment is not an approved payment of this donor.' }, 409);
+    if (paidOld.scheduleId || (Array.isArray(paidOld.coveredScheduledPaymentIds) && paidOld.coveredScheduledPaymentIds.length)) return c.json({ success: false, error: 'That payment already belongs to a schedule date.' }, 409);
+    const paidNext = { ...paidOld, scheduleId: old.scheduleId, scheduledDate: old.date, coveredScheduledPaymentIds: [id], ...(old.expectationId ? { coveredExpectationIds: [old.expectationId] } : {}), ...(!paidOld.pledgeId && !(paidOld.pledgeAllocations || []).length && old.pledgeId ? { pledgeId: old.pledgeId } : {}) };
+    const paidRevision = Number(paid.revision) + 1; const paidData = JSON.stringify(paidNext);
+    statements.push(
+      c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(revision, now, `${mutationId}-${id}`, id, current.revision),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'delete',?,?,?,?)").bind(id, revision, current.data, now, mutationId, `${mutationId}-${id}`),
+      audit(id, 'transactions', 'delete', Number(current.revision), revision, String(current.data), null, `Same charge as payment ${paymentId}: the waiting copy is removed`),
+      c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(paidData, paidRevision, now, `${mutationId}-${paymentId}`, paymentId, paid.revision),
+      c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(paymentId, paidRevision, paidData, now, mutationId, `${mutationId}-${paymentId}`),
+      audit(paymentId, 'transactions', 'update', Number(paid.revision), paidRevision, String(paid.data), paidData, `Marked as the ${old.date} schedule payment`),
+    );
+    if (old.expectationId) { const expectation: any = await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='paymentExpectations' AND id=? AND is_deleted=0").bind(String(old.expectationId)).first(); if (expectation) { const expectationData = JSON.stringify({ ...parseSetting(expectation.data, {}), status: 'fulfilled', fulfilledAt: new Date(now).toISOString(), paymentId }); statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=revision+1,updated_at=?,last_operation_id=? WHERE type='paymentExpectations' AND id=? AND revision=? AND is_deleted=0").bind(expectationData, now, `${mutationId}-expectation`, old.expectationId, expectation.revision)); } }
+    try { await c.env.DB.batch(statements); return c.json({ success: true, same: true }); } catch { return c.json({ success: false, error: 'Something changed at the same time. Reload and try again.', conflict: true }, 409); }
   });
 
   app.post('/v3/payments/:id/decline', async (c: any) => {
@@ -2533,6 +2562,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const due=await c.env.DB.prepare(`SELECT id,data,revision FROM sync_records WHERE type='recurringPayments' AND is_deleted=0
       AND COALESCE(json_extract(data,'$.active'),0)=1 AND json_extract(data,'$.method')='credit_card'
       AND COALESCE(json_extract(data,'$.solaScheduleId'),'')=''
+      AND lower(COALESCE(json_extract(data,'$.chargedBy'),'charitypro')) NOT IN ('sola','stripe','donorfuse')
       AND (COALESCE(json_extract(data,'$.paymentMethodId'),'')<>'' OR COALESCE(json_extract(data,'$.paymentMethodIds'),'[]')<>'[]')
       AND (CASE WHEN json_extract(data,'$.retryState.occurrence')=json_extract(data,'$.nextDate') THEN json_extract(data,'$.retryState.nextRetryDate')<=? ELSE json_extract(data,'$.nextDate')<=? END)
       AND (COALESCE(json_extract(data,'$.endDate'),'')='' OR json_extract(data,'$.nextDate')<=json_extract(data,'$.endDate'))

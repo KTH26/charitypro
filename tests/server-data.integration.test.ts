@@ -1084,7 +1084,7 @@ describe('server-driven bank deposit matching', () => {
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND is_deleted=0").get().count).toBe(1);
   });
 
-  it('makes no waiting payment for a schedule date when that charge was already imported from Sola', async () => {
+  it('always makes the waiting payment; a same-amount charge nearby is only a warning, and staff decide', async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-07-25T12:00:00Z'));
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'scheduled-donor', { id: 'scheduled-donor', name: 'Scheduled Donor' });
@@ -1092,12 +1092,21 @@ describe('server-driven bank deposit matching', () => {
     seedRecord(db, 'transactions', 'sola-payment-1', { id: 'sola-payment-1', donorId: 'scheduled-donor', amount: 75, date: '2026-07-20', type: 'approved', method: 'credit_card', notes: 'Imported as new via Sola Sync. Ref: 1234567' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const body = await (await app.request('/v3/schedules/process-due', { method: 'POST' }, { DB: db } as any)).json() as any;
-    expect(body.created).toBe(0);
-    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.type')='pending'").get().count).toBe(0);
+    expect(body.created).toBe(1);
+    const waitingId = 'scheduled-payment-schedule-imported-2026-07-20';
+    const waiting = () => db.database.prepare("SELECT data,revision,is_deleted FROM sync_records WHERE type='transactions' AND id=?").get(waitingId) as any;
+    expect(JSON.parse(waiting().data)).toMatchObject({ type: 'pending', maybeSameAs: [{ paymentId: 'sola-payment-1', date: '2026-07-20' }] });
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE id='sola-payment-1'").get() as any).data).scheduleId).toBeUndefined(); // nothing decided alone
+    // "Separate charge": both stay.
+    const keep = await app.request(`/v3/payments/${waitingId}/same-charge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ same: false, revision: waiting().revision }) }, { DB: db } as any);
+    expect(keep.status).toBe(200); expect(waiting().is_deleted).toBe(0); expect(JSON.parse(waiting().data).maybeSameAs).toBeUndefined();
+    // "Same charge": the waiting copy goes, the payment becomes that schedule date's payment.
+    const same = await app.request(`/v3/payments/${waitingId}/same-charge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ same: true, paymentId: 'sola-payment-1', revision: waiting().revision }) }, { DB: db } as any);
+    expect(same.status).toBe(200); expect(waiting().is_deleted).toBe(1);
     const paid: any = db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='sola-payment-1'").get();
-    expect(JSON.parse(paid.data)).toMatchObject({ scheduleId: 'schedule-imported', coveredScheduledPaymentIds: ['scheduled-payment-schedule-imported-2026-07-20'] });
-    const schedule: any = db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id='schedule-imported'").get();
-    expect(JSON.parse(schedule.data).nextDate).toBe('2026-08-20');
+    expect(JSON.parse(paid.data)).toMatchObject({ scheduleId: 'schedule-imported', coveredScheduledPaymentIds: [waitingId] });
+    const expectation: any = db.database.prepare("SELECT data FROM sync_records WHERE type='paymentExpectations' AND id='expected-payment-schedule-imported-2026-07-20'").get();
+    expect(JSON.parse(expectation.data).status).toBe('fulfilled');
     vi.useRealTimers();
   });
 
