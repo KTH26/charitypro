@@ -96,23 +96,23 @@ describe('recurring card runner safety', () => {
       const url = String(input); calls.push(url);
       if (url.endsWith('/ListCustomers')) return new Response(JSON.stringify({ Result: 'S', Customers: [{ CustomerId: 'c1', BillFirstName: 'Moshe', BillLastName: 'Klein', BillPhone: '(514) 555-1234' }] }));
       // The same card twice for one person (Sola keeps one per schedule), and Sola handing back the same page again.
-      if (url.endsWith('/ListPaymentMethods')) return new Response(JSON.stringify({ Result: 'S', NextToken: 'again', PaymentMethods: [{ PaymentMethodId: 'c1_pm1', Token: 'tok-1', TokenType: 'cc', Exp: '1230', Issuer: 'Visa', MaskedCardNumber: '4xxxxxxxxxxx4242' }, { PaymentMethodId: 'c1_pm2', Token: 'tok-2', TokenType: 'cc', Exp: '1230', Issuer: 'Visa', MaskedCardNumber: '4xxxxxxxxxxx4242' }] }));
+      if (url.endsWith('/ListPaymentMethods')) return new Response(JSON.stringify({ Result: 'S', NextToken: 'again', PaymentMethods: [{ PaymentMethodId: 'c1_pm1', CustomerId: 'c1', Token: 'tok-1', TokenType: 'CC', Exp: '1230', CardType: 'Visa', MaskedNumber: '4xxxxxxxxxxx4242' }, { PaymentMethodId: 'c1_pm2', CustomerId: 'c1', Token: 'tok-2', TokenType: 'CC', Exp: '1230', CardType: 'Visa', MaskedNumber: '4xxxxxxxxxxx4242' }, { PaymentMethodId: 'c1_pm3', CustomerId: 'c1', Token: 'tok-3', TokenType: 'CC', Exp: '0525', CardType: 'MasterCard', MaskedNumber: '5xxxxxxxxxxx0605' }] }));
       return new Response(JSON.stringify({ xResult: 'A' }));
     });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'u'); c.set('userEmail', 'u@x'); await next(); }); registerServerDataRoutes(app as any);
     const preview = await (await app.request('/v3/sola/saved-cards/preview', { method: 'POST' }, { DB: db } as any)).json() as any;
-    expect(preview.items).toEqual([expect.objectContaining({ paymentMethodId: 'c1_pm1', sameCardIds: ['c1_pm1', 'c1_pm2'], last4: '4242', donorId: 'donor', matchedBy: 'phone', expired: false })]);
+    expect(preview.items).toEqual([expect.objectContaining({ paymentMethodId: 'c1_pm1', sameCardIds: ['c1_pm1', 'c1_pm2'], last4: '4242', brand: 'Visa', donorId: 'donor', matchedBy: 'phone', expired: false }), expect.objectContaining({ paymentMethodId: 'c1_pm3', last4: '0605', brand: 'MasterCard', expired: true, donorId: 'donor' })]);
     expect(JSON.stringify(preview)).not.toContain('tok-1'); // the token never leaves the server
-    const imported = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
-    expect(imported).toMatchObject({ success: true, imported: 1 });
+    const imported = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }, { paymentMethodId: 'c1_pm3', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
+    expect(imported).toMatchObject({ success: true, imported: 2 }); // the expired card too
     expect(calls.every(url => url.startsWith('https://api.cardknox.com/v2/List'))).toBe(true); // never the charge service
     expect(calls.some(url => url.includes('gatewayjson'))).toBe(false);
     expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type IN ('transactions','paymentAllocations','recurringPayments')").get().count).toBe(0);
-    const card: any = db.database.prepare("SELECT data FROM sync_records WHERE type='paymentMethods'").get();
+    const card: any = db.database.prepare("SELECT data FROM sync_records WHERE type='paymentMethods' AND json_extract(data,'$.solaPaymentMethodId')='c1_pm1'").get();
     expect(JSON.parse(card.data)).toMatchObject({ donorId: 'donor', last4: '4242', expiryMonth: 12, expiryYear: 2030, status: 'active', solaPaymentMethodId: 'c1_pm1' });
-    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(1); // one card, not two
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(2); // the 4242 card once (not twice) + the expired card
     const afterImport = await (await app.request('/v3/sola/saved-cards/preview', { method: 'POST' }, { DB: db } as any)).json() as any;
-    expect(afterImport.items).toEqual([expect.objectContaining({ alreadyInCharityPro: true })]); // after a refresh it shows as already in
+    expect(afterImport.items.every((item: any) => item.alreadyInCharityPro)).toBe(true); // after a refresh it shows as already in
     // Bringing it in again (either copy) adds nothing.
     const copy = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm2', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
     expect(copy.imported).toBe(0);
@@ -123,20 +123,20 @@ describe('recurring card runner safety', () => {
     const hide = await (await app.request('/v3/sola/saved-cards/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentMethodIds: ['c1_pm1'] }) }, { DB: db } as any)).json() as any;
     expect(hide).toMatchObject({ success: true, hidden: 1, removedFromProfiles: 1, blocked: [] });
     expect(calls.length).toBe(callsBefore);
-    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(0);
-    expect(db.database.prepare("SELECT COUNT(*) AS count FROM server_secrets WHERE key LIKE 'PAYMENT_METHOD_TOKEN:%'").get().count).toBe(0);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(1); // only the expired card is left
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM server_secrets WHERE key LIKE 'PAYMENT_METHOD_TOKEN:%'").get().count).toBe(1);
     const list = await (await app.request('/v3/sola/saved-cards/preview', { method: 'POST' }, { DB: db } as any)).json() as any;
-    expect(list.items[0]).toMatchObject({ paymentMethodId: 'c1_pm1', hidden: true, alreadyInCharityPro: false });
+    expect(list.items.find((item: any) => item.paymentMethodId === 'c1_pm1')).toMatchObject({ hidden: true, alreadyInCharityPro: false });
     const hiddenImport = await (await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any)).json() as any;
     expect(hiddenImport).toMatchObject({ imported: 0, skipped: 1 });
     // Show it again, bring it in, put it on a CharityPro schedule: then it cannot be hidden.
     await app.request('/v3/sola/saved-cards/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentMethodIds: ['c1_pm1'], hidden: false }) }, { DB: db } as any);
     await app.request('/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ paymentMethodId: 'c1_pm1', donorId: 'donor' }] }) }, { DB: db } as any);
-    const cardId = String((db.database.prepare("SELECT id FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get() as any).id);
+    const cardId = String((db.database.prepare("SELECT id FROM sync_records WHERE type='paymentMethods' AND is_deleted=0 AND json_extract(data,'$.solaPaymentMethodId')='c1_pm1'").get() as any).id);
     seedRecord(db, 'recurringPayments', 'local-schedule', { id: 'local-schedule', donorId: 'donor', active: true, method: 'credit_card', paymentMethodIds: [cardId] });
     const blocked = await (await app.request('/v3/sola/saved-cards/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paymentMethodIds: ['c1_pm1'] }) }, { DB: db } as any)).json() as any;
     expect(blocked).toMatchObject({ hidden: 0, removedFromProfiles: 0, blocked: ['c1_pm1'] });
-    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(1);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='paymentMethods' AND is_deleted=0").get().count).toBe(2); // the blocked card stays, next to the expired one
   });
 
   it('retries a declined card only on its retry date', async () => {

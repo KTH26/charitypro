@@ -21,16 +21,16 @@ export const SolaSavedCards: React.FC = () => {
       setItems(data.items || []); setTicked([]); setChosen(Object.fromEntries((data.items || []).filter((item: SavedCard) => item.donorId).map((item: SavedCard) => [item.paymentMethodId, { id: item.donorId, name: item.donorName }])));
     } catch (reason: any) { setError(reason.message); } finally { setLoading(false); }
   };
-  const ready = useMemo(() => (items || []).filter(item => !item.hidden && !item.alreadyInCharityPro && !item.expired && chosen[item.paymentMethodId]), [items, chosen]);
+  const ready = useMemo(() => (items || []).filter(item => !item.hidden && !item.alreadyInCharityPro && chosen[item.paymentMethodId]), [items, chosen]);
   const words = search.trim().toLowerCase();
-  const shown = (items || []).filter(item => (filter === 'hidden' ? item.hidden : !item.hidden && (filter === 'all' || (filter === 'todo' ? !item.alreadyInCharityPro && !item.expired : filter === 'in' ? item.alreadyInCharityPro : item.expired && !item.alreadyInCharityPro)))
+  const shown = (items || []).filter(item => (filter === 'hidden' ? item.hidden : !item.hidden && (filter === 'all' || (filter === 'todo' ? !item.alreadyInCharityPro : filter === 'in' ? item.alreadyInCharityPro : item.expired && !item.alreadyInCharityPro)))
     && (!words || `${item.name} ${item.email} ${item.phone} ${item.last4} ${chosen[item.paymentMethodId]?.name || item.donorName}`.toLowerCase().includes(words)));
   const bringIn = async () => {
     if (!ready.length) return; setLoading(true); setError(''); setMessage('');
     try {
       const response = await fetch('/api/v3/sola/saved-cards/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: ready.map(item => ({ paymentMethodId: item.paymentMethodId, donorId: chosen[item.paymentMethodId]!.id })) }) });
       const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'The cards were not saved.');
-      setMessage(`${data.imported} card${data.imported === 1 ? '' : 's'} added to the donors' profiles${data.skipped ? `, ${data.skipped} already there or expired` : ''}.${data.errors?.length ? ` Not saved: ${data.errors.join('; ')}` : ''}`);
+      setMessage(`${data.imported} card${data.imported === 1 ? '' : 's'} added to the donors' profiles${data.skipped ? `, ${data.skipped} already there` : ''}.${data.errors?.length ? ` Not saved: ${data.errors.join('; ')}` : ''}`);
       setLoading(false); await load(true); // show what is really saved now
       return;
     } catch (reason: any) { setError(reason.message); } finally { setLoading(false); }
@@ -60,10 +60,10 @@ export const SolaSavedCards: React.FC = () => {
     {error && <div className="pay-error" style={{ width: '100%' }}>{error}</div>}
   </section>;
   const visible = items.filter(item => !item.hidden);
-  const counts = { all: visible.length, todo: visible.filter(item => !item.alreadyInCharityPro && !item.expired).length, in: visible.filter(item => item.alreadyInCharityPro).length, expired: visible.filter(item => item.expired && !item.alreadyInCharityPro).length, hidden: items.length - visible.length };
+  const counts = { all: visible.length, todo: visible.filter(item => !item.alreadyInCharityPro).length, in: visible.filter(item => item.alreadyInCharityPro).length, expired: visible.filter(item => item.expired && !item.alreadyInCharityPro).length, hidden: items.length - visible.length };
   return <section className="card">
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <div><h2 style={{ margin: 0 }}>Saved cards in Sola ({counts.all})</h2><small style={{ color: 'var(--text-muted)' }}>{counts.in} in CharityPro · {counts.expired} expired · {counts.hidden} hidden · nothing is charged when you bring cards in.</small></div>
+      <div><h2 style={{ margin: 0 }}>Saved cards in Sola ({counts.all})</h2><small style={{ color: 'var(--text-muted)' }}>{counts.todo} still to bring in · {counts.in} already in CharityPro · {counts.hidden} hidden · expired cards can be brought in too · nothing is charged when you bring cards in.</small></div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <input placeholder="Search name, phone, last 4…" value={search} onChange={event => setSearch(event.target.value)} style={{ width: 200 }} />
         <select value={filter} onChange={event => { setFilter(event.target.value as Filter); setTicked([]); }}>
@@ -80,7 +80,7 @@ export const SolaSavedCards: React.FC = () => {
     {message && <div style={{ marginTop: 10, color: 'var(--green)', fontWeight: 600 }}>{message}</div>}
     <div className="table-container" style={{ marginTop: 10, maxHeight: 520, overflow: 'auto' }}><table>
       <thead><tr><th style={{ width: 32 }}><input type="checkbox" checked={allTicked} title="Choose all shown" onChange={() => setTicked(allTicked ? [] : shown.map(item => item.paymentMethodId))} /></th><th>Name in Sola</th><th>Card</th><th>Phone</th><th style={{ minWidth: 320 }}>Donor in CharityPro</th><th>Found by</th><th>Status</th><th /></tr></thead>
-      <tbody>{shown.map(item => <tr key={item.paymentMethodId} style={{ opacity: item.hidden || item.alreadyInCharityPro || item.expired ? 0.65 : 1 }}>
+      <tbody>{shown.map(item => <tr key={item.paymentMethodId} style={{ opacity: item.hidden || item.alreadyInCharityPro ? 0.65 : 1 }}>
         <td><input type="checkbox" checked={ticked.includes(item.paymentMethodId)} onChange={() => tick(item.paymentMethodId)} /></td>
         <td><strong>{item.name || '—'}</strong>{item.email && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.email}</div>}</td>
         <td>{item.brand} ••••{item.last4}<div style={{ fontSize: 12, color: item.expired ? 'var(--red)' : 'var(--text-muted)' }}>exp {String(item.expiryMonth).padStart(2, '0')}/{String(item.expiryYear).slice(-2)}</div></td>
@@ -89,7 +89,7 @@ export const SolaSavedCards: React.FC = () => {
           ? <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><span>{chosen[item.paymentMethodId]!.name}</span><button className="btn btn-ghost btn-sm" onClick={() => setEditing(item.paymentMethodId)}>Change</button><button className="btn btn-ghost btn-sm" title="Not this donor" onClick={() => setChosen(current => ({ ...current, [item.paymentMethodId]: null }))}><X size={13} /></button></div>
           : editing === item.paymentMethodId ? <DonorPicker value={null} autoFocus onChange={donor => { setChosen(current => ({ ...current, [item.paymentMethodId]: donor })); if (donor) setEditing(''); }} /> : <button className="btn btn-secondary btn-sm" onClick={() => setEditing(item.paymentMethodId)}>Choose donor</button>}</td>
         <td>{item.hidden ? '' : chosen[item.paymentMethodId]?.id === item.donorId && item.matchedBy ? item.matchedBy : chosen[item.paymentMethodId] ? 'you' : '—'}</td>
-        <td style={{ fontWeight: 600, color: item.hidden ? 'var(--text-muted)' : item.alreadyInCharityPro ? 'var(--green)' : item.expired ? 'var(--red)' : 'var(--text-muted)' }}>{item.hidden ? 'Hidden' : item.alreadyInCharityPro ? 'In CharityPro' : item.expired ? 'Expired' : chosen[item.paymentMethodId] ? 'Ready' : 'Choose the donor'}</td>
+        <td style={{ fontWeight: 600, color: item.hidden ? 'var(--text-muted)' : item.alreadyInCharityPro ? 'var(--green)' : item.expired ? 'var(--red)' : 'var(--text-muted)' }}>{item.hidden ? 'Hidden' : item.alreadyInCharityPro ? 'In CharityPro' : chosen[item.paymentMethodId] ? (item.expired ? 'Ready (expired card)' : 'Ready') : 'Choose the donor'}</td>
         <td>{item.hidden
           ? <button className="btn btn-ghost btn-sm" disabled={loading} onClick={() => void setHidden([item.paymentMethodId], false)} title="Show this card again"><Eye size={14} /> Show</button>
           : <button className="btn btn-ghost btn-sm" disabled={loading} onClick={() => void setHidden([item.paymentMethodId], true)} title="Hide this card (it stays in Sola)"><EyeOff size={14} /> Hide</button>}</td>

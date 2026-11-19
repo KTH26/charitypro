@@ -2858,19 +2858,20 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const customer: any = customerById.get(customerId) || {};
       const name = String([customer.BillFirstName, customer.BillLastName].filter(Boolean).join(' ') || customer.BillCompany || '').trim();
       const exp = String(method.Exp || '').replace(/\D/g, ''); const expiryMonth = Number(exp.slice(0, 2)); const expiryYear = 2000 + Number(exp.slice(2, 4));
-      const last4 = String(method.MaskedCardNumber || '').replace(/\D/g, '').slice(-4);
+      // Sola sends MaskedNumber and CardType (its instructions say MaskedCardNumber and Issuer): read both.
+      const last4 = String(method.MaskedNumber || method.MaskedCardNumber || method.Last4 || '').replace(/\D/g, '').slice(-4);
       const expired = !(expiryMonth >= 1 && expiryMonth <= 12) || expiryYear * 12 + expiryMonth - 1 < thisMonth;
       const phones = [customer.BillPhone, customer.BillMobile].map(digits).filter(phone => phone.length === 10);
       let donorId = ''; let matchedBy = '';
       if (byCustomer.has(customerId)) { donorId = byCustomer.get(customerId)!; matchedBy = 'Sola schedule'; }
       else { const phoneHits = [...new Set(phones.flatMap(phone => byPhone.get(phone) || []))]; if (phoneHits.length === 1) { donorId = phoneHits[0]; matchedBy = 'phone'; } else if (byName.has(normalizeName(name))) { donorId = byName.get(normalizeName(name))!; matchedBy = 'name'; } }
       const already = saved.find(row => String(row.pm || '') === paymentMethodId) || (donorId ? saved.find(row => String(row.donor) === donorId && String(row.last4) === last4 && Number(row.em) === expiryMonth && Number(row.ey) === expiryYear) : null);
-      return { paymentMethodId, customerId, name, email: String(customer.Email || ''), phone: phones[0] || '', brand: String(method.Issuer || 'Card'), last4, expiryMonth, expiryYear, expired, donorId, donorName: donorName.get(donorId) || '', matchedBy, alreadyInCharityPro: Boolean(already), token: String(method.Token), sameCardIds: [paymentMethodId] as string[] };
+      return { paymentMethodId, customerId, name, email: String(customer.Email || ''), phone: phones[0] || '', brand: String(method.CardType || method.Issuer || 'Card'), last4, expiryMonth, expiryYear, expired, donorId, donorName: donorName.get(donorId) || '', matchedBy, alreadyInCharityPro: Boolean(already), token: String(method.Token), sameCardIds: [paymentMethodId] as string[] };
     });
     // Sola often keeps the same card more than once for one person (e.g. once per schedule): show it once.
     const byCard = new Map<string, any>();
     for (const card of cards) {
-      const key = `${card.customerId || card.name.toLowerCase()}|${card.last4}|${card.expiryMonth}|${card.expiryYear}`;
+      const key = card.last4 ? `${card.customerId || card.name.toLowerCase()}|${card.last4}|${card.expiryMonth}|${card.expiryYear}` : `id|${card.paymentMethodId}`; // never merge cards without last 4
       const first = byCard.get(key);
       if (!first) byCard.set(key, card);
       else { first.sameCardIds.push(card.paymentMethodId); first.alreadyInCharityPro = first.alreadyInCharityPro || card.alreadyInCharityPro; if (!first.donorId && card.donorId) Object.assign(first, { donorId: card.donorId, donorName: card.donorName, matchedBy: card.matchedBy }); }
@@ -2939,10 +2940,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (ids.some(id => hidden.has(id))) { summary.skipped++; continue; }
       if (!validDonors.has(donorId)) { summary.errors.push(`${card.name || card.paymentMethodId}: donor not found`); continue; }
       const list = perDonor.get(donorId) || [];
-      if (card.expired || !/^\d{4}$/.test(card.last4) || list.some(row => ids.includes(String(row.pm || '')) || (String(row.last4) === card.last4 && Number(row.em) === card.expiryMonth && Number(row.ey) === card.expiryYear))) { summary.skipped++; continue; }
+      if (!/^\d{4}$/.test(card.last4) || list.some(row => ids.includes(String(row.pm || '')) || (String(row.last4) === card.last4 && Number(row.em) === card.expiryMonth && Number(row.ey) === card.expiryYear))) { summary.skipped++; continue; }
       const id = crypto.randomUUID(); const now = Date.now(); const mutationId = `sola-saved-card-${card.paymentMethodId}`;
       const hasDefault = list.some(row => (row.isDefault === 1 || row.isDefault === true) && row.status !== 'paused');
-      const record = { id, donorId, kind: 'card', brand: card.brand.slice(0, 50), last4: card.last4, expiryMonth: card.expiryMonth, expiryYear: card.expiryYear, cardholderName: card.name.slice(0, 200), priority: list.reduce((maximum, row) => Math.max(maximum, Number(row.priority || 0)), 0) + 1, isDefault: !hasDefault, status: 'active', tokenProvider: 'sola-recurring', solaPaymentMethodId: card.paymentMethodId, solaPaymentMethodIds: ids, solaCustomerId: card.customerId, createdAt: new Date(now).toISOString() };
+      const record = { id, donorId, kind: 'card', brand: card.brand.slice(0, 50), last4: card.last4, expiryMonth: card.expiryMonth, expiryYear: card.expiryYear, cardholderName: card.name.slice(0, 200), priority: list.reduce((maximum, row) => Math.max(maximum, Number(row.priority || 0)), 0) + 1, isDefault: !hasDefault, status: 'active', ...(card.expired ? { expiredWhenBroughtIn: true } : {}), tokenProvider: 'sola-recurring', solaPaymentMethodId: card.paymentMethodId, solaPaymentMethodIds: ids, solaCustomerId: card.customerId, createdAt: new Date(now).toISOString() };
       const data = JSON.stringify(record); const operationId = `${mutationId}-method`;
       group.statements.push(
         c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'paymentMethods',?,?,1,0,?)").bind(id, data, now, operationId),
