@@ -434,13 +434,30 @@ const resolveCoveredDeclines = async (db: any) => {
 export const paymentsFromOtherDonors = async (db: any, donorIds: string[]) => {
   const wanted = new Set(donorIds.map(String).filter(Boolean)); const byDonor = new Map<string, Map<string, any>>();
   if (!wanted.size) return new Map<string, any[]>();
-  const [split, single] = await db.batch([
-    db.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(p.data,'$.donorId') AS pledge_donor FROM sync_records t, json_each(json_extract(t.data,'$.pledgeAllocations')) a JOIN sync_records p ON p.type='pledges' AND p.is_deleted=0 AND p.id=json_extract(a.value,'$.pledgeId') WHERE t.type='transactions' AND t.is_deleted=0 AND json_type(t.data,'$.pledgeAllocations')='array' AND COALESCE(json_extract(t.data,'$.donorId'),'')<>COALESCE(json_extract(p.data,'$.donorId'),'')"),
-    db.prepare("SELECT t.id,t.data,t.revision,t.updated_at,json_extract(p.data,'$.donorId') AS pledge_donor FROM sync_records t JOIN sync_records p ON p.type='pledges' AND p.is_deleted=0 AND p.id=json_extract(t.data,'$.pledgeId') WHERE t.type='transactions' AND t.is_deleted=0 AND COALESCE(json_type(t.data,'$.pledgeAllocations'),'')<>'array' AND COALESCE(json_extract(t.data,'$.donorId'),'')<>COALESCE(json_extract(p.data,'$.donorId'),'')")
+  // Two plain scans (each pledge's donor, and each payment's links), matched here. A SQL join of the two took over 5 seconds.
+  const [links, pledgeRows] = await db.batch([
+    db.prepare("SELECT id,json_extract(data,'$.donorId') AS donor,json_extract(data,'$.pledgeId') AS pledge,CASE WHEN json_type(data,'$.pledgeAllocations')='array' THEN json_extract(data,'$.pledgeAllocations') END AS allocations FROM sync_records WHERE type='transactions' AND is_deleted=0 AND (json_extract(data,'$.pledgeId') IS NOT NULL OR json_type(data,'$.pledgeAllocations')='array')"),
+    db.prepare("SELECT id,json_extract(data,'$.donorId') AS donor FROM sync_records WHERE type='pledges' AND is_deleted=0"),
   ]);
-  for (const row of [...(split.results || []), ...(single.results || [])] as any[]) {
-    const donorId = String(row.pledge_donor || ''); if (!wanted.has(donorId)) continue;
-    const list = byDonor.get(donorId) || new Map<string, any>(); list.set(String(row.id), parseRecord(row)); byDonor.set(donorId, list);
+  const pledgeDonor = new Map<string, string>(((pledgeRows.results || []) as any[]).map(row => [String(row.id), String(row.donor ?? '')]));
+  const found = new Map<string, Set<string>>(); // payment id → donors whose pledge it is on
+  for (const row of (links.results || []) as any[]) {
+    let targets: unknown[] = [];
+    if (row.allocations != null) { try { const list = JSON.parse(String(row.allocations)); targets = Array.isArray(list) ? list.map((item: any) => item?.pledgeId) : []; } catch { targets = []; } }
+    else targets = [row.pledge];
+    for (const target of targets) {
+      if (target == null) continue; const donorId = pledgeDonor.get(String(target));
+      if (donorId === undefined || donorId === String(row.donor ?? '') || !wanted.has(donorId)) continue;
+      const set = found.get(String(row.id)) || new Set<string>(); set.add(donorId); found.set(String(row.id), set);
+    }
+  }
+  const ids = [...found.keys()];
+  for (let start = 0; start < ids.length; start += 90) {
+    const chunk = ids.slice(start, start + 90);
+    const rows = await db.prepare(`SELECT id,data,revision,updated_at FROM sync_records WHERE type='transactions' AND is_deleted=0 AND id IN (${chunk.map(() => '?').join(',')})`).bind(...chunk).all();
+    for (const row of (rows.results || []) as any[]) for (const donorId of found.get(String(row.id)) || []) {
+      const list = byDonor.get(donorId) || new Map<string, any>(); list.set(String(row.id), parseRecord(row)); byDonor.set(donorId, list);
+    }
   }
   return new Map([...byDonor].map(([donorId, list]) => [donorId, [...list.values()]]));
 };
