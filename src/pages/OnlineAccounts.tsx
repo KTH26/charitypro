@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { CloudAccountDetailsModal } from '../components/CloudAccountDetailsModal';
-import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { ColumnTh, ColumnFilterChips, useListColumns } from '../components/ColumnTh';
 import { CloudAddAccountModal } from '../components/CloudAddAccountModal';
 import { CloudNewTransferModal } from '../components/CloudNewTransferModal';
 import { ArrowLeftRight, Plus } from 'lucide-react';
@@ -20,8 +20,7 @@ export const OnlineAccounts: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
-  const [sort, setSort] = useState('type');
-  const [direction, setDirection] = useState<SortDirection>('asc');
+  const cols = useListColumns('type', 'asc', () => setPage(1)); const { sort, direction } = cols;
   const [showAdd, setShowAdd] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [notice, setNotice] = useState('');
@@ -29,11 +28,10 @@ export const OnlineAccounts: React.FC = () => {
   const [view, setView] = useState<'accounts' | 'categories'>('accounts');
   const isCategories = view === 'categories';
   const types = isCategories ? CATEGORY_TYPES : ACCOUNT_TYPES;
-  const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'balance' ? 'desc' : 'asc')); setSort(column); setPage(1); };
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
     try {
-      const response = await fetch(`/api/v3/accounts?page=${page}&limit=50&search=${encodeURIComponent(search)}&sort=${sort}&direction=${direction}&types=${types.join(',')}`);
+      const response = await fetch(`/api/v3/accounts?page=${page}&limit=50&search=${encodeURIComponent(search)}&${cols.query}&types=${types.join(',')}`);
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || `Request failed (${response.status})`);
       setAccounts(data.items);
@@ -43,7 +41,7 @@ export const OnlineAccounts: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, search, sort, direction, types.join(',')]);
+  }, [page, search, cols.query, types.join(',')]);
   useEffect(() => {
     void load();
     return startLiveRefresh(() => void load(true));
@@ -68,13 +66,14 @@ export const OnlineAccounts: React.FC = () => {
         </div>
         <section className="card" style={{ padding: 12, marginBottom: 12 }}><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={isCategories ? 'Search categories' : 'Search accounts'} /></section>
         {error && <div className="card" style={{ padding: 12, color: 'var(--red)' }}>{error}</div>}
+<ColumnFilterChips cols={cols} />
         {loading ? <div className="card" style={{ padding: 24, textAlign: 'center' }}>Calculating cloud balances…</div> : (
           <div style={{ display: 'grid', gap: 12 }}>
             {!loading && accounts.length === 0 && !error && <div className="card" style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>{isCategories ? 'No categories found.' : 'No accounts found.'}</div>}
             {types.filter(type => grouped[type]?.length).map(type => (
               <section className="card" style={{ padding: 0, overflow: 'hidden' }} key={type}>
                 <h2 style={{ margin: 0, padding: '16px 20px', color: 'var(--navy)', borderBottom: '1px solid var(--border)' }}>{GROUP_TITLES[type] || type}</h2>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><SortableTh column="name" label={isCategories ? 'Category' : 'Account'} sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="currency" label="Currency" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="balance" label={isCategories ? 'Total' : 'Actual balance'} sort={sort} direction={direction} onSort={changeSort} align="right"/>{!isCategories && <><th style={{textAlign:'right'}}>Fundraiser reserve</th><th style={{textAlign:'right'}}>Available balance</th></>}</tr></thead><tbody>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><ColumnTh cols={cols} column="name" label={isCategories ? 'Category' : 'Account'} /><ColumnTh cols={cols} column="currency" label="Currency" /><ColumnTh cols={cols} column="balance" label={isCategories ? 'Total' : 'Actual balance'} kind="number" align="right" />{!isCategories && <><ColumnTh cols={cols} column="reserve" label="Fundraiser reserve" kind="number" align="right" /><ColumnTh cols={cols} column="available" label="Available balance" kind="number" align="right" /></>}</tr></thead><tbody>
                   {grouped[type].map(account => <tr key={account.id} onClick={() => setSelectedAccount(account)} style={{ cursor: 'pointer' }}><td style={{ fontWeight: 600 }}>{account.name}</td><td>{account.currency}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{account.currency} ${Number(account.actualBalance??account.balance).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td>{!isCategories && <><td style={{textAlign:'right',color:Number(account.fundraiserReserved||0)>0?'var(--gold)':'var(--text-muted)'}}>{account.type==='asset'?`${account.currency} $${Number(account.fundraiserReserved||0).toFixed(2)}`:'—'}</td><td style={{ textAlign: 'right', fontWeight: 600, color: Number(account.availableBalance??account.balance) >= 0 ? 'var(--green)' : 'var(--red)' }}>{account.currency} ${Number(account.availableBalance??account.balance).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></>}</tr>)}
                 </tbody></table>
               </section>

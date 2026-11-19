@@ -528,3 +528,45 @@ describe('monthly loan needs no pay-back date', () => {
     expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'dated', toAccountId: 'bmo', amount: 500, date: '2025-12-01' } })).status).toBe(400);
   });
 });
+
+describe('sort and filter on every column', () => {
+  it('pledges: filter donor starting with, Yiddish name, date range; sort by open balance across all pages', async () => {
+    const { db, call } = setup();
+    seed(db, 'donors', 'd2', { name: 'Abraham Klein', hebFirstName: 'אברהם', hebLastName: 'קליין' });
+    seed(db, 'pledges', 'p1', { donorId: 'd1', amount: 100, currency: 'CAD', date: '2026-01-05' });
+    seed(db, 'pledges', 'p2', { donorId: 'd2', amount: 500, currency: 'CAD', date: '2026-03-10' });
+    seed(db, 'pledges', 'p3', { donorId: 'd2', amount: 50, currency: 'CAD', date: '2026-06-01' });
+    seed(db, 'transactions', 't1', { donorId: 'd2', pledgeId: 'p2', amount: 400, currency: 'CAD', type: 'approved', date: '2026-03-11', method: 'cash' });
+    const ids = async (query: string) => (await call('GET', `/v3/pledges?limit=50&${query}`)).body.items.map((item: any) => item.id);
+    expect(await ids('f_donor=%5Eab')).toEqual(expect.arrayContaining(['p2', 'p3']));
+    expect(await ids('f_donor=%5Eab')).toHaveLength(2);
+    expect(await ids(`f_yiddish=${encodeURIComponent('אברהם')}`)).toHaveLength(2);
+    expect(await ids('f_date=2026-03-01..2026-12-31&sort=date&direction=asc')).toEqual(['p2', 'p3']);
+    expect(await ids('f_amount=..100&sort=amount&direction=desc')).toEqual(['p1', 'p3']);
+    const byBalance = (await call('GET', '/v3/pledges?limit=50&sort=balance&direction=desc')).body.items.map((item: any) => Number(item.balance));
+    expect(byBalance).toEqual([...byBalance].sort((x, y) => y - x));
+    expect(byBalance).toHaveLength(3);
+    const page = await call('GET', '/v3/pledges?limit=1&page=3&sort=balance&direction=desc');
+    expect(page.body).toMatchObject({ total: 3, totalPages: 3 });
+    expect(Number(page.body.items[0].balance)).toBe(byBalance[2]);
+    const over = (await call('GET', '/v3/pledges?limit=50&f_balance=60..')).body.items.map((item: any) => Number(item.balance));
+    expect(over.every((value: number) => value >= 60)).toBe(true);
+    expect(over.length).toBe(byBalance.filter((value: number) => value >= 60).length);
+  });
+  it('donors, payments, accounts and vendors filter and sort by any column', async () => {
+    const { db, call } = setup();
+    seed(db, 'donors', 'd2', { name: 'Abraham Klein', city: 'Montreal' });
+    seed(db, 'transactions', 't1', { donorId: 'd2', amount: 40, currency: 'CAD', type: 'approved', date: '2026-03-11', method: 'cash', notes: 'Purim' });
+    seed(db, 'transactions', 't2', { donorId: 'd1', amount: 90, currency: 'CAD', type: 'approved', date: '2026-04-11', method: 'check' });
+    const names = (await call('GET', '/v3/donors?f_name=%5Emo&limit=50')).body.items.map((item: any) => item.name);
+    expect(names).toEqual(['Moshe Cohen']);
+    expect((await call('GET', '/v3/donors?sort=name&direction=desc&limit=50')).body.items.map((item: any) => item.name)).toEqual(['Moshe Cohen', 'Abraham Klein']);
+    expect((await call('GET', '/v3/payments?f_method=%3Dcash&limit=50')).body.items.map((item: any) => item.id)).toEqual(['t1']);
+    expect((await call('GET', '/v3/payments?sort=amount&direction=asc&limit=50')).body.items.map((item: any) => item.id)).toEqual(['t1', 't2']);
+    expect((await call('GET', '/v3/accounts?f_name=%5Evisa&limit=50')).body.items.map((item: any) => item.id)).toEqual(['visa']);
+    await call('POST', '/v3/bills', { requestId: crypto.randomUUID(), vendor: 'Store A', amount: 50, dueDate: '2026-11-01', paidDate: '2026-11-01', status: 'paid', category: 'supplies', sourceAccountId: 'visa' });
+    await call('POST', '/v3/bills', { requestId: crypto.randomUUID(), vendor: 'Store B', amount: 300, dueDate: '2026-11-02', paidDate: '2026-11-02', status: 'paid', category: 'supplies', sourceAccountId: 'visa' });
+    expect((await call('GET', '/v3/vendors?f_total=100..&limit=50')).body.items.map((item: any) => item.vendor ?? item.name)).toEqual(['Store B']);
+    expect((await call('GET', '/v3/bills?f_vendor=%5Estore%20a&limit=50')).body.items.map((item: any) => item.vendor)).toEqual(['Store A']);
+  });
+});

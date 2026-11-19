@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { OnlinePaymentForm } from '../components/OnlinePaymentForm';
 import { CloudPaymentDetailsModal } from '../components/CloudPaymentDetailsModal';
-import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { ColumnTh, ColumnFilterChips, useListColumns } from '../components/ColumnTh';
 import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 
 type OnlinePayment = {
@@ -56,13 +56,11 @@ export const OnlinePayments: React.FC = () => {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const reviewedImportRef = useRef<HTMLInputElement>(null);
-  const [sort, setSort] = useState('date');
-  const [direction, setDirection] = useState<SortDirection>('desc');
-  const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'date' || column === 'amount' ? 'desc' : 'asc')); setSort(column); setPage(1); };
+  const cols = useListColumns('date', 'desc', () => setPage(1)); const { sort, direction } = cols;
 
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
-    const params = new URLSearchParams({ page: String(page), limit: '50', status });
+    const params = new URLSearchParams({ page: String(page), limit: '50', status }); for (const [key, value] of Object.entries(cols.filters)) params.set(`f_${key}`, value);
     if (search) params.set('search', search);
     if (method) params.set('method', method);
     if (from) params.set('from', from);
@@ -81,7 +79,7 @@ export const OnlinePayments: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, search, method, from, to, status, sort, direction]);
+  }, [page, search, method, from, to, status, cols.query]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -156,8 +154,8 @@ export const OnlinePayments: React.FC = () => {
     }
   };
 
-  const filtered = searchInput !== '' || method !== '' || from !== '' || to !== '';
-  const resetFilters = () => { setSearchInput(''); setMethod(''); setFrom(''); setTo(''); };
+  const filtered = searchInput !== '' || method !== '' || from !== '' || to !== '' || cols.hasFilters;
+  const resetFilters = () => { setSearchInput(''); setMethod(''); setFrom(''); setTo(''); cols.clearFilters(); };
 
   return (
     <main className="page list-page">
@@ -186,6 +184,7 @@ export const OnlinePayments: React.FC = () => {
             <input type="date" value={to} onChange={e => setTo(e.target.value)} title="To date" />
             {filtered && <ResetLink onClick={resetFilters} />}
           </ListToolbar>
+<ColumnFilterChips cols={cols} />
 
           {showCreate && <div className="modal-overlay" onClick={() => setShowCreate(false)}><div className="pay-modal" onClick={event => event.stopPropagation()}><OnlinePaymentForm onCancel={() => setShowCreate(false)} onCreated={createdStatus => {
             setShowCreate(false);
@@ -207,7 +206,7 @@ export const OnlinePayments: React.FC = () => {
             ) : (
               <div className="list-scroll">
                 <table>
-                  <thead><tr><SortableTh column="date" label="Date" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="donor" label="Donor" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="status" label="Status" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="method" label="Method" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="notes" label="Notes" sort={sort} direction={direction} onSort={changeSort} /><SortableTh column="amount" label="Amount" sort={sort} direction={direction} onSort={changeSort} align="right" /><th className="row-actions" /></tr></thead>
+                  <thead><tr><ColumnTh cols={cols} column="date" label="Date" kind="date" /><ColumnTh cols={cols} column="donor" label="Donor" /><ColumnTh cols={cols} column="status" label="Status" /><ColumnTh cols={cols} column="method" label="Method" /><ColumnTh cols={cols} column="notes" label="Notes" /><ColumnTh cols={cols} column="amount" label="Amount" kind="number" align="right" /><th className="row-actions" /></tr></thead>
                   <tbody>
                     {items.map(payment => (
                       <tr key={payment.id} onClick={() => setSelectedPayment(payment)} style={{ cursor: 'pointer' }}>

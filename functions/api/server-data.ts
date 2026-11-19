@@ -4,6 +4,7 @@ import { buildDonorSheetPlan } from './donor-sheet';
 import { HDate } from '@hebcal/core';
 import { registerMessagingRoutes, getMessagingSettings, sendEmail, sendSms, splitList } from './messaging';
 import { registerReceiptRoutes, addressLines } from './receipts';
+import { textCol, dateCol, numCol, listColumns, sortAndFilterRows, usesColumns, type ColumnKind } from './list-columns';
 import { registerSmsRoutes } from './sms';
 import { registerStripeRoutes, verifyStripePayment } from './stripe';
 
@@ -1321,27 +1322,45 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const page = boundedPage(c.req.query('page'));
     const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase();
-    const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const conditions=["p.type='pledges'",'p.is_deleted=0'];const bindings:any[]=[];if(search){conditions.push("(lower(p.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)");bindings.push(`%${search}%`,`%${search}%`);}if(from){conditions.push("json_extract(p.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(p.data,'$.date')<=?");bindings.push(to);}const where=conditions.join(' AND ');
+    const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const conditions=["p.type='pledges'",'p.is_deleted=0'];const bindings:any[]=[];if(search){conditions.push("(lower(p.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)");bindings.push(`%${search}%`,`%${search}%`);}if(from){conditions.push("json_extract(p.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(p.data,'$.date')<=?");bindings.push(to);}
     const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records cpg ON cpg.type='campaigns' AND cpg.id=json_extract(p.data,'$.campaignId') AND cpg.is_deleted=0";
-    const order = requestedOrder(c, { date: "json_extract(p.data,'$.date')", donor: "lower(COALESCE(json_extract(d.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0) AS REAL)", currency: "json_extract(p.data,'$.currency')", notes: "lower(COALESCE(json_extract(p.data,'$.notes'),''))" }, "json_extract(p.data,'$.date')");
+    const yiddish = "trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),''))";
+    const columns = { date: dateCol("json_extract(p.data,'$.date')"), donor: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), campaign: textCol("COALESCE(json_extract(cpg.data,'$.name'),'Legacy / Unassigned')"), tags: textCol("json_extract(p.data,'$.tags')"), amount: numCol("COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0)"), currency: textCol("json_extract(p.data,'$.currency')"), notes: textCol("json_extract(p.data,'$.notes')") };
+    const list = listColumns(c, columns, 'date'); conditions.push(...list.conditions); bindings.push(...list.bindings);
+    const where = conditions.join(' AND ');
+    // Paid, Scheduled and Open balance are worked out in code: to sort or filter on them, every matching pledge is worked out first.
+    const computedKeys = ['paid', 'scheduled', 'balance'];
+    const computed = usesColumns(c, computedKeys);
+    const select = `SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.preTitle') AS donor_pre_title,json_extract(d.data,'$.hebFirstName') AS donor_heb_first,json_extract(d.data,'$.hebLastName') AS donor_heb_last,json_extract(d.data,'$.title') AS donor_title,json_extract(cpg.data,'$.name') AS campaign_name FROM sync_records p ${join} WHERE ${where} ORDER BY ${list.order},p.id DESC`;
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.preTitle') AS donor_pre_title,json_extract(d.data,'$.hebFirstName') AS donor_heb_first,json_extract(d.data,'$.hebLastName') AS donor_heb_last,json_extract(d.data,'$.title') AS donor_title,json_extract(cpg.data,'$.name') AS campaign_name FROM sync_records p ${join} WHERE ${where} ORDER BY ${order},p.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      computed ? c.env.DB.prepare(select).bind(...bindings) : c.env.DB.prepare(`${select} LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records p ${join} WHERE ${where}`).bind(...bindings)
     ]);
-    const total = Number(countResult.results[0]?.count || 0);
+    let total = Number(countResult.results[0]?.count || 0);
     const donorIds = [...new Set(listResult.results.map((row: any) => String(parseRecord(row).donorId || '')).filter(Boolean))];
     const calculationsById = new Map<string, any>();
     if (donorIds.length) {
-      const placeholders = donorIds.map(() => '?').join(',');
-      const related = await c.env.DB.prepare(`SELECT id,type,data,revision,updated_at FROM sync_records WHERE type IN ('pledges','transactions','recurringPayments') AND is_deleted=0 AND json_extract(data,'$.donorId') IN (${placeholders})`).bind(...donorIds).all();
+      const related: any[] = [];
+      for (let index = 0; index < donorIds.length; index += 90) {
+        const chunk = donorIds.slice(index, index + 90);
+        const rows = await c.env.DB.prepare(`SELECT id,type,data,revision,updated_at FROM sync_records WHERE type IN ('pledges','transactions','recurringPayments') AND is_deleted=0 AND json_extract(data,'$.donorId') IN (${chunk.map(() => '?').join(',')})`).bind(...chunk).all();
+        related.push(...(rows.results || []));
+      }
       const fromOthers = await paymentsFromOtherDonors(c.env.DB, donorIds);
+      const byDonor = new Map<string, any[]>();
+      for (const row of related) { const donorId = String(parseSetting(row.data, {})?.donorId || ''); (byDonor.get(donorId) || byDonor.set(donorId, []).get(donorId)!).push(row); }
       for (const donorId of donorIds) {
-        const donorRecords = related.results.filter((row: any) => String(parseSetting(row.data, {})?.donorId || '') === donorId);
+        const donorRecords = byDonor.get(donorId) || [];
         const financials = calculatePledgeFinancials(donorRecords.filter((row: any) => row.type === 'pledges').map(parseRecord), [...donorRecords.filter((row: any) => row.type === 'transactions').map(parseRecord), ...(fromOthers.get(donorId) || [])], donorRecords.filter((row: any) => row.type === 'recurringPayments').map(parseRecord));
         for (const calculation of financials) calculationsById.set(String(calculation.id), calculation);
       }
     }
-    const items = listResult.results.map((row: any) => { const item = parseRecord(row); const calculation = calculationsById.get(String(item.id)); return { ...item, donorName: row.donor_name || 'Unknown Donor', donorHebrewName: [row.donor_pre_title,row.donor_heb_first,row.donor_heb_last,row.donor_title].filter(Boolean).join(' '), campaignName: row.campaign_name || 'Legacy / Unassigned', paid: Number(calculation?.paid || 0), pending: Number(calculation?.pending || 0), scheduled: Number(calculation?.scheduled || 0), balance: Number(calculation?.balance ?? item.amountCAD ?? item.amount ?? 0) }; });
+    let items = listResult.results.map((row: any) => { const item = parseRecord(row); const calculation = calculationsById.get(String(item.id)); return { ...item, donorName: row.donor_name || 'Unknown Donor', donorHebrewName: [row.donor_pre_title,row.donor_heb_first,row.donor_heb_last,row.donor_title].filter(Boolean).join(' '), campaignName: row.campaign_name || 'Legacy / Unassigned', paid: Number(calculation?.paid || 0), pending: Number(calculation?.pending || 0), scheduled: Number(calculation?.scheduled || 0), balance: Number(calculation?.balance ?? item.amountCAD ?? item.amount ?? 0) }; });
+    if (computed) {
+      const kinds: Record<string, ColumnKind> = { paid: 'number', scheduled: 'number', balance: 'number', ...Object.fromEntries(Object.entries(columns).map(([key, column]) => [key, column.kind])) };
+      const sorted = sortAndFilterRows(c, items, kinds, (item: any, key) => key === 'donor' ? item.donorName : key === 'yiddish' ? item.donorHebrewName : key === 'campaign' ? item.campaignName : key === 'amount' ? Number(item.amountCAD ?? item.amount ?? 0) : key === 'tags' ? (Array.isArray(item.tags) ? item.tags.join(' ') : '') : item[key], 'date', computedKeys);
+      total = sorted.length; items = sorted.slice(offset, offset + limit);
+    }
     return c.json({ success: true, items, page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
@@ -1418,9 +1437,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (status === 'paused') conditions.push("COALESCE(json_extract(r.data,'$.active'),0)=0");
     if (search) { conditions.push("(lower(r.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)"); bindings.push(`%${search}%`, `%${search}%`); }
     if(from){conditions.push("json_extract(r.data,'$.nextDate')>=?");bindings.push(from);}if(to){conditions.push("json_extract(r.data,'$.nextDate')<=?");bindings.push(to);}
+    const columns = { nextDate: dateCol("json_extract(r.data,'$.nextDate')"), donor: textCol("json_extract(d.data,'$.name')"), frequency: textCol("json_extract(r.data,'$.frequency')"), paymentsLeft: numCol("json_extract(r.data,'$.paymentsRemaining')"), endDate: dateCol("json_extract(r.data,'$.endDate')"), method: textCol("json_extract(r.data,'$.method')"), status: textCol("CASE WHEN COALESCE(json_extract(r.data,'$.active'),0)=1 THEN 'Active' ELSE 'Paused' END"), amount: numCol("COALESCE(json_extract(r.data,'$.amountCAD'),json_extract(r.data,'$.amount'),0)") };
+    const list = listColumns(c, columns, 'nextDate'); conditions.push(...list.conditions); bindings.push(...list.bindings);
     const where = conditions.join(' AND ');
     const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0";
-    const order = requestedOrder(c, { nextDate: "json_extract(r.data,'$.nextDate')", donor: "lower(COALESCE(json_extract(d.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(r.data,'$.amountCAD'),json_extract(r.data,'$.amount'),0) AS REAL)", frequency: "json_extract(r.data,'$.frequency')", method: "json_extract(r.data,'$.method')", status: "COALESCE(json_extract(r.data,'$.active'),0)" }, "json_extract(r.data,'$.nextDate')");
+    const order = list.order;
     const [listResult, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT r.id,r.data,r.revision,r.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records r ${join} WHERE ${where} ORDER BY ${order},r.id LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records r ${join} WHERE ${where}`).bind(...bindings)
@@ -1654,11 +1675,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       bindings.push(term, term, term, term);
     }
 
+    const columns = { date: dateCol("json_extract(t.data,'$.date')"), donor: textCol("json_extract(d.data,'$.name')"), status: textCol("json_extract(t.data,'$.type')"), method: textCol("json_extract(t.data,'$.method')"), notes: textCol("json_extract(t.data,'$.notes')"), amount: numCol("COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)"), source: textCol("json_extract(src.data,'$.name')"), offset: textCol("json_extract(off.data,'$.name')") };
+    const list = listColumns(c, columns, 'date'); conditions.push(...list.conditions); bindings.push(...list.bindings);
     const where = conditions.join(' AND ');
     const join = `LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0
       LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(t.data,'$.sourceAccountId') AND src.is_deleted=0
       LEFT JOIN sync_records off ON off.type='accounts' AND off.id=json_extract(t.data,'$.offsetAccountId') AND off.is_deleted=0`;
-    const order = requestedOrder(c, { date: "json_extract(t.data,'$.date')", donor: "lower(COALESCE(json_extract(d.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0) AS REAL)", method: "json_extract(t.data,'$.method')", status: "json_extract(t.data,'$.type')", notes: "lower(COALESCE(json_extract(t.data,'$.notes'),''))" }, "json_extract(t.data,'$.date')");
+    const order = list.order;
     const listSql = `
       SELECT t.id, t.data, t.revision, t.updated_at,
              json_extract(d.data, '$.name') AS donor_name,
@@ -1705,14 +1728,16 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (method) { conditions.push("json_extract(r.data,'$.method')=?"); bindings.push(method); }
     const dateExpression = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.dueDate'),json_extract(r.data,'$.paidDate'),'')";
     if (from) { conditions.push(`${dateExpression}>=?`); bindings.push(from); } if (to) { conditions.push(`${dateExpression}<=?`); bindings.push(to); }
+    const columns = { date: dateCol(dateExpression), type: textCol("CASE r.type WHEN 'transactions' THEN 'Payment' WHEN 'bills' THEN 'Expense' ELSE 'Transfer' END"), name: textCol("COALESCE(json_extract(d.data,'$.name'),json_extract(r.data,'$.vendor'),json_extract(r.data,'$.notes'),'')"), status: textCol("COALESCE(json_extract(r.data,'$.type'),json_extract(r.data,'$.status'),'')"), source: textCol("json_extract(src.data,'$.name')"), offset: textCol("json_extract(off.data,'$.name')"), amount: numCol("COALESCE(json_extract(r.data,'$.amountCAD'),json_extract(r.data,'$.amount'),0)") };
+    const list = listColumns(c, columns, 'date'); conditions.push(...list.conditions); bindings.push(...list.bindings);
     const where = conditions.join(' AND ');
     const joins = `LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0
       LEFT JOIN sync_records src ON src.type='accounts' AND src.id=COALESCE(json_extract(r.data,'$.sourceAccountId'),json_extract(r.data,'$.fromAccountId')) AND src.is_deleted=0
       LEFT JOIN sync_records off ON off.type='accounts' AND off.id=COALESCE(json_extract(r.data,'$.offsetAccountId'),json_extract(r.data,'$.toAccountId'),json_extract(r.data,'$.category')) AND off.is_deleted=0`;
-    const order = requestedOrder(c, { date: dateExpression, type: "r.type", name: "lower(COALESCE(json_extract(d.data,'$.name'),json_extract(r.data,'$.vendor'),json_extract(r.data,'$.notes'),''))", status: "COALESCE(json_extract(r.data,'$.type'),json_extract(r.data,'$.status'),'')", source: "lower(COALESCE(json_extract(src.data,'$.name'),''))", offset: "lower(COALESCE(json_extract(off.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(r.data,'$.amountCAD'),json_extract(r.data,'$.amount'),0) AS REAL)" }, dateExpression);
+    const order = list.order;
     const [listResult, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT r.id,r.type AS record_type,r.data,r.revision,r.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(src.data,'$.name') AS source_name,json_extract(off.data,'$.name') AS offset_name FROM sync_records r ${joins} WHERE ${where} ORDER BY ${order},r.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records r WHERE ${where}`).bind(...bindings)
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records r ${joins} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), recordType: row.record_type, donorName: row.donor_name || '', sourceName: row.source_name || '', offsetName: row.offset_name || '' })), page, limit, total, totalPages: Math.ceil(total / limit) });
@@ -1797,9 +1822,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (status === 'pending') conditions.push("COALESCE(json_extract(t.data,'$.completed'),0)=0"); if (status === 'completed') conditions.push("COALESCE(json_extract(t.data,'$.completed'),0)=1");
     if (search) { conditions.push("lower(t.data) LIKE ?"); bindings.push(`%${search}%`); }
     if(priority){conditions.push("json_extract(t.data,'$.priority')=?");bindings.push(priority);} if(taskType){conditions.push("json_extract(t.data,'$.type')=?");bindings.push(taskType);} if(from){conditions.push("json_extract(t.data,'$.dueDate')>=?");bindings.push(from);} if(to){conditions.push("json_extract(t.data,'$.dueDate')<=?");bindings.push(to);}
+    const columns = { title: textCol("json_extract(t.data,'$.title')"), notes: textCol("json_extract(t.data,'$.notes')"), dueDate: dateCol("json_extract(t.data,'$.dueDate')"), donor: textCol("(SELECT json_extract(dn.data,'$.name') FROM sync_records dn WHERE dn.type='donors' AND dn.id=json_extract(t.data,'$.donorId') AND dn.is_deleted=0)"), priority: textCol("json_extract(t.data,'$.priority')"), status: textCol("CASE WHEN COALESCE(json_extract(t.data,'$.completed'),0) IN (1,'true') THEN 'Completed' ELSE 'Pending' END") };
+    const list = listColumns(c, columns, 'dueDate'); conditions.push(...list.conditions); bindings.push(...list.bindings);
+    const chosenOrder = c.req.query('sort') && (columns as any)[String(c.req.query('sort'))] ? `${list.order},` : '';
     const where = conditions.join(' AND ');
     const today=new Date().toISOString().slice(0,10);const [listResult, countResult, summaryResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(p.data,'$.amount') AS payment_amount,json_extract(p.data,'$.currency') AS payment_currency,json_extract(p.data,'$.type') AS payment_type FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records p ON p.type='transactions' AND p.id=json_extract(t.data,'$.linkedPaymentId') AND p.is_deleted=0 WHERE ${where} ORDER BY COALESCE(json_extract(t.data,'$.completed'),0),CASE json_extract(t.data,'$.priority') WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,json_extract(t.data,'$.dueDate'),t.id LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT t.id,t.data,t.revision,t.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(p.data,'$.amount') AS payment_amount,json_extract(p.data,'$.currency') AS payment_currency,json_extract(p.data,'$.type') AS payment_type FROM sync_records t LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records p ON p.type='transactions' AND p.id=json_extract(t.data,'$.linkedPaymentId') AND p.is_deleted=0 WHERE ${where} ORDER BY ${chosenOrder}COALESCE(json_extract(t.data,'$.completed'),0),CASE json_extract(t.data,'$.priority') WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,json_extract(t.data,'$.dueDate'),t.id LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records t WHERE ${where}`).bind(...bindings),
       c.env.DB.prepare(`SELECT COUNT(*) AS total,SUM(CASE WHEN COALESCE(json_extract(t.data,'$.completed'),0)=0 THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN COALESCE(json_extract(t.data,'$.completed'),0)=0 AND json_extract(t.data,'$.priority')='high' THEN 1 ELSE 0 END) AS high,SUM(CASE WHEN COALESCE(json_extract(t.data,'$.completed'),0)=0 AND json_extract(t.data,'$.dueDate')<? THEN 1 ELSE 0 END) AS overdue,SUM(CASE WHEN COALESCE(json_extract(t.data,'$.completed'),0)=0 AND json_extract(t.data,'$.dueDate')=? THEN 1 ELSE 0 END) AS dueToday FROM sync_records t WHERE t.type='tasks' AND t.is_deleted=0 AND ${validTask}`).bind(today,today)
     ]);
@@ -3184,38 +3212,47 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const searchWords = search.split(/\s+/).filter(Boolean).slice(0, 8);
     const condition = searchWords.map(() => 'AND lower(d.data) LIKE ?').join(' ');
     const searchBindings = searchWords.map((word: string) => `%${word}%`);
-    const order = requestedOrder(c, { name: "lower(json_extract(d.data,'$.name'))", phone: "lower(COALESCE(json_extract(d.data,'$.phone'),''))", email: "lower(COALESCE(json_extract(d.data,'$.email'),''))", address: "lower(COALESCE(json_extract(d.data,'$.address'),''))", total: 'total_given' }, "lower(json_extract(d.data,'$.name'))");
-    const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`
-        WITH donor_totals AS (
+    const yiddish = "trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),''))";
+    const columns = { name: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), phone: textCol("json_extract(d.data,'$.phone')"), email: textCol("json_extract(d.data,'$.email')"), address: textCol("json_extract(d.data,'$.address')"), city: textCol("json_extract(d.data,'$.city')"), total: numCol('dt.total_given') };
+    const list = listColumns(c, columns, 'name');
+    const filterSql = list.conditions.map(part => ` AND ${part}`).join('');
+    const allBindings = [...searchBindings, ...list.bindings];
+    // Open balance is worked out in code: to sort or filter on it, every matching donor is worked out first.
+    const computed = usesColumns(c, ['openBalance']);
+    const totalsCte = `WITH donor_totals AS (
           SELECT json_extract(data,'$.donorId') AS donor_id,
             SUM(COALESCE(json_extract(data,'$.amountCAD'),json_extract(data,'$.amount'),0)) AS total_given
           FROM sync_records
           WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved'
             AND COALESCE(json_extract(data,'$.isBatch'),0)=0
           GROUP BY json_extract(data,'$.donorId')
-        )
-        SELECT d.id,d.data,d.revision,d.updated_at,COALESCE(dt.total_given,0) AS total_given
-        FROM sync_records d LEFT JOIN donor_totals dt ON dt.donor_id=d.id
-        WHERE d.type='donors' AND d.is_deleted=0 ${condition}
-        ORDER BY ${order} LIMIT ? OFFSET ?
-      `).bind(...searchBindings, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records d WHERE d.type='donors' AND d.is_deleted=0 ${condition}`).bind(...searchBindings)
+        )`;
+    const fromSql = `FROM sync_records d LEFT JOIN donor_totals dt ON dt.donor_id=d.id WHERE d.type='donors' AND d.is_deleted=0 ${condition}${filterSql}`;
+    const select = `${totalsCte} SELECT d.id,d.data,d.revision,d.updated_at,COALESCE(dt.total_given,0) AS total_given ${fromSql} ORDER BY ${list.order},d.id`;
+    const [listResult, countResult] = await c.env.DB.batch([
+      computed ? c.env.DB.prepare(select).bind(...allBindings) : c.env.DB.prepare(`${select} LIMIT ? OFFSET ?`).bind(...allBindings, limit, offset),
+      c.env.DB.prepare(`${totalsCte} SELECT COUNT(*) AS count ${fromSql}`).bind(...allBindings)
     ]);
-    const total = Number(countResult.results[0]?.count || 0);
+    let total = Number(countResult.results[0]?.count || 0);
     const donorIds = listResult.results.map((row: any) => String(row.id));
     const recordsByDonor = new Map<string, { pledges: any[]; payments: any[]; schedules: any[] }>();
     for (const id of donorIds) recordsByDonor.set(id, { pledges: [], payments: [], schedules: [] });
-    if (donorIds.length) {
-      const placeholders = donorIds.map(() => '?').join(',');
-      const related = await c.env.DB.prepare(`SELECT type,data FROM sync_records WHERE type IN ('pledges','transactions','recurringPayments') AND is_deleted=0 AND json_extract(data,'$.donorId') IN (${placeholders})`).bind(...donorIds).all();
+    for (let index = 0; index < donorIds.length; index += 90) {
+      const chunk = donorIds.slice(index, index + 90);
+      const related = await c.env.DB.prepare(`SELECT type,data FROM sync_records WHERE type IN ('pledges','transactions','recurringPayments') AND is_deleted=0 AND json_extract(data,'$.donorId') IN (${chunk.map(() => '?').join(',')})`).bind(...chunk).all();
       for (const row of related.results as any[]) {
         const value = parseSetting(row.data, null); const group = recordsByDonor.get(String(value?.donorId || '')); if (!group || !value) continue;
         if (row.type === 'pledges') group.pledges.push(value); else if (row.type === 'transactions') group.payments.push(value); else group.schedules.push(value);
       }
     }
     const fromOthers = await paymentsFromOtherDonors(c.env.DB, donorIds);
-    const items = listResult.results.map((row: any) => { const group = recordsByDonor.get(String(row.id)) || { pledges: [], payments: [], schedules: [] }; const openBalance = calculatePledgeFinancials(group.pledges, [...group.payments, ...(fromOthers.get(String(row.id)) || [])], group.schedules).reduce((sum, pledge) => sum + Math.max(0, Number(pledge.balance || 0)), 0); return { ...parseRecord(row), totalGiven: Number(row.total_given || 0), openBalance }; });
+    let items = listResult.results.map((row: any) => { const group = recordsByDonor.get(String(row.id)) || { pledges: [], payments: [], schedules: [] }; const openBalance = calculatePledgeFinancials(group.pledges, [...group.payments, ...(fromOthers.get(String(row.id)) || [])], group.schedules).reduce((sum, pledge) => sum + Math.max(0, Number(pledge.balance || 0)), 0); return { ...parseRecord(row), totalGiven: Number(row.total_given || 0), openBalance }; });
+    if (computed) {
+      const kinds: Record<string, ColumnKind> = { openBalance: 'number', ...Object.fromEntries(Object.entries(columns).map(([key, column]) => [key, column.kind])) };
+      const yiddishOf = (donor: any) => [donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ');
+      const sorted = sortAndFilterRows(c, items, kinds, (donor: any, key) => key === 'yiddish' ? yiddishOf(donor) : key === 'total' ? donor.totalGiven : donor[key], 'name', ['openBalance']);
+      total = sorted.length; items = sorted.slice(offset, offset + limit);
+    }
     return c.json({ success: true, items, page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
@@ -3548,11 +3585,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       conditions.push("(lower(COALESCE(json_extract(b.data,'$.vendor'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.memo'),'')) LIKE ? OR lower(COALESCE(json_extract(cat.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(src.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(cr.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.status'),'')) LIKE ? OR lower(COALESCE(json_extract(b.data,'$.dueDate'),'')) LIKE ? OR CAST(COALESCE(json_extract(b.data,'$.amount'),0) AS TEXT) LIKE ?)");
       bindings.push(...Array(8).fill(`%${search}%`));
     }
+    const columns = { dueDate: dateCol("json_extract(b.data,'$.dueDate')"), vendor: textCol("COALESCE(json_extract(b.data,'$.vendor'),'')||' '||COALESCE(json_extract(b.data,'$.memo'),'')"), category: textCol("json_extract(cat.data,'$.name')"), internalCategory: textCol("COALESCE(json_extract(b.data,'$.internalCategory'),json_extract(b.data,'$.taxCategory'),json_extract(cat.data,'$.name'))"), status: textCol("json_extract(b.data,'$.status')"), source: textCol("json_extract(src.data,'$.name')"), credit: textCol("json_extract(cr.data,'$.name')"), amount: numCol("json_extract(b.data,'$.amount')") };
+    const list = listColumns(c, columns, 'dueDate'); conditions.push(...list.conditions); bindings.push(...list.bindings);
     const where = conditions.join(' AND ');
     const joins = `LEFT JOIN sync_records cat ON cat.type='accounts' AND cat.id=json_extract(b.data,'$.category') AND cat.is_deleted=0
       LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0
       LEFT JOIN sync_records cr ON cr.type='accounts' AND cr.id=json_extract(b.data,'$.creditAccountId') AND cr.is_deleted=0`;
-    const order = requestedOrder(c, { dueDate: "json_extract(b.data,'$.dueDate')", vendor: "lower(COALESCE(json_extract(b.data,'$.vendor'),''))", category: "lower(COALESCE(json_extract(cat.data,'$.name'),''))", status: "json_extract(b.data,'$.status')", source: "lower(COALESCE(json_extract(src.data,'$.name'),''))", amount: "CAST(COALESCE(json_extract(b.data,'$.amount'),0) AS REAL)" }, "json_extract(b.data,'$.dueDate')");
+    const order = list.order;
     const [listResult, totalsResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name,json_extract(cr.data,'$.name') AS credit_name FROM sync_records b ${joins} WHERE ${where} ORDER BY ${order},b.id DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) AS total_cad FROM sync_records b ${joins} WHERE ${where}`).bind(...bindings)
@@ -3591,12 +3630,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase();
     const condition = search ? " AND lower(COALESCE(json_extract(data,'$.vendor'),'')) LIKE ?" : '';
-    const bindings = search ? [`%${search}%`] : [];
+    const bindings: any[] = search ? [`%${search}%`] : [];
     const base = "type='bills' AND is_deleted=0 AND COALESCE(json_extract(data,'$.isPayroll'),0)=0 AND trim(COALESCE(json_extract(data,'$.vendor'),''))<>''";
-    const order = requestedOrder(c, { name: 'lower(vendor)', total: 'total_billed', balance: 'balance_owed', count: 'bill_count' }, 'lower(vendor)');
+    // Totals are per vendor, so their filters go in HAVING.
+    const columns = { name: textCol("json_extract(data,'$.vendor')"), total: numCol("COALESCE(SUM(json_extract(data,'$.amount')),0)"), balance: numCol("COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0)"), count: numCol('COUNT(*)') };
+    const list = listColumns(c, columns, 'name'); const having = list.conditions.length ? ` HAVING ${list.conditions.join(' AND ')}` : ''; bindings.push(...list.bindings);
+    const order = list.order;
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT json_extract(data,'$.vendor') AS vendor,COUNT(*) AS bill_count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS total_billed,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS balance_owed FROM sync_records WHERE ${base}${condition} GROUP BY json_extract(data,'$.vendor') ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM (SELECT 1 FROM sync_records WHERE ${base}${condition} GROUP BY json_extract(data,'$.vendor'))`).bind(...bindings)
+      c.env.DB.prepare(`SELECT json_extract(data,'$.vendor') AS vendor,COUNT(*) AS bill_count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS total_billed,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS balance_owed FROM sync_records WHERE ${base}${condition} GROUP BY json_extract(data,'$.vendor')${having} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count FROM (SELECT 1 FROM sync_records WHERE ${base}${condition} GROUP BY json_extract(data,'$.vendor')${having})`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
     return c.json({ success: true, items: listResult.results.map((row: any) => ({ name: row.vendor, billCount: Number(row.bill_count || 0), totalBilled: Number(row.total_billed || 0), balanceOwed: Number(row.balance_owed || 0) })), page, limit, total, totalPages: Math.ceil(total / limit) });
@@ -4624,19 +4666,23 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         AND (?='' OR lower(COALESCE(json_extract(a.data,'$.name'),'')) LIKE ?)
         AND (?='[]' OR json_extract(a.data,'$.type') IN (SELECT value FROM json_each(?)))
       ORDER BY ${order}, lower(json_extract(a.data,'$.name'))
-      LIMIT ? OFFSET ?
-    `).bind(search, `%${search}%`,typesJson,typesJson, limit, offset).all();
+    `).bind(search, `%${search}%`,typesJson,typesJson).all();
     const countResult: any = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='accounts' AND is_deleted=0 AND (?='' OR lower(COALESCE(json_extract(data,'$.name'),'')) LIKE ?) AND (?='[]' OR json_extract(data,'$.type') IN (SELECT value FROM json_each(?)))").bind(search, `%${search}%`,typesJson,typesJson).first();
-    const total = Number(countResult?.count || 0);
+    let total = Number(countResult?.count || 0);
     const accountingRows = await c.env.DB.prepare("SELECT id,type,data,revision,updated_at FROM sync_records WHERE is_deleted=0 AND type IN ('transactions','pledges','fundraisers','fundraiserPayouts')").all();
     const groupedAccounting = new Map<string, any[]>();
     for (const row of accountingRows.results as any[]) groupedAccounting.set(String(row.type), [...(groupedAccounting.get(String(row.type)) || []), parseRecord(row)]);
     const fundraiserAccounting = calculateFundraiserAccounting(groupedAccounting.get('transactions') || [], groupedAccounting.get('pledges') || [], groupedAccounting.get('fundraisers') || [], groupedAccounting.get('fundraiserPayouts') || []);
-    return c.json({ success: true, items: result.results.map((row: any) => {
+    // All accounts are worked out (there are not many), then sorted / filtered on any column and cut to the page.
+    const allItems = result.results.map((row: any) => {
       const item = parseRecord(row); const actualBalance = Number(row.calculated_balance || 0);
       const fundraiserReserved = item.type === 'asset' ? Number(fundraiserAccounting.reservedByAccount.get(String(item.id)) || 0) : 0;
       return { ...item, balance: actualBalance, actualBalance, fundraiserReserved, availableBalance: actualBalance - fundraiserReserved };
-    }), page, limit, total, totalPages: Math.ceil(total / limit) });
+    });
+    const kinds: Record<string, ColumnKind> = { name: 'text', type: 'text', currency: 'text', balance: 'number', reserve: 'number', available: 'number', number: 'text' };
+    const sorted = c.req.query('sort') || Object.keys(kinds).some(key => c.req.query(`f_${key}`)) ? sortAndFilterRows(c, allItems, kinds, (item: any, key) => key === 'reserve' ? item.fundraiserReserved : key === 'available' ? item.availableBalance : key === 'number' ? item.accountNumber : item[key], 'type') : allItems;
+    total = sorted.length;
+    return c.json({ success: true, items: sorted.slice(offset, offset + limit), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.get('/v3/accounts/:id/ledger', async (c: any) => {

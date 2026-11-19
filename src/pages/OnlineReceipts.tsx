@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Send, Settings2 } from 'lucide-react';
+import { ColumnTh, ColumnFilterChips, useListColumns } from '../components/ColumnTh';
 import { ListFooter, ListToolbar, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 import { startLiveRefresh } from '../utils/liveUpdates';
 
@@ -60,15 +61,18 @@ export const OnlineReceipts: React.FC = () => {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null); const [sending, setSending] = useState(false); const [showSettings, setShowSettings] = useState(false);
   const [progress, setProgress] = useState<{ sent: number; failed: number; remaining: number; errors: string[] } | null>(null);
   const stopRef = useRef(false);
+  const cols = useListColumns('', 'desc', () => setPage(1));
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ status: tab, search, from, to, page: String(page), limit: '50' });
+    const params = new URLSearchParams({ status: tab, search, from, to, page: String(page), limit: '50' }); if (cols.sort) { params.set('sort', cols.sort); params.set('direction', cols.direction); } for (const [key, value] of Object.entries(cols.filters)) params.set(`f_${key}`, value);
     const response = await fetch(`/api/v3/receipts?${params}`); const data = await response.json();
     if (!response.ok || !data.success) { setMessage({ ok: false, text: data.error || 'Unable to load receipts.' }); return; }
     if (tab === 'waiting') setWaiting(data.items || []); else setReceipts(data.items || []);
     setTotals({ total: Number(data.total || 0), totalPages: Number(data.totalPages || 1), withEmail: Number(data.withEmail || 0), totalAmount: Number(data.totalAmount || 0) });
-  }, [tab, search, from, to, page]);
+  }, [tab, search, from, to, page, cols.query]);
   useEffect(() => { void load(); if (sending) return undefined; return startLiveRefresh(() => void load()); }, [load, sending]);
   useEffect(() => { setPage(1); setSelected(new Set()); }, [tab, search, from, to]);
+  // Each tab has its own columns, so a column filter does not carry over to another tab.
+  useEffect(() => { cols.clearFilters(); cols.sortBy('', 'desc'); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setSelected(new Set()); }, [page]);
 
   const send = async (paymentIds: string[], resend = false) => {
@@ -119,6 +123,7 @@ export const OnlineReceipts: React.FC = () => {
       <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search donor or amount" /><input type="date" value={from} onChange={event => setFrom(event.target.value)} title="From date" /><input type="date" value={to} onChange={event => setTo(event.target.value)} title="To date" />
       {(search || from || to) && <ResetLink onClick={() => { setSearch(''); setFrom(''); setTo(''); }} />}
     </ListToolbar>
+    <ColumnFilterChips cols={cols} />
     <div className="list-summary" style={{ marginBottom: 12 }}>Tax receipts in the Hatzolah design, sent by email as a PDF. Email must be connected in <Link to="/settings">Settings</Link>.</div>
     {showSettings && <ReceiptSettingsBox onClose={() => setShowSettings(false)} />}
     {message && <div className={`list-notice ${message.ok ? 'ok' : 'bad'}`}>{message.text}</div>}
@@ -137,7 +142,7 @@ export const OnlineReceipts: React.FC = () => {
         <button className="btn btn-secondary" style={{ marginLeft: 'auto' }} disabled={sending || selected.size === 0} onClick={() => void send([...selected])}><Send size={15} /> Send {selected.size || ''} selected</button>
       </div>}
       <div className="list-scroll"><table>
-        {tab === 'waiting' ? <><thead><tr><th /><th>Date</th><th>Donor</th><th>Email</th><th>Paid by</th><th style={{ textAlign: 'right' }}>Amount</th><th className="row-actions" /></tr></thead><tbody>
+        {tab === 'waiting' ? <><thead><tr><th /><ColumnTh cols={cols} column="date" label="Date" kind="date"/><ColumnTh cols={cols} column="donor" label="Donor"/><ColumnTh cols={cols} column="email" label="Email"/><ColumnTh cols={cols} column="method" label="Paid by"/><ColumnTh cols={cols} column="amount" label="Amount" kind="number" align="right"/><th className="row-actions" /></tr></thead><tbody>
           {waiting.map(item => <tr key={item.paymentId}>
             <td><input type="checkbox" disabled={!item.email} checked={selected.has(item.paymentId)} onChange={() => toggle(item.paymentId)} /></td>
             <td>{item.date}</td><td style={{ fontWeight: 600 }}>{item.donorName}</td>
@@ -146,7 +151,7 @@ export const OnlineReceipts: React.FC = () => {
             <td className="row-actions" style={{ whiteSpace: 'nowrap' }}><button className="btn btn-secondary btn-sm" disabled={!item.email || sending} onClick={() => void send([item.paymentId])}>Send</button> <RowMenu items={[{ label: 'View', onClick: () => void openPdf(item.paymentId) }]} /></td>
           </tr>)}
           {waiting.length === 0 && <tr><td colSpan={7} className="list-empty">Every payment got its receipt.</td></tr>}
-        </tbody></> : <><thead><tr><th>Receipt #</th><th>Date of gift</th><th>Donor</th><th>Paid by</th><th style={{ textAlign: 'right' }}>Amount</th><th>{tab === 'void' ? 'Why cancelled' : tab === 'failed' ? 'Problem' : 'Sent to'}</th><th className="row-actions" /></tr></thead><tbody>
+        </tbody></> : <><thead><tr><ColumnTh cols={cols} column="number" label="Receipt #" kind="number"/><ColumnTh cols={cols} column="giftDate" label="Date of gift" kind="date"/><ColumnTh cols={cols} column="donor" label="Donor"/><ColumnTh cols={cols} column="method" label="Paid by"/><ColumnTh cols={cols} column="amount" label="Amount" kind="number" align="right"/><ColumnTh cols={cols} column="sentTo" label={tab === 'void' ? 'Why cancelled' : tab === 'failed' ? 'Problem' : 'Sent to'}/><th className="row-actions" /></tr></thead><tbody>
           {receipts.map(item => <tr key={item.id}>
             <td style={{ fontWeight: 600 }}>{item.receiptNumber}</td><td>{item.giftDate}</td><td style={{ fontWeight: 600 }}>{item.donorName}</td><td>{METHODS[item.method] || item.method}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{money(item.amount)}</td>
             <td style={{ fontSize: 13 }}>{tab === 'void' ? `${item.voidReason || '—'} (${String(item.voidedAt || '').slice(0, 10)})` : tab === 'failed' ? <span style={{ color: 'var(--red)' }}>{item.error}</span> : `${item.sentTo || ''} · ${String(item.sentAt || '').slice(0, 10)}`}</td>

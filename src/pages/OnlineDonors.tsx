@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { OnlineDonorForm, type OnlineDonor } from '../components/OnlineDonorForm';
 import { CloudDonorProfileModal } from '../components/CloudDonorProfileModal';
-import { SortableTh, type SortDirection } from '../components/SortableTh';
+import { ColumnTh, ColumnFilterChips, useListColumns } from '../components/ColumnTh';
 import { GoogleSheetDonorSyncModal } from '../components/GoogleSheetDonorSyncModal';
 import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu, SingleView } from '../components/ListLayout';
 
@@ -21,12 +21,11 @@ export const OnlineDonors: React.FC = () => {
   const [editing, setEditing] = useState<OnlineDonor | 'new' | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [sheetSyncOpen, setSheetSyncOpen] = useState(false);
-  const [sort, setSort] = useState('name'); const [direction, setDirection] = useState<SortDirection>('asc');
-  const changeSort = (column: string) => { setDirection(current => sort === column ? (current === 'asc' ? 'desc' : 'asc') : (column === 'total' ? 'desc' : 'asc')); setSort(column); setPage(1); };
+  const cols = useListColumns('name', 'asc', () => setPage(1)); const { sort, direction } = cols;
 
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
-    const params = new URLSearchParams({ page: String(page), limit: '50' });
+    const params = new URLSearchParams({ page: String(page), limit: '50' }); for (const [key, value] of Object.entries(cols.filters)) params.set(`f_${key}`, value);
     if (search) params.set('search', search);
     params.set('sort', sort); params.set('direction', direction);
     try {
@@ -42,7 +41,7 @@ export const OnlineDonors: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, search, sort, direction]);
+  }, [page, search, cols.query]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -65,21 +64,22 @@ export const OnlineDonors: React.FC = () => {
         <div className="list-body">
           <ListToolbar end={<><button className="btn btn-secondary" onClick={() => { setSheetSyncOpen(true); setNotice(''); }}>Sync Google Sheet</button><NewButton onClick={() => { setEditing('new'); setNotice(''); }}>Add Donor</NewButton></>}>
             <input value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder="Live search: name, phone, email, Hebrew name, address or donor ID" />
-            {searchInput && <ResetLink onClick={() => setSearchInput('')} />}
+            {(searchInput || cols.hasFilters) && <ResetLink onClick={() => { setSearchInput(''); cols.clearFilters(); }} />}
           </ListToolbar>
+<ColumnFilterChips cols={cols} />
 
           {editing && <OnlineDonorForm donor={editing === 'new' ? undefined : editing} onCancel={() => setEditing(null)} onSaved={saved} onConflict={message => { setEditing(null); setNotice(message); void load(); }} />}
           {notice && <div className={`list-notice ${notice.includes('changed by another') ? 'bad' : 'ok'}`}>{notice}</div>}
           {error && <div className="list-notice bad">{error}</div>}
           <section className="list-table">
             {loading ? <div className="list-loading">Loading donors from the cloud...</div> : <div className="list-scroll"><table>
-              <thead><tr><SortableTh column="name" label="Donor" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="phone" label="Phone" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="email" label="Email" sort={sort} direction={direction} onSort={changeSort}/><SortableTh column="address" label="Address" sort={sort} direction={direction} onSort={changeSort}/><th style={{textAlign:'right'}}>Open balance</th><th className="row-actions" /></tr></thead>
+              <thead><tr><ColumnTh cols={cols} column="name" label="Donor" /><ColumnTh cols={cols} column="yiddish" label="Yiddish name" /><ColumnTh cols={cols} column="phone" label="Phone" /><ColumnTh cols={cols} column="email" label="Email" /><ColumnTh cols={cols} column="address" label="Address" /><ColumnTh cols={cols} column="openBalance" label="Open balance" kind="number" align="right" /><th className="row-actions" /></tr></thead>
               <tbody>{items.map(donor => <tr key={donor.id} onClick={() => setProfileId(donor.id)} style={{ cursor: 'pointer' }}>
-                <td>{(donor.hebFirstName || donor.hebLastName) && <div dir="rtl" className="cell-main" style={{ textAlign: 'left' }}>{[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ')}</div>}<div className={(donor.hebFirstName || donor.hebLastName) ? 'cell-sub' : 'cell-main'}>{donor.name}</div><div className="cell-sub">{donor.displayId || donor.id}</div></td>
+                <td><div className="cell-main">{donor.name}</div><div className="cell-sub">{donor.displayId || donor.id}</div></td><td dir="rtl" style={{ fontWeight: 600, textAlign: 'left' }}>{[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ') || '—'}</td>
                 <td>{donor.phone}</td><td>{donor.email || ''}</td><td>{donor.address || ''}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700, color: Number(donor.openBalance || 0)>0?'var(--red)':'var(--green)' }}>${Number(donor.openBalance || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className="row-actions"><RowMenu items={[{ label: 'Open donor', onClick: () => setProfileId(donor.id) }, { label: 'Edit', onClick: () => { setEditing(donor); setNotice(''); } }]} /></td>
-              </tr>)}{items.length === 0 && <tr><td colSpan={6} className="list-empty">No matching donors.</td></tr>}</tbody>
+              </tr>)}{items.length === 0 && <tr><td colSpan={7} className="list-empty">No matching donors.</td></tr>}</tbody>
             </table></div>}
             <ListFooter page={page} totalPages={totalPages} total={total} pageSize={50} shown={items.length} loading={loading} onPage={setPage} />
           </section>

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Users, X } from 'lucide-react';
+import { ColumnTh, ColumnFilterChips, sortFilterRows, useListColumns } from '../components/ColumnTh';
 import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { FundraiserAllocationEditor, type FundraiserAllocationDraft } from '../components/FundraiserAllocationEditor';
@@ -54,7 +55,9 @@ export const OnlineFundraisers: React.FC = () => {
   useEffect(() => { void load(); return startLiveRefresh(() => void load(true)); }, [load]);
   useEffect(() => { fetch('/api/v3/accounts?limit=100&types=asset,liability&sort=name').then(response => response.json()).then(data => { if (data.success) setAccounts(data.items || []); }).catch(() => undefined); }, []);
 
-  const shown = useMemo(() => { const q = search.trim().toLowerCase(); return q ? fundraisers.filter(item => [item.name, item.phone, item.email].join(' ').toLowerCase().includes(q)) : fundraisers; }, [fundraisers, search]);
+  const cols = useListColumns('', 'asc');
+
+  const shown = sortFilterRows(useMemo(() => { const q = search.trim().toLowerCase(); return q ? fundraisers.filter(item => [item.name, item.phone, item.email].join(' ').toLowerCase().includes(q)) : fundraisers; }, [fundraisers, search]), cols, { name: 'text', phone: 'text', commission: 'number', raised: 'number', earned: 'number', paid: 'number', owe: 'number' }, (item: any, key) => key === 'commission' ? item.percentage : key === 'raised' ? item.totalRaised : key === 'earned' ? item.commissionEarned : key === 'paid' ? item.commissionPaid : key === 'owe' ? item.balanceOwed : item[key]);
   const totals = useMemo(() => fundraisers.reduce((sum, item) => ({ earned: sum.earned + Number(item.commissionEarned || 0), paid: sum.paid + Number(item.commissionPaid || 0), owed: sum.owed + Number(item.balanceOwed || 0) }), { earned: 0, paid: 0, owed: 0 }), [fundraisers]);
   const nameOf = (id: string) => fundraisers.find(item => item.id === id)?.name || 'Unknown';
 
@@ -95,7 +98,7 @@ export const OnlineFundraisers: React.FC = () => {
     <div className="list-body">
     <ListToolbar end={tab === 'fundraisers' ? <NewButton onClick={() => { setError(''); setEditing({ percentage: 10 }); }}>New Fundraiser</NewButton> : <NewButton disabled={!fundraisers.length} onClick={() => { setError(''); setEditingTeam({ allocations: [] }); }}>New Team</NewButton>}>
       {tab === 'fundraisers' && <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search fundraisers" />}
-      {tab === 'fundraisers' && search && <ResetLink onClick={() => setSearch('')} />}
+      {tab === 'fundraisers' && (search || cols.hasFilters) && <ResetLink onClick={() => { setSearch(''); cols.clearFilters(); }} />}
     </ListToolbar>
     <div className="fundraiser-totals">
       <div><span>Commission earned</span><strong>{money(totals.earned)}</strong></div>
@@ -105,8 +108,9 @@ export const OnlineFundraisers: React.FC = () => {
     {notice && <div className="list-notice ok">{notice}</div>}
     {error && !editing && !editingTeam && !paying && <div className="list-notice bad">{error}</div>}
 
+    {tab === 'fundraisers' && <ColumnFilterChips cols={cols} />}
     {tab === 'fundraisers' && <section className="list-table">
-      {loading ? <div className="list-loading">Loading fundraisers…</div> : <div className="list-scroll"><table><thead><tr><th>Name</th><th>Phone</th><th style={{ textAlign: 'right' }}>Commission</th><th style={{ textAlign: 'right' }}>Raised</th><th style={{ textAlign: 'right' }}>Earned</th><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>We owe</th><th className="row-actions" /></tr></thead><tbody>
+      {loading ? <div className="list-loading">Loading fundraisers…</div> : <div className="list-scroll"><table><thead><tr><ColumnTh cols={cols} column="name" label="Name"/><ColumnTh cols={cols} column="phone" label="Phone"/><ColumnTh cols={cols} column="commission" label="Commission" kind="number" align="right"/><ColumnTh cols={cols} column="raised" label="Raised" kind="number" align="right"/><ColumnTh cols={cols} column="earned" label="Earned" kind="number" align="right"/><ColumnTh cols={cols} column="paid" label="Paid" kind="number" align="right"/><ColumnTh cols={cols} column="owe" label="We owe" kind="number" align="right"/><th className="row-actions" /></tr></thead><tbody>
         {shown.map(item => <tr key={item.id}>
           <td style={{ fontWeight: 600 }}>{item.name}</td><td>{item.phone ? <a href={`tel:${item.phone}`}>{item.phone}</a> : '—'}</td>
           <td style={{ textAlign: 'right' }}>{Number(item.percentage || 0)}%</td><td style={{ textAlign: 'right' }}>{money(item.totalRaised)}</td><td style={{ textAlign: 'right' }}>{money(item.commissionEarned)}</td><td style={{ textAlign: 'right' }}>{money(item.commissionPaid)}</td>

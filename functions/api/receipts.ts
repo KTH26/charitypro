@@ -6,6 +6,7 @@
  * Each receipt is saved (type 'receipts', id rcpt-<paymentId>), so you always see who got one and who did not.
  */
 import { getMessagingSettings, isEmail, sendEmail } from './messaging';
+import { textCol, dateCol, numCol, listColumns } from './list-columns';
 import { buildReceiptPdf, toBase64, type ReceiptFields } from './receipt-pdf';
 
 export type ReceiptSettings = { startDate: string; eligibleMethods: string[]; numberStart: number; emailSubject: string; emailMessage: string };
@@ -218,8 +219,10 @@ export const registerReceiptRoutes = (app: any, requirePermission: (c: any, perm
     const settings = await getReceiptSettings(c.env.DB);
     if (status === 'waiting') {
       const query = waitingQuery(settings, { from, to, search });
+      const list = listColumns(c, { date: dateCol("json_extract(p.data,'$.date')"), donor: textCol("json_extract(d.data,'$.name')"), email: textCol("json_extract(d.data,'$.email')"), method: textCol("json_extract(p.data,'$.method')"), amount: numCol("COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0)") }, 'date');
+      if (list.conditions.length) { query.where += ` AND ${list.conditions.join(' AND ')}`; query.binds.push(...list.bindings); }
       const [rows, totals] = await c.env.DB.batch([
-        c.env.DB.prepare(`SELECT p.id,p.data,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.email') AS donor_email,r.data AS receipt ${query.from} LEFT JOIN sync_records r ON r.type='receipts' AND r.id='rcpt-'||p.id AND r.is_deleted=0 WHERE ${query.where} ORDER BY json_extract(p.data,'$.date') DESC,p.id LIMIT ? OFFSET ?`).bind(...query.binds, limit, offset),
+        c.env.DB.prepare(`SELECT p.id,p.data,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.email') AS donor_email,r.data AS receipt ${query.from} LEFT JOIN sync_records r ON r.type='receipts' AND r.id='rcpt-'||p.id AND r.is_deleted=0 WHERE ${query.where} ORDER BY ${list.order},p.id LIMIT ? OFFSET ?`).bind(...query.binds, limit, offset),
         c.env.DB.prepare(`SELECT COUNT(*) AS count,SUM(CASE WHEN ${hasEmail} THEN 1 ELSE 0 END) AS with_email,COALESCE(SUM(COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0)),0) AS amount ${query.from} WHERE ${query.where}`).bind(...query.binds)
       ]);
       const total: any = totals.results?.[0] || {};
@@ -230,8 +233,10 @@ export const registerReceiptRoutes = (app: any, requirePermission: (c: any, perm
     if (search) { where += " AND lower(data) LIKE ?"; binds.push(`%${search}%`); }
     if (from) { where += " AND json_extract(data,'$.giftDate')>=?"; binds.push(from); }
     if (to) { where += " AND json_extract(data,'$.giftDate')<=?"; binds.push(to); }
+    const list = listColumns(c, { number: numCol("json_extract(data,'$.receiptNumber')"), giftDate: dateCol("json_extract(data,'$.giftDate')"), donor: textCol("json_extract(data,'$.donorName')"), method: textCol("json_extract(data,'$.method')"), amount: numCol("json_extract(data,'$.amount')"), sentTo: textCol("COALESCE(json_extract(data,'$.voidReason'),json_extract(data,'$.error'),json_extract(data,'$.sentTo'))") }, 'number');
+    if (list.conditions.length) { where += ` AND ${list.conditions.join(' AND ')}`; binds.push(...list.bindings); }
     const [rows, totals] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT data FROM sync_records WHERE ${where} ORDER BY json_extract(data,'$.receiptNumber') DESC LIMIT ? OFFSET ?`).bind(...binds, limit, offset),
+      c.env.DB.prepare(`SELECT data FROM sync_records WHERE ${where} ORDER BY ${list.order} LIMIT ? OFFSET ?`).bind(...binds, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(json_extract(data,'$.amount')),0) AS amount FROM sync_records WHERE ${where}`).bind(...binds)
     ]);
     const total: any = totals.results?.[0] || {};
