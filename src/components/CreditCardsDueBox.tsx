@@ -4,7 +4,8 @@ import { startLiveRefresh } from '../utils/liveUpdates';
 
 type CardDue = { id: string; name: string; currency: string; needsSetup: boolean; dueDate: string; statementDate: string; periodStart: string; amountDue: number; periodCharges: number; balance: number };
 
-type Expected = { method: string; currency: string; amount: number; count: number };
+type ExpectedEntry = { date: string; donorId: string; donorName: string; amount: number; source: 'schedule' | 'waiting'; frequency?: string; chargedBy?: string };
+type Expected = { method: string; currency: string; amount: number; count: number; entries?: ExpectedEntry[] };
 const METHOD_NAMES: Record<string, string> = { credit_card: 'Credit card', card: 'Credit card', cash: 'Cash', check: 'Checks', vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', e_transfer: 'E-transfer', ach: 'ACH', wire: 'Wire', other: 'Other' };
 const endOfMonth = () => { const now = new Date(); const last = new Date(now.getFullYear(), now.getMonth() + 1, 0); return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`; };
 const money = (value: number, currency = 'CAD') => `${currency} $${Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -31,6 +32,7 @@ export const CreditCardsDueBox: React.FC = () => {
   useEffect(() => { void load(); }, [load]);
   // What is scheduled to come in up to the next card due date (the first card that still has something to pay).
   const [expected, setExpected] = useState<Expected[] | null>(null);
+  const [opened, setOpened] = useState<Expected | null>(null);
   const upcoming = items.filter(item => !item.needsSetup && item.dueDate && item.dueDate >= today());
   const byDate = (upcoming.filter(item => item.amountDue > 0)[0] || upcoming[0])?.dueDate || endOfMonth();
   useEffect(() => {
@@ -65,9 +67,22 @@ export const CreditCardsDueBox: React.FC = () => {
     {expected && <div style={{ borderTop: '1px solid var(--border)' }}>
       <div style={{ padding: '12px 16px 4px', fontSize: 13, fontWeight: 700, color: 'var(--navy)' }}>Expected to come in by {niceDate(byDate)}</div>
       {expected.length === 0 ? <div style={{ padding: '4px 16px 14px', color: 'var(--text-muted)', fontSize: 13 }}>Nothing scheduled.</div> : <table className="loans-table"><tbody>
-        {expected.map(item => <tr key={`${item.method}-${item.currency}`}><td style={{ fontWeight: 600, padding: '5px 16px' }}>{METHOD_NAMES[item.method] || item.method.replace(/_/g, ' ')}{item.currency === 'USD' ? ' (USD)' : ''} <small style={{ color: 'var(--text-muted)', fontWeight: 500 }}>· {item.count} payment{item.count === 1 ? '' : 's'}</small></td><td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--green)', padding: '5px 16px' }}>{money(item.amount, item.currency)}</td></tr>)}
+        {expected.map(item => <tr key={`${item.method}-${item.currency}`} onClick={() => setOpened(item)} style={{ cursor: 'pointer' }} title="Click to see the payments"><td style={{ fontWeight: 600, padding: '5px 16px' }}>{METHOD_NAMES[item.method] || item.method.replace(/_/g, ' ')}{item.currency === 'USD' ? ' (USD)' : ''} <small style={{ color: 'var(--text-muted)', fontWeight: 500 }}>· {item.count} payment{item.count === 1 ? '' : 's'}</small></td><td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--green)', padding: '5px 16px' }}>{money(item.amount, item.currency)}</td></tr>)}
         {(['CAD', 'USD'] as const).filter(currency => expected.some(item => item.currency === currency)).map(currency => <tr key={`total-${currency}`} style={{ fontWeight: 700, borderTop: '1px solid var(--border)' }}><td style={{ padding: '7px 16px' }}>Total {currency}</td><td style={{ textAlign: 'right', whiteSpace: 'nowrap', padding: '7px 16px' }}>{money(expected.filter(item => item.currency === currency).reduce((sum, item) => sum + item.amount, 0), currency)}</td></tr>)}
       </tbody></table>}
     </div>}
+    {opened && <div className="modal-overlay" onClick={() => setOpened(null)}><div className="modal" onClick={event => event.stopPropagation()} style={{ maxWidth: 760, width: '94%' }}>
+      <div className="modal-header"><div><h2 style={{ margin: 0 }}>{METHOD_NAMES[opened.method] || opened.method.replace(/_/g, ' ')}{opened.currency === 'USD' ? ' (USD)' : ''}: {money(opened.amount, opened.currency)}</h2><small style={{ color: 'var(--text-muted)' }}>{opened.count} payment{opened.count === 1 ? '' : 's'} expected from {niceDate(today())} to {niceDate(byDate)}</small></div><button className="modal-close" onClick={() => setOpened(null)}>×</button></div>
+      <div className="modal-body"><div className="table-container" style={{ maxHeight: '60vh', overflow: 'auto' }}><table>
+        <thead><tr><th>Date</th><th>Donor</th><th>From</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+        <tbody>{(opened.entries || []).map((entry, index) => <tr key={index}>
+          <td style={{ whiteSpace: 'nowrap' }}>{niceDate(entry.date)}</td>
+          <td style={{ fontWeight: 600 }}>{entry.donorName}</td>
+          <td style={{ color: 'var(--text-muted)' }}>{entry.source === 'waiting' ? 'Waiting payment' : `Schedule, ${entry.frequency || 'monthly'}${entry.chargedBy ? ` (${entry.chargedBy === 'sola' ? 'Sola' : entry.chargedBy === 'donorfuse' ? 'DonorFuse' : entry.chargedBy === 'stripe' ? 'Stripe' : entry.chargedBy === 'charitypro' ? 'CharityPro' : entry.chargedBy})` : ''}`}</td>
+          <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{money(entry.amount, opened.currency)}</td>
+        </tr>)}</tbody>
+        <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={3}>Total ({opened.count})</td><td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{money(opened.amount, opened.currency)}</td></tr></tfoot>
+      </table></div></div>
+    </div></div>}
   </section>;
 };

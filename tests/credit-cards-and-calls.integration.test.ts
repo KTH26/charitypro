@@ -447,6 +447,11 @@ describe('loans paid back monthly', () => {
     expect([200, 201]).toContain(paid.status);
     const after = await call('GET', '/v3/loans-payable?today=2026-11-21');
     expect(after.body.items).toEqual([expect.objectContaining({ monthly: true, remaining: 200, dueDate: '2026-12-25', totalOwed: 800 })]);
+    // Click the loan: money in and every payment made back.
+    const history = await call('GET', '/v3/loans-payable/loan/history');
+    expect(history.body).toMatchObject({ totalBorrowed: 1000, totalPaid: 200, owed: 800, account: { name: 'Gemach loan', loanMonthlyPayment: 200, loanPaymentDay: 25 } });
+    expect(history.body.borrowed).toEqual([expect.objectContaining({ description: 'Starting balance', amount: 1000 })]);
+    expect(history.body.payments).toEqual([expect.objectContaining({ date: '2026-11-20', amount: 200, recordType: 'accountTransfers' })]);
   });
 });
 
@@ -461,10 +466,10 @@ describe('expected to come in (credit cards box)', () => {
     seed(db, 'transactions', 'inst', { donorId: 'd1', amount: 150, currency: 'CAD', method: 'vouchers', date: '2026-12-01', type: 'pending' });
     const result = await call('GET', '/v3/expected-income?from=2026-11-19&to=2026-12-15');
     expect(result.body.items).toEqual([
-      { method: 'credit_card', currency: 'CAD', amount: 400, count: 4 }, // Nov 20, 27, Dec 4, 11
-      { method: 'credit_card', currency: 'USD', amount: 50, count: 1 },
-      { method: 'vouchers', currency: 'CAD', amount: 150, count: 1 },
-      { method: 'cash', currency: 'CAD', amount: 36, count: 1 },
+      expect.objectContaining({ method: 'credit_card', currency: 'CAD', amount: 400, count: 4 }), // Nov 20, 27, Dec 4, 11
+      expect.objectContaining({ method: 'credit_card', currency: 'USD', amount: 50, count: 1 }),
+      expect.objectContaining({ method: 'vouchers', currency: 'CAD', amount: 150, count: 1 }),
+      expect.objectContaining({ method: 'cash', currency: 'CAD', amount: 36, count: 1 }),
     ]);
   });
 });

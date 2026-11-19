@@ -165,7 +165,7 @@ export const monthlyLoanPayments = (result: { items: any[]; accounts: any[] }, l
 };
 
 type LiabilityAccount = { id: string; name: string; currency: string; data: any; revision: number };
-type LiabilityPayment = { date: string; amount: number; refund?: boolean };
+type LiabilityPayment = { date: string; amount: number; refund?: boolean; description?: string; recordType?: string; recordId?: string };
 /**
  * Reads every movement in and out of the given liability accounts (loans or credit cards).
  * charges = money that came OUT of the account (adds to what is owed).
@@ -188,9 +188,9 @@ const loadLiabilityMovements = async (db: any, accounts: LiabilityAccount[]) => 
   const rawRate = rateRow ? Number(parseSetting((rateRow as any).data, 1.35)) : 1.35;
   const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.35;
   const byId = new Map(accounts.map(account => [account.id, account]));
-  const pay = (accountId: string, date: string, amount: number, refund = false) => { if (byId.has(accountId) && amount) payments.set(accountId, [...(payments.get(accountId) || []), { date, amount, ...(refund ? { refund: true } : {}) }]); };
+  const pay = (accountId: string, date: string, amount: number, refund = false, about: { description?: string; recordType?: string; recordId?: string } = {}) => { if (byId.has(accountId) && amount) payments.set(accountId, [...(payments.get(accountId) || []), { date, amount, ...(refund ? { refund: true } : {}), ...about }]); };
   // A negative charge (for example a refund put back on a credit card) lowers what is owed, like a payment.
-  const charge = (accountId: string, event: LoanEvent) => { if (!byId.has(accountId)) return; if (event.amount > 0) charges.set(accountId, [...(charges.get(accountId) || []), event]); else if (event.amount < 0) pay(accountId, event.date, -event.amount, true); };
+  const charge = (accountId: string, event: LoanEvent) => { if (!byId.has(accountId)) return; if (event.amount > 0) charges.set(accountId, [...(charges.get(accountId) || []), event]); else if (event.amount < 0) pay(accountId, event.date, -event.amount, true, { description: event.description, recordType: event.recordType, recordId: event.recordId }); };
   for (const row of recordRows.results as any[]) {
     const data = parseSetting(row.data, {}); const type = String(row.type); const revision = Number(row.revision); const recordId = String(row.id);
     const amountFor = (accountId: string) => {
@@ -203,16 +203,16 @@ const loadLiabilityMovements = async (db: any, accounts: LiabilityAccount[]) => 
     if (type === 'bills') {
       const date = String(data.dueDate || data.paidDate || '');
       if (data.sourceAccountId) charge(String(data.sourceAccountId), { recordType: 'bills', recordId, revision, date, description: String(data.vendor || 'Expense'), amount: amountFor(String(data.sourceAccountId)), dueDate });
-      if (data.creditAccountId) pay(String(data.creditAccountId), date, amountFor(String(data.creditAccountId)));
-      if (data.category) pay(String(data.category), date, amountFor(String(data.category)));
+      if (data.creditAccountId) pay(String(data.creditAccountId), date, amountFor(String(data.creditAccountId)), false, { description: String(data.vendor || 'Expense'), recordType: 'bills', recordId });
+      if (data.category) pay(String(data.category), date, amountFor(String(data.category)), false, { description: String(data.vendor || 'Expense'), recordType: 'bills', recordId });
     } else if (type === 'accountTransfers') {
       const date = String(data.date || '');
       if (data.fromAccountId) charge(String(data.fromAccountId), { recordType: 'accountTransfers', recordId, revision, date, description: String(data.notes || 'Transfer'), amount: amountFor(String(data.fromAccountId)), dueDate });
-      if (data.toAccountId) pay(String(data.toAccountId), date, amountFor(String(data.toAccountId)));
+      if (data.toAccountId) pay(String(data.toAccountId), date, amountFor(String(data.toAccountId)), false, { description: String(data.notes || 'Transfer'), recordType: 'accountTransfers', recordId });
     } else {
       const date = String(data.date || '');
       if (data.offsetAccountId) charge(String(data.offsetAccountId), { recordType: 'transactions', recordId, revision, date, description: String(data.notes || 'Payment'), amount: amountFor(String(data.offsetAccountId)), dueDate });
-      if (data.sourceAccountId) pay(String(data.sourceAccountId), date, amountFor(String(data.sourceAccountId)));
+      if (data.sourceAccountId) pay(String(data.sourceAccountId), date, amountFor(String(data.sourceAccountId)), false, { description: String(data.notes || 'Payment'), recordType: 'transactions', recordId });
     }
   }
   return { charges, payments };
@@ -1700,6 +1700,21 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     return c.json({ success: true, ...monthlyLoanPayments(calculateLoansPayable(loanAccounts, borrowed, repaid), loanAccounts, payments, today) }, 200, { 'Cache-Control': 'no-store' });
   });
 
+  // One loan: every time money came from it, and every payment made back.
+  app.get('/v3/loans-payable/:accountId/history', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const row: any = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(String(c.req.param('accountId') || '')).first();
+    if (!row) return c.json({ success: false, error: 'Loan not found.' }, 404);
+    const data = parseSetting(row.data, {}); const account = { id: String(row.id), name: String(data.name || 'Loan'), currency: data.currency === 'USD' ? 'USD' : 'CAD', data, revision: Number(row.revision) };
+    const { charges, payments } = await loadLiabilityMovements(c.env.DB, [account]);
+    const borrowed = [...(charges.get(account.id) || [])]; const opening = Number(data.startingBalance || 0);
+    if (opening > 0) borrowed.unshift({ recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Starting balance', amount: opening, dueDate: isoDate(data.loanDueDate) });
+    const paid = [...(payments.get(account.id) || [])]; if (opening < 0) paid.unshift({ date: '', amount: -opening, description: 'Starting balance' });
+    const round = (value: number) => Math.round(value * 100) / 100;
+    const totalBorrowed = round(borrowed.reduce((sum, item) => sum + item.amount, 0)); const totalPaid = round(paid.reduce((sum, item) => sum + item.amount, 0));
+    return c.json({ success: true, account: { id: account.id, name: account.name, currency: account.currency, loanMonthlyPayment: Number(data.loanMonthlyPayment || 0) || undefined, loanPaymentDay: Number(data.loanPaymentDay || 0) || undefined }, borrowed: borrowed.sort((a, b) => (a.date || '').localeCompare(b.date || '')), payments: paid.sort((a, b) => (a.date || '').localeCompare(b.date || '')), totalBorrowed, totalPaid, owed: round(totalBorrowed - totalPaid) }, 200, { 'Cache-Control': 'no-store' });
+  });
+
   app.get('/v3/credit-cards-due', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
@@ -1721,20 +1736,27 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND COALESCE(json_extract(data,'$.active'),0)=1"),
       c.env.DB.prepare("SELECT data FROM sync_records WHERE type='transactions' AND is_deleted=0 AND lower(json_extract(data,'$.type'))='pending' AND json_extract(data,'$.date') BETWEEN ? AND ?").bind(from, to),
     ]);
-    const totals = new Map<string, { method: string; currency: string; amount: number; count: number }>();
-    const add = (method: unknown, currency: unknown, amount: number) => { const m = String(method || 'other').toLowerCase().replace(/[\s-]+/g, '_') || 'other'; const cur = currency === 'USD' ? 'USD' : 'CAD'; const key = `${m}|${cur}`; const entry = totals.get(key) || { method: m, currency: cur, amount: 0, count: 0 }; entry.amount += amount; entry.count++; totals.set(key, entry); };
+    // Each line keeps the payments it is made of, so staff can open it and check the calculation.
+    type Entry = { date: string; donorId: string; amount: number; source: 'schedule' | 'waiting'; frequency?: string; scheduleId?: string; paymentId?: string; chargedBy?: string };
+    const totals = new Map<string, { method: string; currency: string; amount: number; count: number; entries: Entry[] }>();
+    const add = (method: unknown, currency: unknown, amount: number, entry: Entry) => { const m = String(method || 'other').toLowerCase().replace(/[\s-]+/g, '_') || 'other'; const cur = currency === 'USD' ? 'USD' : 'CAD'; const key = `${m}|${cur}`; const line = totals.get(key) || { method: m, currency: cur, amount: 0, count: 0, entries: [] }; line.amount += amount; line.count++; line.entries.push(entry); totals.set(key, line); };
     for (const row of scheduleRows.results as any[]) {
       const schedule = parseSetting(row.data, {}); const amount = Number(schedule.amount || 0); if (!(amount > 0)) continue;
       const endDate = isoDate(schedule.endDate); let occurrence = isoDate(schedule.nextDate); let guard = 0;
+      const chargedBy = String(schedule.chargedBy || (schedule.solaScheduleId ? 'sola' : ''));
       while (occurrence && occurrence <= to && (!endDate || occurrence <= endDate) && guard++ < 400) {
-        if (occurrence >= from) add(schedule.method || 'credit_card', schedule.currency, amount);
+        if (occurrence >= from) add(schedule.method || 'credit_card', schedule.currency, amount, { date: occurrence, donorId: String(schedule.donorId || ''), amount, source: 'schedule', frequency: `${Number(schedule.intervalCount) > 1 ? `every ${schedule.intervalCount} ` : ''}${String(schedule.frequency || 'monthly')}`, scheduleId: String(row.id), ...(chargedBy ? { chargedBy } : {}) });
         const next = addUtc(occurrence, String(schedule.frequency || 'monthly'), schedule.intervalCount); if (!next || next <= occurrence) break; occurrence = next;
       }
     }
-    for (const row of pendingRows.results as any[]) { const payment = parseSetting(row.data, {}); const amount = Number(payment.amount || 0); if (amount > 0) add(payment.method, payment.currency, amount); }
+    for (const row of pendingRows.results as any[]) { const payment = parseSetting(row.data, {}); const amount = Number(payment.amount || 0); if (amount > 0) add(payment.method, payment.currency, amount, { date: String(payment.date || ''), donorId: String(payment.donorId || ''), amount, source: 'waiting', paymentId: String(row.id) }); }
+    // Donor names for the lists.
+    const donorIds = [...new Set([...totals.values()].flatMap(line => line.entries.map(entry => entry.donorId)).filter(Boolean))];
+    const names = new Map<string, string>();
+    if (donorIds.length) { const donorRows = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='donors' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(donorIds)).all(); for (const row of donorRows.results as any[]) { const donor = parseSetting(row.data, {}); const hebrew = donorDisplayName(donor); names.set(String(row.id), [donor.name, hebrew && hebrew !== donor.name ? hebrew : ''].filter(Boolean).join(' · ')); } }
     // Biggest method first; the USD line right under the same method's CAD line.
     const methodTotal = new Map<string, number>(); for (const item of totals.values()) methodTotal.set(item.method, (methodTotal.get(item.method) || 0) + item.amount);
-    const items = [...totals.values()].map(item => ({ ...item, amount: Math.round(item.amount * 100) / 100 })).sort((a, b) => (methodTotal.get(b.method)! - methodTotal.get(a.method)!) || a.method.localeCompare(b.method) || (a.currency === 'CAD' ? -1 : 1));
+    const items = [...totals.values()].map(item => ({ ...item, amount: Math.round(item.amount * 100) / 100, entries: item.entries.map(entry => ({ ...entry, donorName: names.get(entry.donorId) || 'Unknown donor' })).sort((a, b) => a.date.localeCompare(b.date) || a.donorName.localeCompare(b.donorName)) })).sort((a, b) => (methodTotal.get(b.method)! - methodTotal.get(a.method)!) || a.method.localeCompare(b.method) || (a.currency === 'CAD' ? -1 : 1));
     return c.json({ success: true, from, to, items }, 200, { 'Cache-Control': 'no-store' });
   });
 
