@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Hono } from 'hono';
 import { bankSyncStartDate, buildBankFeedSaveStatements, registerServerDataRoutes, creditCardCycle, loanReminders, buildReminderDigest } from '../functions/api/server-data';
 import { loadGift } from '../functions/api/receipts';
+import { buildReportRows } from '../functions/api/report-data';
 
 const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
 
@@ -568,5 +569,64 @@ describe('sort and filter on every column', () => {
     await call('POST', '/v3/bills', { requestId: crypto.randomUUID(), vendor: 'Store B', amount: 300, dueDate: '2026-11-02', paidDate: '2026-11-02', status: 'paid', category: 'supplies', sourceAccountId: 'visa' });
     expect((await call('GET', '/v3/vendors?f_total=100..&limit=50')).body.items.map((item: any) => item.vendor ?? item.name)).toEqual(['Store B']);
     expect((await call('GET', '/v3/bills?f_vendor=%5Estore%20a&limit=50')).body.items.map((item: any) => item.vendor)).toEqual(['Store A']);
+  });
+});
+
+describe('sub-campaigns', () => {
+  const subSetup = () => {
+    const ctx = setup();
+    seed(ctx.db, 'campaigns', 'main', { name: 'Campaign 2025', year: 2025, startDate: '2025-03-01', endDate: '2026-02-28', currency: 'CAD', status: 'active' });
+    seed(ctx.db, 'campaigns', 'sub', { name: 'Addition', parentId: 'main', year: 2025, startDate: '2025-03-01', endDate: '2026-02-28', currency: 'CAD', status: 'active' });
+    seed(ctx.db, 'pledges', 'pm', { donorId: 'd1', amount: 1000, currency: 'CAD', date: '2025-05-01', campaignId: 'main' });
+    seed(ctx.db, 'pledges', 'ps', { donorId: 'd1', amount: 100, currency: 'CAD', date: '2025-06-01', campaignId: 'sub' });
+    seed(ctx.db, 'transactions', 'pay', { donorId: 'd1', amount: 100, currency: 'CAD', type: 'approved', date: '2025-06-02', method: 'cash', pledgeId: 'ps' });
+    seed(ctx.db, 'recurringPayments', 'sch', { donorId: 'd1', amount: 50, currency: 'CAD', frequency: 'monthly', nextDate: '2025-07-01', active: true, method: 'cash', pledgeId: 'pm' });
+    return ctx;
+  };
+  it('the main campaign counts its sub-campaign; the sub-campaign counts only its own', async () => {
+    const { db } = subSetup();
+    const rows = await buildReportRows(db as any, 'campaigns', '2025-07-01') as any[];
+    const main = rows.find(row => row.id === 'main'); const sub = rows.find(row => row.id === 'sub');
+    expect(main).toMatchObject({ pledges: 2, pledged: 1100, paid: 100, campaignIds: ['main', 'sub'] });
+    expect(sub).toMatchObject({ pledges: 1, pledged: 100, paid: 100, parentId: 'main', campaign: 'Campaign 2025 › Addition' });
+  });
+  it('saving or organizing keeps a pledge in its sub-campaign; a pledge can be put in a sub-campaign', async () => {
+    const { db, call } = subSetup();
+    const campaignOf = (id: string) => JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id=?").get(id) as any).data)).campaignId;
+    expect((await call('PUT', '/v3/records/pledges/ps', { revision: 1, data: { notes: 'changed' } })).status).toBe(200);
+    expect(campaignOf('ps')).toBe('sub');
+    await call('POST', '/v3/campaigns/assign-pledges');
+    expect(campaignOf('ps')).toBe('sub');
+    expect(campaignOf('pm')).toBe('main');
+    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 1, data: { campaignId: 'sub' } })).status).toBe(200);
+    expect(campaignOf('pm')).toBe('sub');
+    const made = await call('POST', '/v3/records/pledges', { data: { donorId: 'd1', amount: 5, currency: 'CAD', date: '2025-08-01', campaignId: 'c1' } });
+    expect(made.status).toBe(201);
+    expect(campaignOf(made.body.item.id)).toBe('main'); // a campaign that is not a sub-campaign of the date's campaign is not kept
+  });
+  it('the donor window shows the campaign of each pledge and payment, and the pledge each schedule pays', async () => {
+    const { call } = subSetup();
+    const profile = (await call('GET', '/v3/donors/d1/profile')).body;
+    expect(profile.pledges.find((item: any) => item.id === 'ps').campaignName).toBe('Campaign 2025 › Addition');
+    expect(profile.payments.find((item: any) => item.id === 'pay').campaignName).toBe('Campaign 2025 › Addition');
+    expect(profile.recurring[0].pledgeLabel).toBe('Pledge 2025-05-01 · CAD $1,000 · Campaign 2025');
+    const schedules = (await call('GET', '/v3/schedules?limit=50')).body.items;
+    expect(schedules[0].pledgeLabel).toBe('2025-05-01 · CAD $1,000 · Campaign 2025');
+  });
+});
+
+describe('special campaigns', () => {
+  it('a pledge put in a special campaign stays there; new pledges are never put in it by date', async () => {
+    const { db, call } = setup();
+    seed(db, 'campaigns', 'year', { name: 'Campaign 2025', year: 2025, startDate: '2025-03-01', endDate: '2026-02-28', currency: 'CAD', status: 'active' });
+    seed(db, 'campaigns', 'amb', { name: 'Ambulance 81', special: true, year: 2025, startDate: '2025-12-01', endDate: '2026-02-28', currency: 'CAD', status: 'active' });
+    const campaignOf = (id: string) => JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id=?").get(id) as any).data)).campaignId;
+    const special = await call('POST', '/v3/records/pledges', { data: { donorId: 'd1', amount: 10000, currency: 'CAD', date: '2025-12-10', campaignId: 'amb' } });
+    const normal = await call('POST', '/v3/records/pledges', { data: { donorId: 'd1', amount: 50, currency: 'CAD', date: '2025-12-11' } });
+    expect(campaignOf(special.body.item.id)).toBe('amb');
+    expect(campaignOf(normal.body.item.id)).toBe('year');
+    await call('POST', '/v3/campaigns/assign-pledges');
+    expect(campaignOf(special.body.item.id)).toBe('amb');
+    expect(campaignOf(normal.body.item.id)).toBe('year');
   });
 });

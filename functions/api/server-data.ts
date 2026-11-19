@@ -606,10 +606,17 @@ const requirePermission = (c: any, permission: string) => {
   return c.json({ success: false, error: `Forbidden: Missing permission ${permission}` }, 403);
 };
 
+/** The pledge's campaign: the main campaign of its date, or a sub-campaign of it when one was chosen. */
+export const pledgeCampaignId = async (db: any, mainId: string, wanted: unknown) => {
+  // The main campaign comes from the date. A chosen sub-campaign or special campaign (like a one-time drive) is kept.
+  const chosen = String(wanted || '');
+  if (chosen && chosen !== mainId) { const kept: any = await db.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0 AND (COALESCE(json_extract(data,'$.parentId'),'')<>'' OR COALESCE(json_extract(data,'$.special'),0) IN (1,'true'))").bind(chosen).first(); if (kept) return chosen; }
+  return mainId || null;
+};
 const campaignForPledgeDate = async (db: any, date: unknown) => {
   const pledgeDate = isoDate(date);
   if (!pledgeDate) return null;
-  return db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id LIMIT 1").bind(pledgeDate, pledgeDate).first();
+  return db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND COALESCE(json_extract(data,'$.parentId'),'')='' AND COALESCE(json_extract(data,'$.special'),0) IN (0,'false') AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id LIMIT 1").bind(pledgeDate, pledgeDate).first();
 };
 
 const selectPledgeForPaymentDate = (pledges: any[], campaigns: any[], donorId: unknown, date: unknown) => {
@@ -636,7 +643,7 @@ const pledgeForPaymentDate = async (db: any, donorId: unknown, date: unknown) =>
   if (!paymentDate || !donor) return null;
   const [pledgeRows,campaignRows]:any = await db.batch([
     db.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.date'),id").bind(donor),
-    db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,id").bind(paymentDate,paymentDate)
+    db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND COALESCE(json_extract(data,'$.parentId'),'')='' AND COALESCE(json_extract(data,'$.special'),0) IN (0,'false') AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,id").bind(paymentDate,paymentDate)
   ]);
   const pledges=(pledgeRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));
   const campaigns=(campaignRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));
@@ -1053,7 +1060,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
     if (type === 'pledges') {
       const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
-      record.campaignId = matchedCampaign ? String(matchedCampaign.id) : null;
+      // The main campaign comes from the date; a sub-campaign of that main campaign is kept when chosen.
+      record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId);
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -1152,7 +1160,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
     if (type === 'pledges') {
       const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
-      record.campaignId = matchedCampaign ? String(matchedCampaign.id) : null;
+      // The main campaign comes from the date; a sub-campaign of that main campaign is kept when chosen.
+      record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId);
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -1292,7 +1301,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id"),
       c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='pledges' AND is_deleted=0 ORDER BY id")
     ]);
-    const campaigns = campaignRows.results.map((row: any) => ({ id: String(row.id), ...parseSetting(row.data, {}) }));
+    // Only main campaigns are matched by date. A pledge in a sub-campaign of that main campaign (or in any campaign without dates) stays where it is.
+    const everyCampaign = campaignRows.results.map((row: any) => ({ id: String(row.id), ...parseSetting(row.data, {}) }));
+    const campaigns = everyCampaign.filter((item: any) => !item.parentId && item.special !== true);
+    const parentOf = new Map(everyCampaign.map((item: any) => [String(item.id), String(item.parentId || '')]));
+    // A pledge in a sub-campaign or a special campaign was put there on purpose: it is not moved by date.
+    const specialIds = new Set(everyCampaign.filter((item: any) => item.special === true).map((item: any) => String(item.id)));
+    const keptCampaign = (id: string) => Boolean(id) && (Boolean(parentOf.get(id)) || specialIds.has(id));
     const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
     let assigned = 0; let unchanged = 0; let unmatched = 0;
     const changes: any[] = [];
@@ -1300,7 +1315,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const pledge = parseSetting(row.data, {}); const date = isoDate(pledge.date);
       const campaign = date ? campaigns.find((item: any) => isoDate(item.startDate) <= date && isoDate(item.endDate) >= date) : null;
       if (!campaign) { unmatched += 1; continue; }
-      if (String(pledge.campaignId || '') === campaign.id) { unchanged += 1; continue; }
+      if (String(pledge.campaignId || '') === campaign.id || keptCampaign(String(pledge.campaignId || ''))) { unchanged += 1; continue; }
       const next = { ...pledge, id: String(row.id), campaignId: campaign.id }; const data = JSON.stringify(next); const revision = Number(row.revision) + 1; const operationId = `${mutationId}-${row.id}`;
       changes.push([
         c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='pledges' AND id=? AND revision=? AND is_deleted=0").bind(data, revision, now, operationId, row.id, row.revision),
@@ -1323,15 +1338,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const offset = (page - 1) * limit;
     const search = String(c.req.query('search') || '').trim().toLowerCase();
     const from=String(c.req.query('from')||'');const to=String(c.req.query('to')||'');const conditions=["p.type='pledges'",'p.is_deleted=0'];const bindings:any[]=[];if(search){conditions.push("(lower(p.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)");bindings.push(`%${search}%`,`%${search}%`);}if(from){conditions.push("json_extract(p.data,'$.date')>=?");bindings.push(from);}if(to){conditions.push("json_extract(p.data,'$.date')<=?");bindings.push(to);}
-    const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records cpg ON cpg.type='campaigns' AND cpg.id=json_extract(p.data,'$.campaignId') AND cpg.is_deleted=0";
+    const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(p.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records cpg ON cpg.type='campaigns' AND cpg.id=json_extract(p.data,'$.campaignId') AND cpg.is_deleted=0 LEFT JOIN sync_records pcg ON pcg.type='campaigns' AND pcg.id=json_extract(cpg.data,'$.parentId') AND pcg.is_deleted=0";
     const yiddish = "trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),''))";
-    const columns = { date: dateCol("json_extract(p.data,'$.date')"), donor: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), campaign: textCol("COALESCE(json_extract(cpg.data,'$.name'),'Legacy / Unassigned')"), tags: textCol("json_extract(p.data,'$.tags')"), amount: numCol("COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0)"), currency: textCol("json_extract(p.data,'$.currency')"), notes: textCol("json_extract(p.data,'$.notes')") };
+    const columns = { date: dateCol("json_extract(p.data,'$.date')"), donor: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), campaign: textCol("COALESCE((CASE WHEN pcg.id IS NOT NULL THEN json_extract(pcg.data,'$.name')||' › '||json_extract(cpg.data,'$.name') ELSE json_extract(cpg.data,'$.name') END),'Legacy / Unassigned')"), tags: textCol("json_extract(p.data,'$.tags')"), amount: numCol("COALESCE(json_extract(p.data,'$.amountCAD'),json_extract(p.data,'$.amount'),0)"), currency: textCol("json_extract(p.data,'$.currency')"), notes: textCol("json_extract(p.data,'$.notes')") };
     const list = listColumns(c, columns, 'date'); conditions.push(...list.conditions); bindings.push(...list.bindings);
     const where = conditions.join(' AND ');
     // Paid, Scheduled and Open balance are worked out in code: to sort or filter on them, every matching pledge is worked out first.
     const computedKeys = ['paid', 'scheduled', 'balance'];
     const computed = usesColumns(c, computedKeys);
-    const select = `SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.preTitle') AS donor_pre_title,json_extract(d.data,'$.hebFirstName') AS donor_heb_first,json_extract(d.data,'$.hebLastName') AS donor_heb_last,json_extract(d.data,'$.title') AS donor_title,json_extract(cpg.data,'$.name') AS campaign_name FROM sync_records p ${join} WHERE ${where} ORDER BY ${list.order},p.id DESC`;
+    const select = `SELECT p.id,p.data,p.revision,p.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(d.data,'$.preTitle') AS donor_pre_title,json_extract(d.data,'$.hebFirstName') AS donor_heb_first,json_extract(d.data,'$.hebLastName') AS donor_heb_last,json_extract(d.data,'$.title') AS donor_title,(CASE WHEN pcg.id IS NOT NULL THEN json_extract(pcg.data,'$.name')||' › '||json_extract(cpg.data,'$.name') ELSE json_extract(cpg.data,'$.name') END) AS campaign_name FROM sync_records p ${join} WHERE ${where} ORDER BY ${list.order},p.id DESC`;
     const [listResult, countResult] = await c.env.DB.batch([
       computed ? c.env.DB.prepare(select).bind(...bindings) : c.env.DB.prepare(`${select} LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records p ${join} WHERE ${where}`).bind(...bindings)
@@ -1437,17 +1452,18 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (status === 'paused') conditions.push("COALESCE(json_extract(r.data,'$.active'),0)=0");
     if (search) { conditions.push("(lower(r.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ?)"); bindings.push(`%${search}%`, `%${search}%`); }
     if(from){conditions.push("json_extract(r.data,'$.nextDate')>=?");bindings.push(from);}if(to){conditions.push("json_extract(r.data,'$.nextDate')<=?");bindings.push(to);}
-    const columns = { nextDate: dateCol("json_extract(r.data,'$.nextDate')"), donor: textCol("json_extract(d.data,'$.name')"), frequency: textCol("json_extract(r.data,'$.frequency')"), paymentsLeft: numCol("json_extract(r.data,'$.paymentsRemaining')"), endDate: dateCol("json_extract(r.data,'$.endDate')"), method: textCol("json_extract(r.data,'$.method')"), status: textCol("CASE WHEN COALESCE(json_extract(r.data,'$.active'),0)=1 THEN 'Active' ELSE 'Paused' END"), amount: numCol("COALESCE(json_extract(r.data,'$.amountCAD'),json_extract(r.data,'$.amount'),0)") };
+    const columns = { pledge: textCol("CASE WHEN pl.id IS NULL THEN 'Any open pledge' ELSE COALESCE(json_extract(pl.data,'$.date'),'')||' '||COALESCE((CASE WHEN ppc.id IS NOT NULL THEN json_extract(ppc.data,'$.name')||' › '||json_extract(pc.data,'$.name') ELSE json_extract(pc.data,'$.name') END),'') END"), nextDate: dateCol("json_extract(r.data,'$.nextDate')"), donor: textCol("json_extract(d.data,'$.name')"), frequency: textCol("json_extract(r.data,'$.frequency')"), paymentsLeft: numCol("json_extract(r.data,'$.paymentsRemaining')"), endDate: dateCol("json_extract(r.data,'$.endDate')"), method: textCol("json_extract(r.data,'$.method')"), status: textCol("CASE WHEN COALESCE(json_extract(r.data,'$.active'),0)=1 THEN 'Active' ELSE 'Paused' END"), amount: numCol("COALESCE(json_extract(r.data,'$.amountCAD'),json_extract(r.data,'$.amount'),0)") };
     const list = listColumns(c, columns, 'nextDate'); conditions.push(...list.conditions); bindings.push(...list.bindings);
     const where = conditions.join(' AND ');
-    const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0";
+    // The pledge each schedule pays (and its campaign).
+    const join = "LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(r.data,'$.donorId') AND d.is_deleted=0 LEFT JOIN sync_records pl ON pl.type='pledges' AND pl.id=json_extract(r.data,'$.pledgeId') AND pl.is_deleted=0 LEFT JOIN sync_records pc ON pc.type='campaigns' AND pc.id=json_extract(pl.data,'$.campaignId') AND pc.is_deleted=0 LEFT JOIN sync_records ppc ON ppc.type='campaigns' AND ppc.id=json_extract(pc.data,'$.parentId') AND ppc.is_deleted=0";
     const order = list.order;
     const [listResult, countResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT r.id,r.data,r.revision,r.updated_at,json_extract(d.data,'$.name') AS donor_name FROM sync_records r ${join} WHERE ${where} ORDER BY ${order},r.id LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
+      c.env.DB.prepare(`SELECT r.id,r.data,r.revision,r.updated_at,json_extract(d.data,'$.name') AS donor_name,pl.id AS pledge_id,json_extract(pl.data,'$.date') AS pledge_date,json_extract(pl.data,'$.amount') AS pledge_amount,json_extract(pl.data,'$.currency') AS pledge_currency,(CASE WHEN ppc.id IS NOT NULL THEN json_extract(ppc.data,'$.name')||' › '||json_extract(pc.data,'$.name') ELSE json_extract(pc.data,'$.name') END) AS pledge_campaign FROM sync_records r ${join} WHERE ${where} ORDER BY ${order},r.id LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count FROM sync_records r ${join} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
-    return c.json({ success: true, items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor' })), page, limit, total, totalPages: Math.ceil(total / limit) });
+    return c.json({ success: true, items: listResult.results.map((row: any) => { const item = parseRecord(row); return { ...item, donorName: row.donor_name || 'Unknown Donor', pledgeLabel: row.pledge_id ? `${row.pledge_date || ''} · ${row.pledge_currency || 'CAD'} $${Number(row.pledge_amount || 0).toLocaleString('en-CA', { maximumFractionDigits: 2 })}${row.pledge_campaign ? ` · ${row.pledge_campaign}` : ''}` : item.pledgeId ? 'Pledge not found' : 'Any open pledge (automatic)' }; }), page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.delete('/v3/schedules', async (c: any) => {
@@ -2572,7 +2588,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
 
   app.post('/v3/system/data-safety/auto-link-payments', async (c: any) => {
     const denied=requirePermission(c,'system.manage');if(denied)return denied;const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const mutationId=`v3-auto-link-pledges-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
-    const [rows,pledgeRows,campaignRows]:any=await c.env.DB.batch([c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 AND COALESCE(json_extract(data,'$.pledgeId'),'')='' AND COALESCE(json_extract(data,'$.pledgeAllocations'),'[]')='[]' AND COALESCE(json_extract(data,'$.noPledge'),0)=0 ORDER BY id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 ORDER BY json_extract(data,'$.date'),id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 ORDER BY json_extract(data,'$.startDate'),id")]);const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');let linked=0;let unmatched=0;const pledges=(pledgeRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const campaigns=(campaignRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const updates:any[]=[];
+    const [rows,pledgeRows,campaignRows]:any=await c.env.DB.batch([c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 AND COALESCE(json_extract(data,'$.pledgeId'),'')='' AND COALESCE(json_extract(data,'$.pledgeAllocations'),'[]')='[]' AND COALESCE(json_extract(data,'$.noPledge'),0)=0 ORDER BY id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 ORDER BY json_extract(data,'$.date'),id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND COALESCE(json_extract(data,'$.parentId'),'')='' AND COALESCE(json_extract(data,'$.special'),0) IN (0,'false') ORDER BY json_extract(data,'$.startDate'),id")]);const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');let linked=0;let unmatched=0;const pledges=(pledgeRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const campaigns=(campaignRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const updates:any[]=[];
     for(const row of rows.results as any[]){const item=parseSetting(row.data,{});const pledge:any=selectPledgeForPaymentDate(pledges,campaigns,item.donorId,item.date);if(!pledge){unmatched++;continue;}const next={...item,pledgeId:pledge.id,pledgeAutoLinked:true,pledgeAutoLinkedAt:new Date(now).toISOString()};const data=JSON.stringify(next);const revision=Number(row.revision)+1;const operationId=`${mutationId}-${row.id}`;updates.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(row.id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id,row.revision,revision,row.data,data,userId,userEmail,now,mutationId,operationId,'Automatically linked payment to pledge by campaign year'));linked++;}
     for(let index=0;index<updates.length;index+=75)await c.env.DB.batch(updates.slice(index,index+75));
     const result={success:true,reviewed:rows.results.length,linked,unmatched};await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now).run();return c.json(result);
@@ -3364,10 +3380,25 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const scheduledTotal = calculations.reduce((total, item) => total + Number(item.scheduled || 0), 0);
     const pledgeBalance = calculations.reduce((total, item) => total + Number(item.balance || 0), 0);
     const pledgeStats: any = pledgeSummary.results[0] || {};
+    // Which campaign each pledge and payment is in, and which pledge each recurring payment pays.
+    const [campaignRows, allPledgeRows] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0"),
+      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(id)
+    ]);
+    const campaignById = new Map((campaignRows.results as any[]).map(row => [String(row.id), parseSetting(row.data, {})]));
+    const campaignLabel = (campaignId: unknown) => { const item: any = campaignById.get(String(campaignId || '')); if (!item) return ''; const parent: any = item.parentId ? campaignById.get(String(item.parentId)) : null; return parent ? `${parent.name || ''} › ${item.name || ''}` : String(item.name || ''); };
+    const pledgeById = new Map((allPledgeRows.results as any[]).map(row => [String(row.id), { id: String(row.id), ...parseSetting(row.data, {}) }]));
+    const pledgeIdsOf = (payment: any) => { const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations.map((item: any) => String(item?.pledgeId || '')).filter(Boolean) : []; return allocations.length ? allocations : payment.pledgeId ? [String(payment.pledgeId)] : []; };
+    const pledgeLabel = (pledge: any) => `Pledge ${pledge.date || ''} · ${pledge.currency || 'CAD'} $${Number(pledge.amount || 0).toLocaleString('en-CA', { maximumFractionDigits: 2 })}${campaignLabel(pledge.campaignId) ? ` · ${campaignLabel(pledge.campaignId)}` : ''}`;
+    const withCampaigns = {
+      pledges: enrichedPledges.map((pledge: any) => ({ ...pledge, campaignName: campaignLabel(pledge.campaignId) || 'No campaign' })),
+      payments: paymentItems.slice(0, 50).map((payment: any) => { const names = [...new Set(pledgeIdsOf(payment).map((pledgeId: string) => campaignLabel(pledgeById.get(pledgeId)?.campaignId)).filter(Boolean))]; return { ...payment, campaignName: names.join(', ') || (pledgeIdsOf(payment).length ? 'No campaign' : 'Not on a pledge') }; }),
+      recurring: recurringItems.map((schedule: any) => { const pledge = schedule.pledgeId ? pledgeById.get(String(schedule.pledgeId)) : null; return { ...schedule, pledgeLabel: pledge ? pledgeLabel(pledge) : schedule.pledgeId ? 'Pledge not found' : 'Any open pledge (automatic)', campaignName: pledge ? campaignLabel(pledge.campaignId) : '' }; })
+    };
     return c.json({
       success: true,
       donor: { ...parseRecord(donor), totalGiven: approvedTotal },
-      payments: paymentItems.slice(0, 50), pledges: enrichedPledges, recurring: recurringItems, contacts: contacts.results.map((row:any)=>({...parseRecord(row),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')})),
+      payments: withCampaigns.payments, pledges: withCampaigns.pledges, recurring: withCampaigns.recurring, contacts: contacts.results.map((row:any)=>({...parseRecord(row),fundraiserName:String(row.fundraiser_name||''),campaignName:String(row.campaign_name||'')})),
       summary: { paymentCount: paymentItems.length, approvedTotal, declinedCount: paymentItems.filter(payment => payment.type === 'declined').length, pledgeCount: Number(pledgeStats.count || 0), pledgedTotal: Number(pledgeStats.total || 0), pledgePaidTotal, pledgePendingTotal, scheduledTotal, pledgeBalance, unappliedTotal: approvedTotal - pledgePaidTotal, recurringCount: recurringItems.length, activeRecurringCount: recurringItems.filter(item => item.active).length, activeRecurringTotal: scheduledTotal, contactCount: contacts.results.length }
     });
   });

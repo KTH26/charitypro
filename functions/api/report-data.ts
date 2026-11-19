@@ -71,6 +71,8 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
     return result;
   };
   const campaigns = byId('campaigns');
+  // A sub-campaign shows as 'Main › Sub'.
+  const campaignName = (id: unknown) => { const item: any = campaigns.get(String(id || '')); if (!item) return ''; const parent: any = item.parentId ? campaigns.get(String(item.parentId)) : null; return parent ? `${parent.name || ''} › ${item.name || ''}` : String(item.name || ''); };
 
   if (source === 'payments') {
     const pledges = byId('pledges');
@@ -85,7 +87,7 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
     const pledgeTagById = new Map(list('pledges').map(item => [String(item.id), item.tags]));
     return pledgeFinancials().map(item => {
       const balance = round(num(item.balance)); const periodEnd = day(item.periodEnd); const overdue = balance > 0.005 ? daysBetween(periodEnd, today) : 0;
-      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', phone: donors.get(String(item.donorId))?.phone || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: num(item.amountCAD ?? item.amount), paid: round(num(item.paid)), pending: round(num(item.pending)), scheduled: round(num(item.scheduled)), balance, open: balance > 0.005 ? 'Open' : 'Paid up', tags: tagList(pledgeTagById.get(String(item.id))).join(', '), periodEnd, daysPastPeriod: Math.max(0, overdue), aging: balance > 0.005 ? agingBucket(overdue) : '', category: item.category || '', campaign: campaigns.get(String(item.campaignId || ''))?.name || '', campaignId: campaigns.has(String(item.campaignId || '')) ? String(item.campaignId) : '', sponsor: item.sponsor || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
+      return { id: item.id, donorId: String(item.donorId || ''), date: day(item.date), donor: donorName(item.donorId), hebrewName: donorHebrew(item.donorId), ...partsOf(item.donorId), donorNumber: donors.get(String(item.donorId))?.displayId || '', phone: donors.get(String(item.donorId))?.phone || '', amount: num(item.amount), currency: item.currency || 'CAD', amountCAD: num(item.amountCAD ?? item.amount), paid: round(num(item.paid)), pending: round(num(item.pending)), scheduled: round(num(item.scheduled)), balance, open: balance > 0.005 ? 'Open' : 'Paid up', tags: tagList(pledgeTagById.get(String(item.id))).join(', '), periodEnd, daysPastPeriod: Math.max(0, overdue), aging: balance > 0.005 ? agingBucket(overdue) : '', category: item.category || '', campaign: campaignName(item.campaignId), campaignId: campaigns.has(String(item.campaignId || '')) ? String(item.campaignId) : '', sponsor: item.sponsor || '', notes: item.notes || '', month: day(item.date).slice(0, 7), year: day(item.date).slice(0, 4) };
     });
   }
   if (source === 'donors') {
@@ -128,9 +130,12 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
       const balance = round(open.reduce((t, p) => t + num(p.balance), 0)); const scheduled = round(open.reduce((t, p) => t + Math.min(num(p.scheduled), num(p.balance)), 0));
       return { pledges: mine.length, donors: new Set(mine.map(p => String(p.donorId || ''))).size, openPledges: open.length, pledged: round(mine.reduce((t, p) => t + num(p.amountCAD ?? p.amount), 0)), paid: round(mine.reduce((t, p) => t + num(p.paid), 0)), pending: round(mine.reduce((t, p) => t + num(p.pending), 0)), balance, scheduled, notScheduled: round(Math.max(0, balance - scheduled)), overpaid: round(mine.reduce((t, p) => t + Math.max(0, -num(p.balance)), 0)) };
     };
-    const rows = list('campaigns').map(item => ({ id: item.id, campaign: item.name || '', year: item.year || '', startDate: day(item.startDate), endDate: day(item.endDate), status: item.status || '', goal: num(item.goal), ...totals(financials.filter(pledge => String(pledge.campaignId || '') === String(item.id))) }));
+    // A sub-campaign has parentId (its main campaign). A main campaign's totals include its sub-campaigns; campaignIds says which pledges are counted.
+    const all = list('campaigns'); const nameOf = new Map(all.map(item => [String(item.id), String(item.name || '')]));
+    const subsOf = (id: string) => all.filter(item => String(item.parentId || '') === id).map(item => String(item.id));
+    const rows: any[] = all.map(item => { const id = String(item.id); const parentId = String(item.parentId || ''); const campaignIds = [id, ...(parentId ? [] : subsOf(id))]; return { id: item.id, campaign: parentId ? `${nameOf.get(parentId) || ''} › ${item.name || ''}` : item.name || '', name: item.name || '', parentId, parentName: nameOf.get(parentId) || '', campaignIds, year: item.year || '', startDate: day(item.startDate), endDate: day(item.endDate), status: item.status || '', goal: num(item.goal), ...totals(financials.filter(pledge => campaignIds.includes(String(pledge.campaignId || '')))) }; });
     const loose = financials.filter(pledge => !known.has(String(pledge.campaignId || '')));
-    if (loose.length) rows.push({ id: '', campaign: 'No campaign', year: '', startDate: '', endDate: '', status: '', goal: 0, ...totals(loose) });
+    if (loose.length) rows.push({ id: '', campaign: 'No campaign', name: 'No campaign', parentId: '', parentName: '', campaignIds: [''], year: '', startDate: '', endDate: '', status: '', goal: 0, ...totals(loose) });
     return rows;
   }
   if (source === 'projects') {
