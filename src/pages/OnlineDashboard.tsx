@@ -30,7 +30,7 @@ export const OnlineDashboard: React.FC = () => {
     { label: 'Approved Payments', value: summary.payments.toLocaleString(), href: '/payments' },
     { label: 'Open Expenses', value: summary.expenses.toLocaleString(), href: '/expenses' },
     { label: 'Accounts', value: summary.assets.toLocaleString(), href: '/chart-of-accounts' },
-    { label: 'Declined Payments', value: summary.declined.toLocaleString(), href: '/pending-payments', danger: true },
+    { label: 'Declined Payments', value: summary.declined.toLocaleString(), href: '/payments?tab=declined', danger: true },
     { label: 'Open Reminders', value: summary.reminders.toLocaleString(), href: '/tasks', danger: summary.overdue>0 }
   ];
 

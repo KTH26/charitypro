@@ -25,9 +25,7 @@ const categories: NavCategory[] = [
   { label: 'Donations', icon: CircleDollarSign, items: [
     { path: '/pledges', label: 'Pledges' },
     { path: '/payments', label: 'Payments' },
-    { path: '/schedules', label: 'Schedules' },
     { path: '/campaigns', label: 'Campaigns' },
-    { path: '/pending-payments', label: 'Pending Verification' },
     { path: '/receipts', label: 'Official Receipts' }
   ] },
   { label: 'Expenses', icon: Receipt, items: [

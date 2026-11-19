@@ -630,3 +630,24 @@ describe('special campaigns', () => {
     expect(campaignOf(normal.body.item.id)).toBe('year');
   });
 });
+
+describe('payments sheets', () => {
+  it('shows all, post-dated checks, filters on campaign year and pledge, and saves sheets for everyone', async () => {
+    const { db, call } = setup();
+    seed(db, 'campaigns', 'y25', { name: 'Campaign 2025', year: 2025, startDate: '2025-03-01', endDate: '2026-02-28', currency: 'CAD', status: 'active' });
+    seed(db, 'pledges', 'pl', { donorId: 'd1', amount: 500, currency: 'CAD', date: '2025-05-01', campaignId: 'y25' });
+    seed(db, 'transactions', 'a', { donorId: 'd1', amount: 100, currency: 'CAD', type: 'approved', date: '2025-06-01', method: 'cash', pledgeId: 'pl' });
+    seed(db, 'transactions', 'b', { donorId: 'd1', amount: 70, currency: 'CAD', type: 'declined', date: '2025-06-02', method: 'credit_card' });
+    seed(db, 'transactions', 'c', { donorId: 'd1', amount: 250, currency: 'CAD', type: 'pending', date: '2099-01-01', method: 'check' });
+    const ids = async (query: string) => (await call('GET', `/v3/payments?limit=50&${query}`)).body.items.map((item: any) => item.id).sort();
+    expect(await ids('status=all')).toEqual(['a', 'b', 'c']);
+    expect(await ids('status=postdated')).toEqual(['c']);
+    expect(await ids('status=all&f_campaignYear=2025..2025')).toEqual(['a']);
+    expect(await ids('status=all&f_campaign=%5Ecampaign%202025')).toEqual(['a']);
+    const one = (await call('GET', '/v3/payments?limit=50&status=approved')).body.items[0];
+    expect(one).toMatchObject({ campaignName: 'Campaign 2025', campaignYear: 2025, pledgeDate: '2025-05-01', pledgeAmount: 500 });
+    const saved = await call('PUT', '/v3/list-views', { list: 'payments', views: [{ name: 'Checks 2025', base: 'all', columns: ['date', 'donor', 'campaign'], filters: { campaignYear: '2025..2025' }, sort: 'amount', direction: 'asc', method: 'check' }] });
+    expect(saved.body.views[0]).toMatchObject({ name: 'Checks 2025', base: 'all', columns: ['date', 'donor', 'campaign'], filters: { campaignYear: '2025..2025' }, sort: 'amount', direction: 'asc', method: 'check' });
+    expect((await call('GET', '/v3/list-views?list=payments')).body.views).toHaveLength(1);
+  });
+});

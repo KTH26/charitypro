@@ -27,8 +27,10 @@ export const useListColumns = (defaultSort: string, defaultDirection: SortDirect
     changed();
   };
   const clearFilters = () => { setFilters({}); changed(); };
+  /** Put back a saved sheet: its sort, direction and filters. */
+  const applyState = (state: { sort?: string; direction?: SortDirection; filters?: Record<string, string>; labels?: Record<string, { label: string; kind: ColumnKind }> }) => { setSort(state.sort || defaultSort); setDirection(state.direction || defaultDirection); setFilters(state.filters || {}); setLabels(state.labels || {}); changed(); };
   const query = `sort=${encodeURIComponent(sort)}&direction=${direction}${Object.entries(filters).map(([key, value]) => `&f_${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('')}`;
-  return { sort, direction, changeSort, sortBy, filters, labels, setFilter, clearFilters, query, hasFilters: Object.keys(filters).length > 0 };
+  return { sort, direction, changeSort, sortBy, filters, labels, setFilter, clearFilters, applyState, query, hasFilters: Object.keys(filters).length > 0 };
 };
 
 const SortCarets: React.FC<{ state: 'asc' | 'desc' | 'none' }> = ({ state }) => (

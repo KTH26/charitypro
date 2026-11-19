@@ -1063,17 +1063,20 @@ html[dir="rtl"] .app-container.menu-hidden .sidebar { transform: translateX(105%
 .list-summary { color: var(--ink-3); font-size: var(--fs-sm); font-weight: 600; }
 .list-summary strong { color: var(--ink-1); font-weight: 800; }
 
-.list-table { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-1); overflow: hidden; }
+/* clip (not hidden) so the footer below can stay frozen on screen while the rows scroll */
+.list-table { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-1); overflow: clip; }
 .list-table > .list-scroll { overflow-x: auto; }
 .list-table table { width: 100%; border-collapse: separate; }
 .list-table td.row-actions, .list-table th.row-actions { width: 1%; text-align: end; padding-inline-end: 12px; }
 .list-table tbody tr[style*="cursor"]:hover td, .list-table tbody tr.clickable:hover td { background: var(--surface-2); }
 .list-empty { padding: 28px !important; text-align: center; color: var(--ink-3); white-space: normal !important; }
 .list-loading { padding: 28px; text-align: center; color: var(--ink-3); }
+/* The footer with the totals stays at the bottom of the screen while you scroll the list. */
 .list-footer {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap;
   padding: 12px 18px; border-top: 1px solid var(--line);
   color: var(--ink-2); font-size: var(--fs-sm); font-weight: 600;
+  position: sticky; bottom: 0; z-index: 4; background: var(--surface-1); box-shadow: 0 -6px 14px rgba(15, 23, 42, .06);
 }
 .list-footer-extra { margin-inline-end: auto; color: var(--ink-1); font-weight: 700; }
 .pager { display: flex; align-items: center; gap: 4px; }
@@ -1241,3 +1244,6 @@ th[style*="right"] .sortable-heading { justify-content: flex-end; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
+
+/* Totals rows of tables inside scrolling windows (like a campaign's pledges) stay visible at the bottom. */
+.table-container tfoot td { position: sticky; bottom: 0; z-index: 2; background: var(--surface-1); box-shadow: 0 -1px 0 var(--line); }

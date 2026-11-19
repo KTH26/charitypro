@@ -1660,6 +1660,29 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     });
   });
 
+  // Saved sheets ("views") of a list: name, base tab, columns, filters, sort. Shared by everyone.
+  const cleanListName = (value: unknown) => /^[a-z]{2,30}$/.test(String(value || '')) ? String(value) : '';
+  const cleanView = (raw: any) => {
+    const text = (value: unknown, max = 200) => String(value ?? '').slice(0, max);
+    const id = /^[\w-]{1,60}$/.test(String(raw?.id || '')) ? String(raw.id) : crypto.randomUUID();
+    const filters: Record<string, string> = {}; for (const [key, value] of Object.entries(raw?.filters || {})) if (/^\w{1,40}$/.test(key) && String(value || '').trim()) filters[key] = text(value);
+    const labels: Record<string, any> = {}; for (const [key, value] of Object.entries(raw?.labels || {})) if (/^\w{1,40}$/.test(key)) labels[key] = { label: text((value as any)?.label, 60), kind: ['text', 'date', 'number'].includes((value as any)?.kind) ? (value as any).kind : 'text' };
+    return { id, name: text(raw?.name, 60).trim() || 'My sheet', base: text(raw?.base, 30), columns: (Array.isArray(raw?.columns) ? raw.columns : []).map((key: unknown) => text(key, 40)).filter((key: string) => /^\w+$/.test(key)).slice(0, 40), filters, labels, sort: text(raw?.sort, 40), direction: raw?.direction === 'asc' ? 'asc' : 'desc', search: text(raw?.search, 100), method: text(raw?.method, 30), from: /^\d{4}-\d{2}-\d{2}$/.test(String(raw?.from || '')) ? String(raw.from) : '', to: /^\d{4}-\d{2}-\d{2}$/.test(String(raw?.to || '')) ? String(raw.to) : '' };
+  };
+  app.get('/v3/list-views', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const list = cleanListName(c.req.query('list')); if (!list) return c.json({ success: false, error: 'Which list?' }, 400);
+    const row: any = await c.env.DB.prepare('SELECT value FROM sync_metadata WHERE key=?').bind(`list_views_${list}`).first();
+    return c.json({ success: true, views: parseSetting(row?.value, []) });
+  });
+  app.put('/v3/list-views', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const body = await c.req.json().catch(() => ({}));
+    const list = cleanListName(body.list); if (!list) return c.json({ success: false, error: 'Which list?' }, 400);
+    const views = (Array.isArray(body.views) ? body.views : []).slice(0, 50).map(cleanView);
+    await c.env.DB.prepare('INSERT INTO sync_metadata(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind(`list_views_${list}`, JSON.stringify(views), Date.now()).run();
+    return c.json({ success: true, views });
+  });
   app.get('/v3/payments', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
@@ -1673,12 +1696,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const to = (c.req.query('to') || '').trim();
     const status = (c.req.query('status') || 'approved').trim();
 
-    const conditions = [
-      "t.type = 'transactions'",
-      't.is_deleted = 0',
-      "json_extract(t.data, '$.type') = ?"
-    ];
-    const bindings: any[] = [status];
+    // status: approved / pending / declined, "all" (every payment), or "postdated" (checks dated after today, not declined).
+    const conditions = ["t.type = 'transactions'", 't.is_deleted = 0'];
+    const bindings: any[] = [];
+    if (status === 'postdated') { conditions.push("json_extract(t.data, '$.method') = 'check'", "json_extract(t.data, '$.date') > ?", "json_extract(t.data, '$.type') <> 'declined'"); bindings.push(torontoToday()); }
+    else if (status !== 'all') { conditions.push("json_extract(t.data, '$.type') = ?"); bindings.push(status); }
     if (method) { conditions.push("json_extract(t.data, '$.method') = ?"); bindings.push(method); }
     if (from) { conditions.push("json_extract(t.data, '$.date') >= ?"); bindings.push(from); }
     if (to) { conditions.push("json_extract(t.data, '$.date') <= ?"); bindings.push(to); }
@@ -1691,18 +1713,34 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       bindings.push(term, term, term, term);
     }
 
-    const columns = { date: dateCol("json_extract(t.data,'$.date')"), donor: textCol("json_extract(d.data,'$.name')"), status: textCol("json_extract(t.data,'$.type')"), method: textCol("json_extract(t.data,'$.method')"), notes: textCol("json_extract(t.data,'$.notes')"), amount: numCol("COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)"), source: textCol("json_extract(src.data,'$.name')"), offset: textCol("json_extract(off.data,'$.name')") };
+    const columns = {
+      date: dateCol("json_extract(t.data,'$.date')"), donor: textCol("json_extract(d.data,'$.name')"), yiddish: textCol("trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),''))"), donorNumber: textCol("json_extract(d.data,'$.displayId')"), city: textCol("json_extract(d.data,'$.city')"), phone: textCol("json_extract(d.data,'$.phone')"),
+      status: textCol("json_extract(t.data,'$.type')"), method: textCol("json_extract(t.data,'$.method')"), notes: textCol("json_extract(t.data,'$.notes')"),
+      amount: numCol("COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)"), originalAmount: numCol("json_extract(t.data,'$.amount')"), currency: textCol("json_extract(t.data,'$.currency')"),
+      source: textCol("json_extract(src.data,'$.name')"), offset: textCol("json_extract(off.data,'$.name')"), deposit: textCol("json_extract(t.data,'$.depositStatus')"), depositDate: dateCol("COALESCE(json_extract(t.data,'$.depositDate'),json_extract(t.data,'$.depositedAt'))"),
+      pledge: textCol("CASE WHEN pl.id IS NULL THEN '' ELSE COALESCE(json_extract(pl.data,'$.date'),'')||' · '||COALESCE(json_extract(pl.data,'$.amount'),'') END"), pledgeDate: dateCol("json_extract(pl.data,'$.date')"), pledgeAmount: numCol("COALESCE(json_extract(pl.data,'$.amountCAD'),json_extract(pl.data,'$.amount'))"),
+      campaign: textCol("(CASE WHEN cpp.id IS NOT NULL THEN json_extract(cpp.data,'$.name')||' › '||json_extract(cp.data,'$.name') ELSE json_extract(cp.data,'$.name') END)"), campaignYear: numCol("COALESCE(json_extract(cpp.data,'$.year'),json_extract(cp.data,'$.year'))"),
+      reference: textCol("COALESCE(json_extract(t.data,'$.referenceNumber'),json_extract(t.data,'$.solaRef'),json_extract(t.data,'$.externalPaymentId'),json_extract(t.data,'$.stripeChargeId'))"),
+      split: textCol("CASE WHEN json_array_length(COALESCE(json_extract(t.data,'$.pledgeAllocations'),'[]'))>1 THEN 'Split' WHEN pl.id IS NULL THEN 'No pledge' ELSE 'One pledge' END"),
+      schedule: textCol("CASE WHEN json_extract(t.data,'$.scheduleId') IS NOT NULL THEN 'From a schedule' ELSE '' END"), declineReason: textCol("json_extract(t.data,'$.declineReason')")
+    };
     const list = listColumns(c, columns, 'date'); conditions.push(...list.conditions); bindings.push(...list.bindings);
     const where = conditions.join(' AND ');
     const join = `LEFT JOIN sync_records d ON d.type='donors' AND d.id=json_extract(t.data,'$.donorId') AND d.is_deleted=0
       LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(t.data,'$.sourceAccountId') AND src.is_deleted=0
-      LEFT JOIN sync_records off ON off.type='accounts' AND off.id=json_extract(t.data,'$.offsetAccountId') AND off.is_deleted=0`;
+      LEFT JOIN sync_records off ON off.type='accounts' AND off.id=json_extract(t.data,'$.offsetAccountId') AND off.is_deleted=0
+      LEFT JOIN sync_records pl ON pl.type='pledges' AND pl.id=COALESCE(json_extract(t.data,'$.pledgeId'),json_extract(t.data,'$.pledgeAllocations[0].pledgeId')) AND pl.is_deleted=0
+      LEFT JOIN sync_records cp ON cp.type='campaigns' AND cp.id=json_extract(pl.data,'$.campaignId') AND cp.is_deleted=0
+      LEFT JOIN sync_records cpp ON cpp.type='campaigns' AND cpp.id=json_extract(cp.data,'$.parentId') AND cpp.is_deleted=0`;
     const order = list.order;
     const listSql = `
       SELECT t.id, t.data, t.revision, t.updated_at,
              json_extract(d.data, '$.name') AS donor_name,
              json_extract(src.data, '$.name') AS source_name,
-             json_extract(off.data, '$.name') AS offset_name
+             json_extract(off.data, '$.name') AS offset_name,
+             trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),'')) AS donor_yiddish, json_extract(d.data,'$.displayId') AS donor_number, json_extract(d.data,'$.city') AS donor_city, json_extract(d.data,'$.phone') AS donor_phone,
+             json_extract(pl.data,'$.date') AS pledge_date, COALESCE(json_extract(pl.data,'$.amountCAD'),json_extract(pl.data,'$.amount')) AS pledge_amount,
+             (CASE WHEN cpp.id IS NOT NULL THEN json_extract(cpp.data,'$.name')||' › '||json_extract(cp.data,'$.name') ELSE json_extract(cp.data,'$.name') END) AS campaign_name, COALESCE(json_extract(cpp.data,'$.year'),json_extract(cp.data,'$.year')) AS campaign_year
       FROM sync_records t ${join}
       WHERE ${where}
       ORDER BY ${order}, t.id DESC
@@ -1722,7 +1760,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const total = Number(totalsResult.results[0]?.count || 0);
     return c.json({
       success: true,
-      items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor', sourceName: row.source_name || '', offsetName: row.offset_name || '' })),
+      items: listResult.results.map((row: any) => ({ ...parseRecord(row), donorName: row.donor_name || 'Unknown Donor', sourceName: row.source_name || '', offsetName: row.offset_name || '', donorYiddish: row.donor_yiddish || '', donorNumber: row.donor_number || '', donorCity: row.donor_city || '', donorPhone: row.donor_phone || '', pledgeDate: row.pledge_date || '', pledgeAmount: row.pledge_amount == null ? null : Number(row.pledge_amount), campaignName: row.campaign_name || '', campaignYear: row.campaign_year || '' })),
       page,
       limit,
       total,

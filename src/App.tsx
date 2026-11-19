@@ -9,9 +9,7 @@ import { OnlineTracker } from './pages/OnlineTracker';
 import { OnlineFundraisers } from './pages/OnlineFundraisers';
 import { OnlineExpenses } from './pages/OnlineExpenses';
 import { OnlinePayments } from './pages/OnlinePayments';
-import { OnlinePendingPayments } from './pages/OnlinePendingPayments';
 import { OnlinePledges } from './pages/OnlinePledges';
-import { OnlineSchedules } from './pages/OnlineSchedules';
 import { OnlineVendors } from './pages/OnlineVendors';
 import { OnlineTransactions } from './pages/OnlineTransactions';
 import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
@@ -47,7 +45,7 @@ function App() {
       <Routes>
         <Route path="/" element={cloudPage(<OnlineDashboard />)} />
         <Route path="/payments" element={cloudPage(<OnlinePayments />)} />
-        <Route path="/pending-payments" element={cloudPage(<OnlinePendingPayments />)} />
+        <Route path="/pending-payments" element={<Navigate to="/payments?tab=verify" replace />} />
         <Route path="/donors" element={cloudPage(<OnlineDonors />)} />
         <Route path="/tracker" element={cloudPage(<OnlineTracker />)} />
         <Route path="/fundraisers" element={cloudPage(<OnlineFundraisers />)} />
@@ -58,7 +56,7 @@ function App() {
         <Route path="/calendar" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading calendar...</div>}><OnlineCalendar /></React.Suspense>)} />
         <Route path="/pledges" element={cloudPage(<OnlinePledges />)} />
         <Route path="/campaigns" element={cloudPage(<OnlineCampaigns />)} />
-        <Route path="/schedules" element={cloudPage(<OnlineSchedules />)} />
+        <Route path="/schedules" element={<Navigate to="/payments?tab=scheduled" replace />} />
         <Route path="/vendors" element={cloudPage(<OnlineVendors />)} />
         <Route path="/write-checks" element={cloudPage(<OnlineWriteChecks />)} />
         <Route path="/transactions" element={cloudPage(<OnlineTransactions />)} />
