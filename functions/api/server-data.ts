@@ -668,6 +668,31 @@ export const loadDonorAccount = async (db: any, donorId: string, today = toronto
 };
 export const donorDisplayName = (donor: any) => { const yiddish = [donor?.preTitle, donor?.hebFirstName, donor?.hebLastName, donor?.title, donor?.postTitle].filter(Boolean).join(' ').trim(); return yiddish || String(donor?.name || ''); };
 
+/** Every loan payment still to pay back, with its pay-back date (monthly loans: this month's payment). */
+export const loadLoansPayable = async (db: any, today: string) => {
+    const accountRows = await db.prepare("SELECT id,data,revision FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.type')='liability' AND json_extract(data,'$.subType')='loan'").all();
+    const loanAccounts = (accountRows.results as any[]).map(row => { const data = parseSetting(row.data, {}); return { id: String(row.id), name: String(data.name || 'Loan'), currency: data.currency === 'USD' ? 'USD' : 'CAD', data, revision: Number(row.revision) }; });
+    if (!loanAccounts.length) return { items: [] as any[], accounts: [] as any[] };
+    const { charges: borrowed, payments } = await loadLiabilityMovements(db, loanAccounts);
+    const repaid = new Map<string, number>();
+    for (const [accountId, list] of payments) repaid.set(accountId, list.reduce((sum, item) => sum + item.amount, 0));
+    for (const account of loanAccounts) {
+      const opening = Number(account.data.startingBalance || 0);
+      if (opening > 0) borrowed.set(account.id, [...(borrowed.get(account.id) || []), { recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Opening balance', amount: opening, dueDate: isoDate(account.data.loanDueDate) }]);
+      else if (opening < 0) repaid.set(account.id, (repaid.get(account.id) || 0) - opening);
+    }
+    return monthlyLoanPayments(calculateLoansPayable(loanAccounts, borrowed, repaid), loanAccounts, payments, today);
+};
+/** Loans due in exactly 30, 14, 7, 3 or 1 days, or today: these go in the daily reminder email / text. */
+export const LOAN_REMINDER_DAYS = [30, 14, 7, 3, 1, 0];
+export const loanReminders = async (db: any, today: string) => {
+  const { items } = await loadLoansPayable(db, today);
+  const day = (date: string) => Date.parse(`${date}T00:00:00Z`) / 86400000;
+  return (items as any[]).filter(item => item.dueDate && Number(item.remaining) > 0 && LOAN_REMINDER_DAYS.includes(Math.round(day(item.dueDate) - day(today))))
+    .map(item => { const days = Math.round(day(item.dueDate) - day(today)); return { accountName: String(item.accountName || 'Loan'), amount: Number(item.remaining), currency: String(item.currency || 'CAD'), dueDate: String(item.dueDate), days, monthly: Boolean(item.monthly), when: days === 0 ? 'due TODAY' : days === 1 ? 'due tomorrow' : days === 30 ? 'due in 1 month' : days === 14 ? 'due in 2 weeks' : days === 7 ? 'due in 1 week' : `due in ${days} days` }; })
+    .sort((a, b) => a.days - b.days || a.accountName.localeCompare(b.accountName));
+};
+
 /** Today's reminders (and older ones not done yet), with each donor's phone and balance. */
 export const buildReminderDigest = async (db: any, today = torontoToday()) => {
   const rows = await db.prepare("SELECT id,data FROM sync_records WHERE type='tasks' AND is_deleted=0 AND COALESCE(json_extract(data,'$.completed'),0) IN (0,'false') AND COALESCE(json_extract(data,'$.type'),'')<>'declined_payment' AND json_extract(data,'$.dueDate')<=? ORDER BY json_extract(data,'$.dueDate'),id LIMIT 100").bind(today).all();
@@ -678,10 +703,13 @@ export const buildReminderDigest = async (db: any, today = torontoToday()) => {
     const account = task.donorId ? await loadDonorAccount(db, String(task.donorId), today) : null;
     items.push({ id: String((raw as any).id), title: String(task.title || 'Reminder'), notes: String(task.notes || ''), dueDate: String(task.dueDate || ''), overdue: String(task.dueDate || '') < today, donorName: account ? donorDisplayName(account.donor) : '', englishName: account ? String(account.donor.name || '') : '', phone: account ? String(account.donor.phone || account.donor.mobilePhone || '') : '', year: account?.year, balanceThisYear: account?.balanceThisYear || 0, balanceTotal: account?.balanceTotal || 0 });
   }
+  const loans = await loanReminders(db, today).catch(() => [] as any[]);
+  const loanLines = loans.map(loan => `Loan to pay back: ${loan.accountName} – ${loan.currency} ${cad(loan.amount)} ${loan.when} (${loan.dueDate})${loan.monthly ? ', monthly payment' : ''}`);
+  const loanHtml = loans.length ? `<h3 style="font-family:Arial;color:#b91c1c">Loans to pay back</h3><table style="border-collapse:collapse;font-family:Arial;font-size:14px;margin-bottom:16px">${loans.map(loan => `<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>${escapeHtml(loan.accountName)}</b>${loan.monthly ? ' (monthly payment)' : ''}</td><td style="padding:8px;border-bottom:1px solid #ddd"><b>${escapeHtml(loan.currency)} ${escapeHtml(cad(loan.amount))}</b></td><td style="padding:8px;border-bottom:1px solid #ddd;${loan.days <= 1 ? 'color:#b91c1c;font-weight:bold' : ''}">${escapeHtml(loan.when)} – ${escapeHtml(loan.dueDate)}</td></tr>`).join('')}</table>` : '';
   const textLines = items.map((item, index) => `${index + 1}. ${item.title}${item.donorName ? `: ${item.donorName}` : ''}${item.phone ? ` (${item.phone})` : ''}${item.donorName ? ` – balance ${item.year}: ${cad(item.balanceThisYear)}, all years ${cad(item.balanceTotal)}` : ''}${item.overdue ? ` [from ${item.dueDate}]` : ''}${item.notes ? ` – ${item.notes.slice(0, 120)}` : ''}`);
-  const text = items.length ? `Today's reminders (${today}):\n${textLines.join('\n')}` : '';
-  const html = items.length ? `<h2 style="font-family:Arial">Today's reminders – ${escapeHtml(today)}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:14px">${items.map(item => `<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>${escapeHtml(item.title)}</b>${item.overdue ? ` <span style="color:#b91c1c">(from ${escapeHtml(item.dueDate)})</span>` : ''}<br>${escapeHtml(item.notes)}</td><td style="padding:8px;border-bottom:1px solid #ddd" dir="auto"><b>${escapeHtml(item.donorName)}</b><br>${escapeHtml(item.englishName !== item.donorName ? item.englishName : '')}${item.phone ? `<br><a href="tel:${escapeHtml(item.phone)}">${escapeHtml(item.phone)}</a>` : ''}</td><td style="padding:8px;border-bottom:1px solid #ddd;text-align:right">${item.donorName ? `Balance ${item.year}: <b style="color:#b91c1c">${cad(item.balanceThisYear)}</b><br><small>All years: ${cad(item.balanceTotal)}</small>` : ''}</td></tr>`).join('')}</table>` : '';
-  return { today, items, text, html };
+  const text = items.length || loans.length ? `Today's reminders (${today}):\n${[...loanLines, ...textLines].join('\n')}` : '';
+  const html = items.length || loans.length ? `<h2 style="font-family:Arial">Today's reminders – ${escapeHtml(today)}</h2>${loanHtml}<table style="border-collapse:collapse;font-family:Arial;font-size:14px">${items.map(item => `<tr><td style="padding:8px;border-bottom:1px solid #ddd"><b>${escapeHtml(item.title)}</b>${item.overdue ? ` <span style="color:#b91c1c">(from ${escapeHtml(item.dueDate)})</span>` : ''}<br>${escapeHtml(item.notes)}</td><td style="padding:8px;border-bottom:1px solid #ddd" dir="auto"><b>${escapeHtml(item.donorName)}</b><br>${escapeHtml(item.englishName !== item.donorName ? item.englishName : '')}${item.phone ? `<br><a href="tel:${escapeHtml(item.phone)}">${escapeHtml(item.phone)}</a>` : ''}</td><td style="padding:8px;border-bottom:1px solid #ddd;text-align:right">${item.donorName ? `Balance ${item.year}: <b style="color:#b91c1c">${cad(item.balanceThisYear)}</b><br><small>All years: ${cad(item.balanceTotal)}</small>` : ''}</td></tr>`).join('')}</table>` : '';
+  return { today, items, loans, text, html };
 };
 /** Send today's reminders by email and/or text, to the people chosen in Settings. Only once a day unless forced. */
 export const sendDailyReminders = async (c: any, force = false) => {
@@ -690,9 +718,9 @@ export const sendDailyReminders = async (c: any, force = false) => {
   const sentRow: any = await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='reminders_sent_date'").first();
   if (!force && String(sentRow?.value || '') === today) return { success: true, skipped: 'Already sent today.' };
   const digest = await buildReminderDigest(c.env.DB, today);
-  if (!digest.items.length) return { success: true, sent: 0, skipped: 'No reminders for today.' };
+  if (!digest.items.length && !digest.loans.length) return { success: true, sent: 0, skipped: 'No reminders for today.' };
   const results: any[] = [];
-  if (settings.reminderByEmail) for (const to of splitList(settings.reminderEmails)) results.push({ to, ...(await sendEmail(c, { to, subject: `Today's reminders: ${digest.items.length}`, html: digest.html, text: digest.text, kind: 'reminders' })) });
+  if (settings.reminderByEmail) for (const to of splitList(settings.reminderEmails)) results.push({ to, ...(await sendEmail(c, { to, subject: digest.loans.length ? `Today's reminders: ${digest.items.length + digest.loans.length} (loan due: ${digest.loans.map((loan: any) => `${loan.accountName} ${loan.when}`).join(', ')})` : `Today's reminders: ${digest.items.length}`, html: digest.html, text: digest.text, kind: 'reminders' })) });
   if (settings.reminderBySms) for (const to of splitList(settings.reminderPhones)) {
     // A long list goes out in a few texts.
     const parts: string[] = []; let current = '';
@@ -702,7 +730,7 @@ export const sendDailyReminders = async (c: any, force = false) => {
   }
   await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('reminders_sent_date',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(today, Date.now()).run();
   const failed = results.filter(item => !item.ok);
-  return { success: failed.length === 0 || failed.length < results.length, sent: results.length - failed.length, failed, count: digest.items.length };
+  return { success: failed.length === 0 || failed.length < results.length, sent: results.length - failed.length, failed, count: digest.items.length + digest.loans.length };
 };
 
 const METHOD_NAMES: Record<string, string> = { credit_card: 'Credit card', check: 'Check', cash: 'Cash', e_transfer: 'E-Transfer', wire: 'Wire', vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'Other', ach: 'ACH' };
@@ -1685,19 +1713,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
   app.get('/v3/loans-payable', async (c: any) => {
     const denied = requirePermission(c, 'transactions.read');
     if (denied) return denied;
-    const accountRows = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.type')='liability' AND json_extract(data,'$.subType')='loan'").all();
-    const loanAccounts = (accountRows.results as any[]).map(row => { const data = parseSetting(row.data, {}); return { id: String(row.id), name: String(data.name || 'Loan'), currency: data.currency === 'USD' ? 'USD' : 'CAD', data, revision: Number(row.revision) }; });
-    if (!loanAccounts.length) return c.json({ success: true, items: [], accounts: [] });
-    const { charges: borrowed, payments } = await loadLiabilityMovements(c.env.DB, loanAccounts);
-    const repaid = new Map<string, number>();
-    for (const [accountId, list] of payments) repaid.set(accountId, list.reduce((sum, item) => sum + item.amount, 0));
-    for (const account of loanAccounts) {
-      const opening = Number(account.data.startingBalance || 0);
-      if (opening > 0) borrowed.set(account.id, [...(borrowed.get(account.id) || []), { recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Opening balance', amount: opening, dueDate: isoDate(account.data.loanDueDate) }]);
-      else if (opening < 0) repaid.set(account.id, (repaid.get(account.id) || 0) - opening);
-    }
-    const today = isoDate(c.req.query('today')) || torontoToday();
-    return c.json({ success: true, ...monthlyLoanPayments(calculateLoansPayable(loanAccounts, borrowed, repaid), loanAccounts, payments, today) }, 200, { 'Cache-Control': 'no-store' });
+    return c.json({ success: true, ...(await loadLoansPayable(c.env.DB, isoDate(c.req.query('today')) || torontoToday())) }, 200, { 'Cache-Control': 'no-store' });
   });
 
   // One loan: every time money came from it, and every payment made back.

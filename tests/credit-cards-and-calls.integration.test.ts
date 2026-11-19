@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { bankSyncStartDate, buildBankFeedSaveStatements, registerServerDataRoutes, creditCardCycle } from '../functions/api/server-data';
+import { bankSyncStartDate, buildBankFeedSaveStatements, registerServerDataRoutes, creditCardCycle, loanReminders, buildReminderDigest } from '../functions/api/server-data';
 import { loadGift } from '../functions/api/receipts';
 
 const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
@@ -485,5 +485,23 @@ describe('declined payments are not tasks', () => {
     expect(tasks.body.summary.pending).toBe(1);
     const declined = await call('GET', '/v3/tasks?status=pending&taskType=declined_payment');
     expect(declined.body.items).toEqual([expect.objectContaining({ id: 'declined-sola-x', donorName: 'Moshe Cohen', paymentAmount: 180, paymentCurrency: 'CAD' })]);
+  });
+});
+
+describe('loan due reminders', () => {
+  it('a loan shows in the daily reminders 1 month, 2 weeks, 1 week, 3 days, 1 day before and on the date, and not on other days', async () => {
+    const { db } = setup();
+    seed(db, 'accounts', 'loan', { name: 'Gemach loan', type: 'liability', subType: 'loan', currency: 'CAD', startingBalance: 1000, loanDueDate: '2026-12-31' });
+    const on = async (today: string) => (await loanReminders(db as any, today)).map((loan: any) => loan.when);
+    expect(await on('2026-12-01')).toEqual(['due in 1 month']);
+    expect(await on('2026-12-17')).toEqual(['due in 2 weeks']);
+    expect(await on('2026-12-24')).toEqual(['due in 1 week']);
+    expect(await on('2026-12-28')).toEqual(['due in 3 days']);
+    expect(await on('2026-12-30')).toEqual(['due tomorrow']);
+    expect(await on('2026-12-31')).toEqual(['due TODAY']);
+    expect(await on('2026-12-20')).toEqual([]);
+    const digest = await buildReminderDigest(db as any, '2026-12-24');
+    expect(digest.text).toContain('Loan to pay back: Gemach loan – CAD $1,000.00 due in 1 week (2026-12-31)');
+    expect(digest.html).toContain('Loans to pay back');
   });
 });
