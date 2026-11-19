@@ -139,6 +139,31 @@ export const calculateLoansPayable = (loanAccounts: { id: string; name: string; 
   return { items, accounts };
 };
 
+/**
+ * A loan paid back every month (loanMonthlyPayment, on day loanPaymentDay of the month): instead of every borrowing,
+ * it shows one line – this month's payment with this month's due date. When this month is paid, next month's shows.
+ */
+export const monthlyLoanPayments = (result: { items: any[]; accounts: any[] }, loanAccounts: { id: string; name: string; currency: string; data: any; revision: number }[], payments: Map<string, { date: string; amount: number }[]>, today: string) => {
+  const dayIn = (month: string, day: number) => { const [year, monthNumber] = month.split('-').map(Number); const last = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate(); return `${month}-${String(Math.min(day, last)).padStart(2, '0')}`; };
+  const nextMonth = (month: string) => { const [year, monthNumber] = month.split('-').map(Number); return monthNumber === 12 ? `${year + 1}-01` : `${year}-${String(monthNumber + 1).padStart(2, '0')}`; };
+  let items = [...result.items];
+  const accounts = result.accounts.map(account => {
+    const loan = loanAccounts.find(item => item.id === account.id); const monthly = Math.round(Number(loan?.data?.loanMonthlyPayment || 0) * 100) / 100;
+    const base = { ...account, revision: loan?.revision ?? 0, loanMonthlyPayment: monthly > 0 ? monthly : undefined, loanPaymentDay: monthly > 0 ? Math.min(31, Math.max(1, Number(loan?.data?.loanPaymentDay || 1))) : undefined };
+    if (!(monthly > 0) || account.owed <= 0.004) return base;
+    const day = base.loanPaymentDay as number; const month = today.slice(0, 7);
+    const paidThisMonth = Math.round((payments.get(account.id) || []).filter(payment => String(payment.date || '').startsWith(month)).reduce((sum, payment) => sum + Number(payment.amount || 0), 0) * 100) / 100;
+    const thisMonthDone = paidThisMonth >= monthly - 0.004;
+    const dueMonth = thisMonthDone ? nextMonth(month) : month;
+    const due = Math.round(Math.min(account.owed, thisMonthDone ? monthly : monthly - paidThisMonth) * 100) / 100;
+    items = items.filter(item => item.accountId !== account.id);
+    items.push({ recordType: 'accounts', recordId: account.id, revision: base.revision, date: '', description: 'Monthly payment', amount: monthly, remaining: due, paid: thisMonthDone ? 0 : paidThisMonth, dueDate: dayIn(dueMonth, day), accountId: account.id, accountName: account.name, currency: account.currency, monthly: true, totalOwed: account.owed, paidThisMonth });
+    return base;
+  });
+  items.sort((a, b) => (a.dueDate ? 1 : 0) - (b.dueDate ? 1 : 0) || (a.dueDate || '').localeCompare(b.dueDate || '') || (a.date || '').localeCompare(b.date || ''));
+  return { items, accounts };
+};
+
 type LiabilityAccount = { id: string; name: string; currency: string; data: any; revision: number };
 type LiabilityPayment = { date: string; amount: number; refund?: boolean };
 /**
@@ -1671,7 +1696,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (opening > 0) borrowed.set(account.id, [...(borrowed.get(account.id) || []), { recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Opening balance', amount: opening, dueDate: isoDate(account.data.loanDueDate) }]);
       else if (opening < 0) repaid.set(account.id, (repaid.get(account.id) || 0) - opening);
     }
-    return c.json({ success: true, ...calculateLoansPayable(loanAccounts, borrowed, repaid) }, 200, { 'Cache-Control': 'no-store' });
+    const today = isoDate(c.req.query('today')) || torontoToday();
+    return c.json({ success: true, ...monthlyLoanPayments(calculateLoansPayable(loanAccounts, borrowed, repaid), loanAccounts, payments, today) }, 200, { 'Cache-Control': 'no-store' });
   });
 
   app.get('/v3/credit-cards-due', async (c: any) => {
@@ -1683,6 +1709,33 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const today = isoDate(c.req.query('today')) || new Date().toISOString().slice(0, 10);
     const items = calculateCreditCardDue(cards, charges, payments, today).sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || a.name.localeCompare(b.name));
     return c.json({ success: true, items, today }, 200, { 'Cache-Control': 'no-store' });
+  });
+
+  // Money expected to come in from today up to a date (e.g. the credit card due date): every active schedule's dates,
+  // plus payments already waiting (pending) in that time, added up by method and currency.
+  app.get('/v3/expected-income', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const from = isoDate(c.req.query('from')) || torontoToday(); const to = isoDate(c.req.query('to'));
+    if (!to || to < from) return c.json({ success: false, error: 'Choose the date.' }, 400);
+    const [scheduleRows, pendingRows] = await c.env.DB.batch([
+      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND COALESCE(json_extract(data,'$.active'),0)=1"),
+      c.env.DB.prepare("SELECT data FROM sync_records WHERE type='transactions' AND is_deleted=0 AND lower(json_extract(data,'$.type'))='pending' AND json_extract(data,'$.date') BETWEEN ? AND ?").bind(from, to),
+    ]);
+    const totals = new Map<string, { method: string; currency: string; amount: number; count: number }>();
+    const add = (method: unknown, currency: unknown, amount: number) => { const m = String(method || 'other').toLowerCase().replace(/[\s-]+/g, '_') || 'other'; const cur = currency === 'USD' ? 'USD' : 'CAD'; const key = `${m}|${cur}`; const entry = totals.get(key) || { method: m, currency: cur, amount: 0, count: 0 }; entry.amount += amount; entry.count++; totals.set(key, entry); };
+    for (const row of scheduleRows.results as any[]) {
+      const schedule = parseSetting(row.data, {}); const amount = Number(schedule.amount || 0); if (!(amount > 0)) continue;
+      const endDate = isoDate(schedule.endDate); let occurrence = isoDate(schedule.nextDate); let guard = 0;
+      while (occurrence && occurrence <= to && (!endDate || occurrence <= endDate) && guard++ < 400) {
+        if (occurrence >= from) add(schedule.method || 'credit_card', schedule.currency, amount);
+        const next = addUtc(occurrence, String(schedule.frequency || 'monthly'), schedule.intervalCount); if (!next || next <= occurrence) break; occurrence = next;
+      }
+    }
+    for (const row of pendingRows.results as any[]) { const payment = parseSetting(row.data, {}); const amount = Number(payment.amount || 0); if (amount > 0) add(payment.method, payment.currency, amount); }
+    // Biggest method first; the USD line right under the same method's CAD line.
+    const methodTotal = new Map<string, number>(); for (const item of totals.values()) methodTotal.set(item.method, (methodTotal.get(item.method) || 0) + item.amount);
+    const items = [...totals.values()].map(item => ({ ...item, amount: Math.round(item.amount * 100) / 100 })).sort((a, b) => (methodTotal.get(b.method)! - methodTotal.get(a.method)!) || a.method.localeCompare(b.method) || (a.currency === 'CAD' ? -1 : 1));
+    return c.json({ success: true, from, to, items }, 200, { 'Cache-Control': 'no-store' });
   });
 
   app.get('/v3/tasks', async (c: any) => {
@@ -3343,7 +3396,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       id, displayId, firstName, lastName, name: `${firstName} ${lastName}`.trim(), email, phone,
       address: text('address'), notes: text('notes', 2000), totalGiven: 0, balanceOwed: 0,
       preTitle: text('preTitle'), hebFirstName: text('hebFirstName'), hebLastName: text('hebLastName'),
-      title: text('title'), postTitle: text('postTitle'), homePhone: text('homePhone'), mobilePhone: text('mobilePhone'),
+      title: text('title'), postTitle: text('postTitle'), homePhone: text('homePhone'), mobilePhone: text('mobilePhone'), receiptName: text('receiptName'),
       cards: [], sponsorshipDays: []
     };
     const now = Date.now();
@@ -3391,7 +3444,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const email = String(body.email ?? existing.email ?? '').trim();
     if (!firstName || !lastName || !phone) return c.json({ success: false, error: 'First name, last name, and phone are required.' }, 400);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ success: false, error: 'Enter a valid email address.' }, 400);
-    const textFields = ['address','notes','preTitle','hebFirstName','hebLastName','title','postTitle','homePhone','mobilePhone'];
+    const textFields = ['address','notes','preTitle','hebFirstName','hebLastName','title','postTitle','homePhone','mobilePhone','receiptName'];
     const next: any = { ...existing, firstName, lastName, name: `${firstName} ${lastName}`.trim(), phone, email };
     for (const field of textFields) if (body[field] !== undefined) next[field] = String(body[field] || '').trim().slice(0, field === 'notes' ? 2000 : 500);
     if (body.displayId !== undefined) next.displayId = String(body.displayId || '').trim() || existing.displayId || `D-${id.slice(0, 8).toUpperCase()}`;

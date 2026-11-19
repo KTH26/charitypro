@@ -4,6 +4,9 @@ import { startLiveRefresh } from '../utils/liveUpdates';
 
 type CardDue = { id: string; name: string; currency: string; needsSetup: boolean; dueDate: string; statementDate: string; periodStart: string; amountDue: number; periodCharges: number; balance: number };
 
+type Expected = { method: string; currency: string; amount: number; count: number };
+const METHOD_NAMES: Record<string, string> = { credit_card: 'Credit card', card: 'Credit card', cash: 'Cash', check: 'Checks', vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', e_transfer: 'E-transfer', ach: 'ACH', wire: 'Wire', other: 'Other' };
+const endOfMonth = () => { const now = new Date(); const last = new Date(now.getFullYear(), now.getMonth() + 1, 0); return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`; };
 const money = (value: number, currency = 'CAD') => `${currency} $${Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const today = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
 const daysUntil = (date: string) => Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today()}T00:00:00Z`)) / 86400000);
@@ -26,6 +29,15 @@ export const CreditCardsDueBox: React.FC = () => {
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // What is scheduled to come in up to the next card due date (the first card that still has something to pay).
+  const [expected, setExpected] = useState<Expected[] | null>(null);
+  const upcoming = items.filter(item => !item.needsSetup && item.dueDate && item.dueDate >= today());
+  const byDate = (upcoming.filter(item => item.amountDue > 0)[0] || upcoming[0])?.dueDate || endOfMonth();
+  useEffect(() => {
+    if (loading) return; let cancelled = false;
+    void (async () => { try { const response = await fetch(`/api/v3/expected-income?from=${today()}&to=${byDate}`); const data = await response.json(); if (!cancelled && response.ok && data.success) setExpected(data.items || []); } catch { if (!cancelled) setExpected([]); } })();
+    return () => { cancelled = true; };
+  }, [byDate, loading, items]);
   useEffect(() => startLiveRefresh(() => void load(true)), [load]);
 
   const totals = items.filter(item => !item.needsSetup).reduce<Record<string, number>>((sum, item) => ({ ...sum, [item.currency]: (sum[item.currency] || 0) + item.amountDue }), {});
@@ -50,5 +62,12 @@ export const CreditCardsDueBox: React.FC = () => {
           </tr>;
         })}</tbody>
       </table></div>}
+    {expected && <div style={{ borderTop: '1px solid var(--border)' }}>
+      <div style={{ padding: '12px 16px 4px', fontSize: 13, fontWeight: 700, color: 'var(--navy)' }}>Expected to come in by {niceDate(byDate)}</div>
+      {expected.length === 0 ? <div style={{ padding: '4px 16px 14px', color: 'var(--text-muted)', fontSize: 13 }}>Nothing scheduled.</div> : <table className="loans-table"><tbody>
+        {expected.map(item => <tr key={`${item.method}-${item.currency}`}><td style={{ fontWeight: 600, padding: '5px 16px' }}>{METHOD_NAMES[item.method] || item.method.replace(/_/g, ' ')}{item.currency === 'USD' ? ' (USD)' : ''} <small style={{ color: 'var(--text-muted)', fontWeight: 500 }}>· {item.count} payment{item.count === 1 ? '' : 's'}</small></td><td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--green)', padding: '5px 16px' }}>{money(item.amount, item.currency)}</td></tr>)}
+        {(['CAD', 'USD'] as const).filter(currency => expected.some(item => item.currency === currency)).map(currency => <tr key={`total-${currency}`} style={{ fontWeight: 700, borderTop: '1px solid var(--border)' }}><td style={{ padding: '7px 16px' }}>Total {currency}</td><td style={{ textAlign: 'right', whiteSpace: 'nowrap', padding: '7px 16px' }}>{money(expected.filter(item => item.currency === currency).reduce((sum, item) => sum + item.amount, 0), currency)}</td></tr>)}
+      </tbody></table>}
+    </div>}
   </section>;
 };

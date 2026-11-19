@@ -18,6 +18,8 @@ export type OnlineDonor = {
   postTitle?: string;
   homePhone?: string;
   mobilePhone?: string;
+  /** The legal name printed on official receipts (a company, the wife's name …). Empty = the donor's name. */
+  receiptName?: string;
   totalGiven: number;
   openBalance?: number;
 };
@@ -32,7 +34,7 @@ export const OnlineDonorForm: React.FC<{
     firstName: donor?.firstName || '', lastName: donor?.lastName || '', phone: donor?.phone || '',
     email: donor?.email || '', address: donor?.address || '', displayId: donor?.displayId || '', notes: donor?.notes || '',
     preTitle: donor?.preTitle || '', hebFirstName: donor?.hebFirstName || '', hebLastName: donor?.hebLastName || '',
-    title: donor?.title || '', postTitle: donor?.postTitle || '', homePhone: donor?.homePhone || '', mobilePhone: donor?.mobilePhone || ''
+    title: donor?.title || '', postTitle: donor?.postTitle || '', homePhone: donor?.homePhone || '', mobilePhone: donor?.mobilePhone || '', receiptName: donor?.receiptName || ''
   });
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -87,6 +89,7 @@ export const OnlineDonorForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Email</span><input type="email" value={form.email} onChange={e => set('email', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Donor ID</span><input value={form.displayId} onChange={e => set('displayId', e.target.value)} placeholder="Generated automatically if blank" /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Address</span><input value={form.address} onChange={e => set('address', e.target.value)} /></label>
+          <label className="form-group" style={{ margin: 0 }}><span>Legal name for receipts</span><input value={form.receiptName} onChange={e => set('receiptName', e.target.value)} placeholder={`${[form.firstName, form.lastName].filter(Boolean).join(' ') || 'Same as the donor name'}`} /><small style={{ color: 'var(--text-muted)' }}>A company, the wife's name … Leave empty to use the donor's name.</small></label>
         </div>
         <label className="form-group" style={{ margin: '14px 0 0' }}><span>Notes</span><textarea rows={3} maxLength={2000} value={form.notes} onChange={e => set('notes', e.target.value)} /></label>
         <button type="button" className="btn btn-ghost" style={{ marginTop: 10 }} onClick={() => setAdvanced(value => !value)}>{advanced ? 'Hide additional fields' : 'Show Hebrew and additional phone fields'}</button>

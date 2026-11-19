@@ -79,7 +79,8 @@ export const loadGift = async (db: any, paymentId: string): Promise<Gift | null>
   const [addressLine1, addressLine2] = addressLines(donor);
   return {
     paymentId, donorId: String(payment.donorId || ''), email: String(donor.email || ''), method: String(payment.method || ''), type: String(payment.type || ''),
-    donorName: String(donor.name || [donor.firstName, donor.lastName].filter(Boolean).join(' ') || payment.donorName || '').trim(), addressLine1, addressLine2,
+    // The legal name for receipts when the donor has one (a company, the wife's name …).
+    donorName: String(donor.receiptName || donor.name || [donor.firstName, donor.lastName].filter(Boolean).join(' ') || payment.donorName || '').trim(), addressLine1, addressLine2,
     yiddishPreTitle: String(donor.preTitle || '').trim(), yiddishName: [donor.hebFirstName, donor.hebLastName].filter(Boolean).join(' ').trim(), yiddishPostTitle: [donor.title, donor.postTitle].filter(Boolean).join(' ').trim(),
     amount: Number(payment.amountCAD ?? payment.amount ?? 0), giftDate: String(payment.date || '')
   };

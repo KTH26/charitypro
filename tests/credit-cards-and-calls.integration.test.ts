@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { bankSyncStartDate, buildBankFeedSaveStatements, registerServerDataRoutes, creditCardCycle } from '../functions/api/server-data';
+import { loadGift } from '../functions/api/receipts';
 
 const { DatabaseSync } = (process as any).getBuiltinModule('node:sqlite');
 
@@ -414,5 +415,56 @@ describe('card schedules charged by Sola or Stripe', () => {
     const own = await call('POST', '/v3/records/recurringPayments', { data: { ...base, currency: 'CAD' } });
     expect(own.status).toBe(400);
     expect(own.body.error).toMatch(/saved card/i);
+  });
+});
+
+describe('donor legal name for receipts', () => {
+  it('the receipt uses the legal name when the donor has one, else the donor name', async () => {
+    const { db, call } = setup();
+    seed(db, 'transactions', 'gift1', { donorId: 'd1', amount: 500, currency: 'CAD', date: '2026-11-01', type: 'approved', method: 'check' });
+    expect((await loadGift(db, 'gift1'))!.donorName).toBe('Moshe Cohen');
+    const revision = Number((db.database.prepare("SELECT revision FROM sync_records WHERE id='d1'").get() as any).revision);
+    const saved = await call('PUT', '/v3/donors/d1', { firstName: 'Moshe', lastName: 'Cohen', phone: '514-555-0100', email: '', displayId: 'D-100', receiptName: 'Cohen Holdings Inc.', revision });
+    expect(saved.status).toBe(200);
+    expect((await loadGift(db, 'gift1'))!.donorName).toBe('Cohen Holdings Inc.');
+    const data = JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE id='d1'").get() as any).data));
+    expect(data).toMatchObject({ name: 'Moshe Cohen', receiptName: 'Cohen Holdings Inc.' }); // the donor keeps his own name
+  });
+});
+
+describe('loans paid back monthly', () => {
+  it('shows one line: this month\'s payment and date; when it is paid, next month\'s', async () => {
+    const { db, call } = setup();
+    seed(db, 'accounts', 'loan', { name: 'Gemach loan', type: 'liability', subType: 'loan', currency: 'CAD', startingBalance: 1000, loanDueDate: '2027-06-01' });
+    const before = await call('GET', '/v3/loans-payable?today=2026-11-19');
+    expect(before.body.items).toEqual([expect.objectContaining({ accountId: 'loan', remaining: 1000, dueDate: '2027-06-01' })]);
+    const revision = Number((db.database.prepare("SELECT revision FROM sync_records WHERE id='loan'").get() as any).revision);
+    expect((await call('PUT', '/v3/records/accounts/loan', { revision, data: { loanMonthlyPayment: 200, loanPaymentDay: 25 } })).status).toBe(200);
+    const monthly = await call('GET', '/v3/loans-payable?today=2026-11-19');
+    expect(monthly.body.items).toEqual([expect.objectContaining({ monthly: true, remaining: 200, dueDate: '2026-11-25', totalOwed: 1000 })]);
+    // Pay 200 into the loan this month: next month's payment shows (Dec 25).
+    const paid = await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'loan', amount: 200, date: '2026-11-20' } });
+    expect([200, 201]).toContain(paid.status);
+    const after = await call('GET', '/v3/loans-payable?today=2026-11-21');
+    expect(after.body.items).toEqual([expect.objectContaining({ monthly: true, remaining: 200, dueDate: '2026-12-25', totalOwed: 800 })]);
+  });
+});
+
+describe('expected to come in (credit cards box)', () => {
+  it('adds up schedules and waiting payments by method, USD on its own line', async () => {
+    const { db, call } = setup();
+    seed(db, 'recurringPayments', 's1', { donorId: 'd1', amount: 100, currency: 'CAD', method: 'credit_card', frequency: 'weekly', nextDate: '2026-11-20', active: true });
+    seed(db, 'recurringPayments', 's2', { donorId: 'd1', amount: 50, currency: 'USD', method: 'credit_card', frequency: 'monthly', nextDate: '2026-12-01', active: true });
+    seed(db, 'recurringPayments', 's3', { donorId: 'd1', amount: 36, currency: 'CAD', method: 'cash', frequency: 'monthly', nextDate: '2026-11-25', active: true });
+    seed(db, 'recurringPayments', 'off', { donorId: 'd1', amount: 999, currency: 'CAD', method: 'cash', frequency: 'monthly', nextDate: '2026-11-25', active: false });
+    seed(db, 'recurringPayments', 'later', { donorId: 'd1', amount: 999, currency: 'CAD', method: 'vouchers', frequency: 'monthly', nextDate: '2026-12-20', active: true });
+    seed(db, 'transactions', 'inst', { donorId: 'd1', amount: 150, currency: 'CAD', method: 'vouchers', date: '2026-12-01', type: 'pending' });
+    const result = await call('GET', '/v3/expected-income?from=2026-11-19&to=2026-12-15');
+    expect(result.body.items).toEqual([
+      { method: 'credit_card', currency: 'CAD', amount: 400, count: 4 }, // Nov 20, 27, Dec 4, 11
+      { method: 'credit_card', currency: 'USD', amount: 50, count: 1 },
+      { method: 'vouchers', currency: 'CAD', amount: 150, count: 1 },
+      { method: 'cash', currency: 'CAD', amount: 36, count: 1 },
+    ]);
   });
 });

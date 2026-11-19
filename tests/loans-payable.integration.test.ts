@@ -88,7 +88,7 @@ describe('loans payable', () => {
     expect(result.status).toBe(200);
     expect(result.body.items).toHaveLength(1);
     expect(result.body.items[0]).toMatchObject({ recordId: second.body.item.id, accountName: 'Loan from Reuven', amount: 200, paid: 50, remaining: 150, dueDate: '2026-04-01' });
-    expect(result.body.accounts).toEqual([{ id: 'loan-a', name: 'Loan from Reuven', currency: 'CAD', owed: 150 }]);
+    expect(result.body.accounts).toEqual([expect.objectContaining({ id: 'loan-a', name: 'Loan from Reuven', currency: 'CAD', owed: 150 })]);
   });
 
   it('removes a loan from the list once it is fully paid back', async () => {
