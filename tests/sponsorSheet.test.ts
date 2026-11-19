@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayLabel, dayLetters, defaultLayout, endLine, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, titleLine } from '../src/utils/sponsorSheet';
+import { changePiece, cleanPieces, dayLabel, pieceSpot, dayLetters, defaultLayout, endLine, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, titleLine } from '../src/utils/sponsorSheet';
 
 const rowsOf = (layout: ReturnType<typeof defaultLayout>) => { const { placed } = placeBoxes(layout); const rows: string[][] = []; for (const box of placed) (rows[box.row] ||= []).push(box.days.map(day => dayLabel(layout, day)).join(',')); return rows; };
 
@@ -51,5 +51,20 @@ describe('monthly sponsor list layout', () => {
     expect(titleLine({ donorId: '', preTitle: 'הרב' })).toBe('הרב');
     expect(nameLine({ donorId: '', hebFirstName: 'אלעזר', hebLastName: 'קליין' })).toBe('אלעזר קליין');
     expect(endLine({ donorId: '' })).toBe('הי"ו'); expect(endLine({ donorId: '', postTitle: 'שליט"א' })).toBe('שליט"א');
+  });
+});
+
+describe('patron section pieces', () => {
+  it('moves, hides and brings back a piece, and keeps only known pieces', () => {
+    let layout = defaultLayout(30);
+    layout = changePiece(layout, 'strip', { dx: 10, dy: -5 });
+    layout = changePiece(layout, 'strip', { dx: 2.5 });
+    expect(pieceSpot(layout, 'strip')).toEqual({ dx: 12.5, dy: -5 });
+    layout = changePiece(layout, 'title', { hidden: true });
+    expect(pieceSpot(layout, 'title').hidden).toBe(true);
+    layout = changePiece(layout, 'title', { hidden: false });
+    expect(layout.pieces?.title).toBeUndefined();
+    expect(cleanPieces({ strip: { dx: 'x', dy: 99999 }, other: { dx: 5, dy: 5 }, band: { dx: 0, dy: 0 } })).toEqual({ strip: { dx: 0, dy: 1300 } });
+    expect(normalizeLayout({ boxes: [], pieces: { name: { dx: 4, dy: 3, hidden: true } } }, 30).pieces).toEqual({ name: { dx: 4, dy: 3, hidden: true } });
   });
 });

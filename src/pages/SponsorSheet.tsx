@@ -3,7 +3,7 @@ import { Combine, MoveLeft, MoveRight, Pencil, Printer, RotateCcw, Split, X } fr
 import { HDate } from '@hebcal/core';
 import { MonthNav } from '../components/HebrewCalendar';
 import { hebMonthName, hebYearText, todayHebrew } from '../utils/hebrewCalendar';
-import { type SheetDay, type SheetLayout, type SheetText, TEXT_FIELDS, dayLabel, defaultLayout, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, systemText } from '../utils/sponsorSheet';
+import { type PieceKey, type PieceSpot, type SheetDay, type SheetLayout, type SheetText, PIECES, TEXT_FIELDS, changePiece, cleanPieces, pieceSpot, dayLabel, defaultLayout, hasText, mergeBoxes, moveBox, nameLine, normalizeLayout, placeBoxes, shownText, splitBox, systemText } from '../utils/sponsorSheet';
 
 type Item = SheetDay & { id: string; kind: 'day' | 'month' };
 
@@ -22,12 +22,18 @@ const rowTops = (rows: number) => {
   return { tops: Array.from({ length: rows }, (_, index) => ROW_TOP[0] + pitch * index), height: Math.min(BOX_H, pitch - 15) };
 };
 
-/** Shrinks the text of a box until it fits. */
+/** A text size that shrinks with its box (see Fit). */
+const fs = (size: number) => `calc(${size}pt * var(--k, 1))`;
+/** Shrinks the text inside until it fits its box, so it never runs over other parts of the sheet. */
 const Fit: React.FC<{ children: React.ReactNode; deps: unknown[] }> = ({ children, deps }) => {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const el = ref.current; if (!el) return; let scale = 1; el.style.fontSize = '1em';
-    for (let step = 0; step < 14 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1); step++) { scale -= 0.05; el.style.fontSize = `${scale}em`; }
+    const el = ref.current; if (!el) return;
+    const run = () => {
+      let k = 1; el.style.setProperty('--k', '1');
+      while (k > 0.25 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) { k -= 0.03; el.style.setProperty('--k', String(k)); }
+    };
+    run(); void document.fonts?.ready.then(run);
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
   return <div ref={ref} className="ss-fit">{children}</div>;
 };
@@ -36,14 +42,14 @@ const Fit: React.FC<{ children: React.ReactNode; deps: unknown[] }> = ({ childre
 const BoxText: React.FC<{ text: SheetText; span: number }> = ({ text, span }) => {
   const honoree = [text.honoree, text.notes].filter(Boolean) as string[];
   const name = [text.first, text.last].filter(Boolean).join(' ');
-  if (span >= 5) return <Fit deps={[text, span]}><div className="ss-line">{text.title && <span style={{ fontSize: '18pt' }} className="ss-ink">{text.title}</span>} <span className="ss-name" style={{ fontSize: '36pt' }}>{name}</span> {text.end && <span style={{ fontSize: '18pt' }} className="ss-ink">{text.end}</span>}</div>{honoree.map(line => <div key={line} className="ss-hon" style={{ fontSize: '12pt' }}>{line}</div>)}</Fit>;
+  if (span >= 5) return <Fit deps={[text, span]}><div className="ss-line">{text.title && <span style={{ fontSize: fs(18) }} className="ss-ink">{text.title}</span>} <span className="ss-name" style={{ fontSize: fs(36) }}>{name}</span> {text.end && <span style={{ fontSize: fs(18) }} className="ss-ink">{text.end}</span>}</div>{honoree.map(line => <div key={line} className="ss-hon" style={{ fontSize: fs(12) }}>{line}</div>)}</Fit>;
   const nameSize = span >= 3 ? 24 : span === 2 ? 17 : 15;
   // One line when it fits; otherwise the first name on one line and the last name under it.
   return <Fit deps={[text, span]}>
-    {text.title && <div className="ss-ink ss-title" style={{ fontSize: '8pt' }}>{text.title}</div>}
-    {name && <div className="ss-name" style={{ fontSize: pt(nameSize) }}>{text.first && text.last ? <><span className="ss-nowrap">{text.first}</span> <span className="ss-nowrap">{text.last}</span></> : name}</div>}
-    {text.end && <div className="ss-ink" style={{ fontSize: '8pt' }}>{text.end}</div>}
-    {honoree.map(line => <div key={line} className="ss-hon" style={{ fontSize: span >= 3 ? '9pt' : '7.5pt' }}>{line}</div>)}
+    {text.title && <div className="ss-ink ss-title" style={{ fontSize: fs(8) }}>{text.title}</div>}
+    {name && <div className="ss-name" style={{ fontSize: fs(nameSize) }}>{text.first && text.last ? <><span className="ss-nowrap">{text.first}</span> <span className="ss-nowrap">{text.last}</span></> : name}</div>}
+    {text.end && <div className="ss-ink" style={{ fontSize: fs(8) }}>{text.end}</div>}
+    {honoree.map(line => <div key={line} className="ss-hon" style={{ fontSize: fs(span >= 3 ? 9 : 7.5) }}>{line}</div>)}
   </Fit>;
 };
 
@@ -76,13 +82,15 @@ export const SponsorSheet: React.FC = () => {
   const [editing, setEditing] = useState<{ kind: 'box'; day: number; label: string } | { kind: 'patron' } | null>(null);
   const [status, setStatus] = useState(''); const [scale, setScale] = useState(0.6); const wrap = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number | undefined>(undefined);
+  const [piece, setPiece] = useState<string | null>(null); // the chosen piece of the patron section
+  const layoutRef = useRef(layout); layoutRef.current = layout;
 
   useEffect(() => {
     const id = 'sponsor-sheet-fonts';
     if (!document.getElementById(id)) { const link = document.createElement('link'); link.id = id; link.rel = 'stylesheet'; link.href = 'https://fonts.googleapis.com/css2?family=Noto+Serif+Hebrew:wdth,wght@62.5..100,300..900&display=swap'; document.head.appendChild(link); }
   }, []);
   useEffect(() => {
-    let cancelled = false; setLoaded(false); setSelected([]);
+    let cancelled = false; setLoaded(false); setSelected([]); setPiece(null);
     void (async () => {
       try {
         const response = await fetch(`/api/v3/sponsor-sheet?hebYear=${view.year}&hebMonth=${view.month}`); const data = await response.json();
@@ -125,6 +133,32 @@ export const SponsorSheet: React.FC = () => {
   const split = () => { let next = layout; [...selected].sort((a, b) => b - a).forEach(index => { next = splitBox(next, index); }); save(next); setSelected([]); };
   const move = (step: -1 | 1) => { if (selected.length !== 1) return; const to = selected[0] + step; if (to < 0 || to >= layout.boxes.length) return; save(moveBox(layout, selected[0], to)); setSelected([to]); };
   const editLabel = (day: number) => { const text = window.prompt('Text on this day tab (for example יא):', dayLabel(layout, day)); if (text === null) return; const labels = { ...(layout.labels || {}) }; if (text.trim()) labels[String(day)] = text.trim(); else delete labels[String(day)]; save({ ...layout, labels }); };
+  // Patron section: every piece can be dragged, moved with the arrow keys, hidden, or put back.
+  const setSpot = (key: string, spot: PieceSpot) => save({ ...layoutRef.current, pieces: cleanPieces({ ...(layoutRef.current.pieces || {}), [key]: spot }) });
+  const startDrag = (key: string) => (event: React.PointerEvent) => {
+    if (event.button !== 0) return; event.stopPropagation(); setPiece(key); setSelected([]);
+    const perPx = 1 / (scale * 4 / 3); let last = { x: event.clientX, y: event.clientY }; let current = layoutRef.current; let moved = false;
+    const onMove = (ev: PointerEvent) => { const dx = (ev.clientX - last.x) * perPx; const dy = (ev.clientY - last.y) * perPx; if (!dx && !dy) return; last = { x: ev.clientX, y: ev.clientY }; current = changePiece(current, key, { dx, dy }); moved = true; setLayout(current); };
+    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); if (moved) save(current); };
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
+  };
+  useEffect(() => {
+    if (!piece) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement; if (target.closest('input,textarea,select,.modal')) return;
+      const step = event.shiftKey ? 5 : 1; const arrows: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+      if (arrows[event.key]) { event.preventDefault(); save(changePiece(layoutRef.current, piece, { dx: arrows[event.key][0], dy: arrows[event.key][1] })); }
+      else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); save(changePiece(layoutRef.current, piece, { hidden: true })); setPiece(null); }
+      else if (event.key === 'Escape') setPiece(null);
+    };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [piece]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pieceBox = (key: PieceKey, children: React.ReactNode, onEdit?: () => void) => {
+    const spec = PIECES.find(item => item.key === key)!; const spot = pieceSpot(layout, key); if (spot.hidden) return null;
+    return <div key={key} className={`ss-abs ss-piece ${piece === key ? 'ss-piece-on' : ''}`} style={{ left: pt(spec.x + spot.dx), top: pt(spec.y + spot.dy), width: pt(spec.w), height: pt(spec.h) }}
+      onPointerDown={startDrag(key)} onDoubleClick={onEdit} title={`${spec.label}: drag to move${onEdit ? ', double-click to change the text' : ''}`}>{children}</div>;
+  };
+  const chosenPiece = PIECES.find(item => item.key === piece);
   const mixed = placed.filter(box => new Set(box.days.map(day => byDay.get(day)?.donorId || '')).size > 1);
 
   return <div className="ss-page">
@@ -148,12 +182,21 @@ export const SponsorSheet: React.FC = () => {
         <label>Month in the patron band <input dir="rtl" value={layout.bandMonth ?? ''} placeholder={monthName} onChange={event => save({ ...layout, bandMonth: event.target.value })} /></label>
         <small style={{ color: 'var(--text-muted)' }}>{loaded ? status : 'Loading…'}</small>
       </div>
-      <small style={{ color: 'var(--text-muted)' }}>Click boxes to choose them, then Merge (each day keeps its tab). Drag a box to move it. Double-click a box (or the patron) to change its text. Double-click a red day tab to change its date. Print: paper 11 × 17 (Tabloid), landscape, margins none, “Background graphics” on.</small>
+      <div className="ss-tools">
+        <strong style={{ fontSize: 13 }}>Patron section:</strong>
+        {PIECES.map(item => <label key={item.key} title="Untick to take it off the sheet"><input type="checkbox" style={{ width: 'auto' }} checked={!pieceSpot(layout, item.key).hidden} onChange={event => { save(changePiece(layout, item.key, { hidden: !event.target.checked })); if (!event.target.checked && piece === item.key) setPiece(null); }} /> <span dir="auto">{item.label}</span></label>)}
+        {chosenPiece && <>
+          <button className="btn btn-secondary btn-sm" onClick={() => { const spot = pieceSpot(layout, chosenPiece.key); setSpot(chosenPiece.key, { dx: 0, dy: 0, hidden: spot.hidden }); }}><RotateCcw size={14} /> Put “{chosenPiece.label}” back</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => { save(changePiece(layout, chosenPiece.key, { hidden: true })); setPiece(null); }}><X size={14} /> Remove it</button>
+        </>}
+        {layout.pieces && <button className="btn btn-ghost btn-sm" onClick={() => { save({ ...layout, pieces: undefined }); setPiece(null); }}><RotateCcw size={14} /> Patron section as regular</button>}
+      </div>
+      <small style={{ color: 'var(--text-muted)' }}>Patron section: drag any piece to move it, or click it and use the arrow keys (Shift = bigger steps); Delete removes it; tick it again to bring it back. Click boxes to choose them, then Merge (each day keeps its tab). Drag a box to move it. Double-click a box (or the patron) to change its text. Double-click a red day tab to change its date. Print: paper 11 × 17 (Tabloid), landscape, margins none, “Background graphics” on.</small>
       {error && <div className="pay-error">{error}</div>}
       {mixed.length > 0 && <div className="pay-error">A merged box has days of different sponsors ({mixed.map(box => box.days.map(day => dayLabel(layout, day)).join(',')).join(' · ')}). The box shows the first day's sponsor.</div>}
     </div>
     <div ref={wrap} className="ss-wrap" style={{ height: 834 * (4 / 3) * scale }}>
-      <div className="ss-sheet" dir="rtl" style={{ transform: `scale(${scale})` }}>
+      <div className="ss-sheet" dir="rtl" style={{ transform: `scale(${scale})` }} onPointerDown={() => setPiece(null)}>
         <img className="ss-template" src="/sponsor-sheet/template.jpg" alt="" />
         {placed.map(box => {
           const top = tops[box.row]; const right = COL_LEFT[box.col] + BOX_W + BORDER; const left = COL_LEFT[box.col + box.span - 1] - BORDER;
@@ -169,14 +212,15 @@ export const SponsorSheet: React.FC = () => {
           </React.Fragment>;
         })}
         <div className="ss-abs ss-month" style={{ left: pt(968), top: pt(226), width: pt(173), height: pt(38) }}>{monthTitle}</div>
-        {hasText(patronShown) && <>
-          <div className="ss-abs ss-patron" style={{ left: pt(920), top: pt(612), width: pt(260), height: pt(52) }} onDoubleClick={() => setEditing({ kind: 'patron' })}>
-            <div>{patronShown.title && <span className="ss-ink" style={{ fontSize: '13pt' }}>{patronShown.title}</span>} <span className="ss-pname">{patronShown.first}</span></div>
-            <div><span className="ss-pname">{patronShown.last}</span> {patronShown.end && <span className="ss-ink" style={{ fontSize: '14pt' }}>{patronShown.end}</span>}</div>
-          </div>
-          <div className="ss-abs ss-phon" style={{ left: pt(932), top: pt(711), width: pt(238), height: pt(32) }} onDoubleClick={() => setEditing({ kind: 'patron' })}><Fit deps={[patronShown]}>{patronShown.honoree && <div>{patronShown.honoree}</div>}{patronShown.notes && <div style={{ fontSize: '7pt' }}>{patronShown.notes}</div>}</Fit></div>
-        </>}
-        <div className="ss-abs ss-band" style={{ left: pt(946), top: pt(683), width: pt(223), height: pt(25) }}>פטרון הצלה לחודש {bandMonth}</div>
+        {pieceBox('title', <img className="ss-pimg" src="/sponsor-sheet/title.png" alt="" draggable={false} />)}
+        {pieceBox('intro', <img className="ss-pimg" src="/sponsor-sheet/intro.png" alt="" draggable={false} />)}
+        {pieceBox('band', <><img className="ss-pimg" src="/sponsor-sheet/band.png" alt="" draggable={false} /><div className="ss-band"><Fit deps={[bandMonth]}><span className="ss-nowrap">פטרון הצלה לחודש {bandMonth}</span></Fit></div></>, () => { const text = window.prompt('Month in the red band:', bandMonth); if (text !== null) save({ ...layout, bandMonth: text }); })}
+        {pieceBox('strip', <img className="ss-pimg" src="/sponsor-sheet/strip.png" alt="" draggable={false} />)}
+        {hasText(patronShown) && pieceBox('name', <div className="ss-patron"><Fit deps={[patronShown]}>
+          <div className="ss-nowrap">{patronShown.title && <span className="ss-ink" style={{ fontSize: fs(13) }}>{patronShown.title}</span>} <span className="ss-pname">{patronShown.first}</span></div>
+          <div className="ss-nowrap"><span className="ss-pname">{patronShown.last}</span> {patronShown.end && <span className="ss-ink" style={{ fontSize: fs(14) }}>{patronShown.end}</span>}</div>
+        </Fit></div>, () => setEditing({ kind: 'patron' }))}
+        {(patronShown.honoree || patronShown.notes) && pieceBox('dedication', <div className="ss-phon"><Fit deps={[patronShown]}>{patronShown.honoree && <div>{patronShown.honoree}</div>}{patronShown.notes && <div style={{ fontSize: fs(7) }}>{patronShown.notes}</div>}</Fit></div>, () => setEditing({ kind: 'patron' }))}
       </div>
     </div>
     {editing?.kind === 'box' && <TextEditor heading={`Box ${editing.label}`} system={systemText(byDay.get(editing.day) || null)} typed={layout.texts?.[String(editing.day)]} onClose={() => setEditing(null)} onSave={typed => saveBoxText(editing.day, typed)} />}
@@ -207,10 +251,16 @@ const SHEET_CSS = `
 .ss-hon{color:${INK};font-weight:500;font-stretch:72%;line-height:1.15;margin-top:2pt}
 .ss-tab{position:absolute;width:${TAB_W}pt;height:${TAB_H}pt;background:${RED};color:#fff;border-radius:6pt 0 6pt 0;box-shadow:1.6pt 1.6pt 0 #5e8587;font-weight:700;font-stretch:85%;font-size:16pt;line-height:${TAB_H}pt;text-align:right;padding-right:5pt;box-sizing:border-box;cursor:text;white-space:nowrap;overflow:hidden}
 .ss-month{color:#fff;font-weight:800;font-stretch:72%;font-size:34pt;line-height:36pt;text-align:center;white-space:nowrap}
-.ss-patron{text-align:center;line-height:24pt;color:${TEAL};cursor:text}
-.ss-pname{font-size:25pt;font-weight:800;font-stretch:80%;color:${TEAL}}
-.ss-band{color:#fff;font-weight:800;font-stretch:80%;font-size:22pt;line-height:25pt;text-align:center;white-space:nowrap}
-.ss-phon{text-align:center;font-size:8pt;line-height:1.2;color:${INK};font-weight:500}
+.ss-piece{cursor:move;user-select:none;-webkit-user-select:none;touch-action:none}
+.ss-piece:hover{outline:1.5pt dashed rgba(37,99,235,.45);outline-offset:1pt}
+.ss-piece-on{outline:2.5pt solid #2563eb!important;outline-offset:1pt}
+.ss-pimg{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+.ss-patron{position:absolute;inset:0;display:flex;align-items:center;line-height:.98;color:${TEAL}}
+.ss-pname{font-size:calc(25pt * var(--k, 1));font-weight:800;font-stretch:80%;color:${TEAL}}
+.ss-band{position:absolute;left:5pt;right:5pt;top:3.3pt;height:25pt;display:flex;align-items:center;color:#fff;font-weight:800;font-stretch:80%;line-height:1}
+.ss-band .ss-nowrap{font-size:calc(22pt * var(--k, 1))}
+.ss-phon{position:absolute;inset:0;display:flex;align-items:center;line-height:1.2;color:${INK};font-weight:500}
+.ss-phon .ss-fit{font-size:calc(8pt * var(--k, 1))}
 @media print{
   @page{size:1266pt 834pt;margin:0}
   html,body{margin:0!important;padding:0!important;background:#fff!important}
@@ -218,7 +268,7 @@ const SHEET_CSS = `
   .ss-sheet,.ss-sheet *{visibility:visible}
   .ss-wrap{height:auto!important;overflow:visible}
   .ss-sheet{position:fixed;top:0;left:0;transform:none!important;box-shadow:none}
-  .ss-box{outline:none!important;opacity:1!important}
+  .ss-box,.ss-piece{outline:none!important;opacity:1!important}
   .no-print{display:none!important}
 }
 `;

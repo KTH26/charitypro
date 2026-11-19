@@ -17,7 +17,39 @@ export const TEXT_FIELDS = ['title', 'first', 'last', 'end', 'honoree', 'notes']
  * boxes: the days of each box, in the order they are shown. labels: a day's text on its tab when it was changed.
  * texts: text typed by hand for a box (by the box's first day); patronText: the same for the month patron.
  */
-export type SheetLayout = { boxes: number[][]; labels?: Record<string, string>; monthTitle?: string; bandMonth?: string; texts?: Record<string, SheetText>; patronText?: SheetText };
+export type SheetLayout = { boxes: number[][]; labels?: Record<string, string>; monthTitle?: string; bandMonth?: string; texts?: Record<string, SheetText>; patronText?: SheetText; pieces?: Record<string, PieceSpot> };
+/** Where a piece of the patron section was moved to (points from its regular place), or hidden. */
+export type PieceSpot = { dx: number; dy: number; hidden?: boolean };
+/** The pieces of the patron section, at their regular place on the sheet (points). */
+export const PIECES = [
+  { key: 'title', label: 'Heading פטרון החודש', x: 981, y: 546.3, w: 153, h: 31 },
+  { key: 'intro', label: 'Text ברוב רגשי…', x: 955.7, y: 585, w: 200.6, h: 27 },
+  { key: 'name', label: 'Patron name', x: 925, y: 612, w: 265, h: 53 },
+  { key: 'strip', label: 'Strip אשר זכה בכתר…', x: 957, y: 665.3, w: 201, h: 18.7 },
+  { key: 'band', label: 'Red band', x: 941, y: 680.7, w: 232.7, h: 30 },
+  { key: 'dedication', label: 'Dedication line', x: 932, y: 711, w: 238, h: 32 },
+] as const;
+export type PieceKey = typeof PIECES[number]['key'];
+const PIECE_KEYS: readonly string[] = PIECES.map(piece => piece.key);
+const LIMIT = 1300;
+const clampMove = (value: unknown) => { const number = Number(value); return Number.isFinite(number) ? Math.round(Math.max(-LIMIT, Math.min(LIMIT, number)) * 10) / 10 : 0; };
+/** Keeps only known pieces with sane numbers. */
+export const cleanPieces = (raw: any): Record<string, PieceSpot> | undefined => {
+  const out: Record<string, PieceSpot> = {};
+  for (const [key, value] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+    if (!PIECE_KEYS.includes(key) || !value || typeof value !== 'object') continue;
+    const spot: PieceSpot = { dx: clampMove((value as any).dx), dy: clampMove((value as any).dy) }; if ((value as any).hidden === true) spot.hidden = true;
+    if (spot.dx || spot.dy || spot.hidden) out[key] = spot;
+  }
+  return Object.keys(out).length ? out : undefined;
+};
+export const pieceSpot = (layout: SheetLayout, key: string): PieceSpot => layout.pieces?.[key] || { dx: 0, dy: 0 };
+/** Moves a piece by (dx, dy) points, or sets it hidden / shown. */
+export const changePiece = (layout: SheetLayout, key: string, change: Partial<PieceSpot>): SheetLayout => {
+  const now = pieceSpot(layout, key);
+  const next = { ...now, ...change, dx: change.dx !== undefined ? now.dx + change.dx : now.dx, dy: change.dy !== undefined ? now.dy + change.dy : now.dy };
+  return { ...layout, pieces: cleanPieces({ ...(layout.pieces || {}), [key]: next }) };
+};
 export type PlacedBox = { index: number; days: number[]; row: number; col: number; span: number };
 
 export const PER_ROW = 7;
@@ -65,7 +97,7 @@ export const normalizeLayout = (raw: any, daysInMonth: number): SheetLayout => {
   for (const [key, value] of Object.entries(raw?.labels || {})) { const text = String(value || '').trim().slice(0, 12); if (text && Number(key) >= 1 && Number(key) <= daysInMonth) labels[key] = text; }
   const texts: Record<string, SheetText> = {};
   for (const [key, value] of Object.entries(raw?.texts || {})) { const text = cleanText(value); if (text && Number(key) >= 1 && Number(key) <= daysInMonth) texts[key] = text; }
-  return { boxes, labels, monthTitle: String(raw?.monthTitle || '').trim().slice(0, 40) || undefined, bandMonth: String(raw?.bandMonth || '').trim().slice(0, 40) || undefined, texts, patronText: cleanText(raw?.patronText) };
+  return { boxes, labels, monthTitle: String(raw?.monthTitle || '').trim().slice(0, 40) || undefined, bandMonth: String(raw?.bandMonth || '').trim().slice(0, 40) || undefined, texts, patronText: cleanText(raw?.patronText), pieces: cleanPieces(raw?.pieces) };
 };
 
 /** One box over all the chosen boxes' days, at the place of the first one. At most 7 days in a box. */
