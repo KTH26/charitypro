@@ -49,6 +49,8 @@ const isoDate = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '
 // subType "credit_card" and are handled separately). Every time money goes OUT
 // of a loan account it must carry `loanDueDate`: the date it has to be paid back.
 export const isLoanAccountData = (data: any) => String(data?.type || '') === 'liability' && String(data?.subType || '') === 'loan';
+/** A loan paid back every month (set on the loan account) needs no pay-back date on each payment. */
+export const isMonthlyLoanData = (data: any) => isLoanAccountData(data) && Number(data?.loanMonthlyPayment || 0) > 0;
 export const LOAN_DUE_DATE_ERROR = 'This money comes from a loan account. Enter the date it has to be paid back.';
 const validLoanDueDate = (value: unknown) => { const date = isoDate(value); return date && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ? date : ''; };
 /** The account money leaves from, for records that can borrow from a loan. */
@@ -63,6 +65,7 @@ const checkLoanDueDate = async (db: any, type: string, record: any) => {
   const row: any = fromId ? await db.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(fromId).first() : null;
   if (!row || !isLoanAccountData(parseSetting(row.data, {}))) { if (record && 'loanDueDate' in record) delete record.loanDueDate; return ''; }
   const date = validLoanDueDate(record.loanDueDate);
+  if (isMonthlyLoanData(parseSetting(row.data, {}))) { if (date) record.loanDueDate = date; else delete record.loanDueDate; return ''; }
   if (!date) return LOAN_DUE_DATE_ERROR;
   record.loanDueDate = date;
   return '';
@@ -286,6 +289,11 @@ export const buildBankFeedSaveStatements = async (db: any, accountId: string, tr
     ids.add(rowId(String(transaction.transaction_id)));
     if (transaction.pending_transaction_id) ids.add(rowId(String(transaction.pending_transaction_id)));
   }
+  // Same account, date and amount, and the same description apart from a bank tag like [CW] or [DS]: the bank sent an old transaction again with a new id.
+  const untag = (text: unknown) => String(text || '').replace(/^s*[[A-Z0-9]{1,4}]s*/i, '').trim().toUpperCase();
+  const dates = [...new Set(transactions.filter(t => !t.pending).map(t => String(t.date || '')).filter(Boolean))];
+  const sameDayRows: any[] = dates.length ? (((await db.prepare("SELECT id,data FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=? AND json_extract(data,'$.date') IN (SELECT value FROM json_each(?)) AND COALESCE(json_extract(data,'$.pending'),0) IN (0,'false')").bind(accountId, JSON.stringify(dates)).all()) as any).results || []).map((row: any) => ({ id: String(row.id), ...parseSetting(row.data, {}) })) : [];
+  const resentCopyOf = (transaction: any) => { const description = String(transaction.name || ''); const amount = Number(transaction.amount || 0) * -1; return sameDayRows.find(row => row.id !== rowId(String(transaction.transaction_id)) && String(row.date) === String(transaction.date || '') && Number(row.amount) === amount && String(row.description || '') !== description && untag(row.description) === untag(description)); };
   const [existingRows, matchRow] = await Promise.all([
     ids.size ? db.prepare("SELECT id,is_deleted,data FROM sync_records WHERE type='bankFeedTransactions' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify([...ids])).all() : Promise.resolve({ results: [] }),
     db.prepare("SELECT data FROM sync_records WHERE type='matchedBankTransactions' AND id='matchedBankTransactions' AND is_deleted=0").first()
@@ -323,6 +331,7 @@ export const buildBankFeedSaveStatements = async (db: any, accountId: string, tr
     }
     const postedRow = existing.get(rowId(postedId));
     if (postedRow && Number(postedRow.is_deleted) === 1) continue; // deleted forever, or merged earlier
+    if (!postedRow && !record.pending && resentCopyOf(transaction)) continue; // the bank sent an old one again (only the [XX] tag changed)
     upsert(postedId, record);
   }
   return statements;
@@ -4480,7 +4489,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (!['asset','liability','equity'].includes(String(sourceData.type || ''))) return c.json({ success: false, error: 'A transfer must come from a bank, cash, loan, or credit card account, not a category.' }, 409);
       if ((sourceData.currency || 'CAD') !== (accountData.currency || 'CAD')) return c.json({ success: false, error: 'Both accounts must use the same currency.' }, 409);
       const loanDueDate = validLoanDueDate(body.loanDueDate);
-      if (isLoanAccountData(sourceData) && !loanDueDate) return c.json({ success: false, error: 'This money comes from a loan account. Choose the date it has to be paid back.' }, 400);
+      if (isLoanAccountData(sourceData) && !isMonthlyLoanData(sourceData) && !loanDueDate) return c.json({ success: false, error: 'This money comes from a loan account. Choose the date it has to be paid back.' }, 400);
       const id = crypto.randomUUID();
       const operationId = `${mutationId}-transfer-insert`;
       const notes = String(body.notes || '').trim().slice(0, 2000) || description;

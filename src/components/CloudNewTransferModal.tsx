@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { LoanDueDateField, isLoanAccount } from './LoanDueDateField';
+import { LoanDueDateField, isLoanAccount, needsLoanDueDate } from './LoanDueDateField';
 
 type Account = { id: string; name: string; type: string; subType?: string; currency: string };
 const localToday = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
@@ -29,12 +29,12 @@ export const CloudNewTransferModal: React.FC<{ onClose: () => void; onSaved: (tr
     if (from.currency !== to.currency) { setError('Both accounts must use the same currency.'); return; }
     if (!Number.isFinite(amount) || amount <= 0) { setError('Enter an amount above zero.'); return; }
     if (!form.date) { setError('Choose the date of the transfer.'); return; }
-    if (isLoanAccount(from) && !form.loanDueDate) { setError('This money comes from a loan account. Choose the date it has to be paid back.'); return; }
+    if (needsLoanDueDate(from) && !form.loanDueDate) { setError('This money comes from a loan account. Choose the date it has to be paid back.'); return; }
     setSaving(true); setError('');
     const key = requestId.current || crypto.randomUUID(); requestId.current = key;
     try {
       const data: any = { fromAccountId: from.id, toAccountId: to.id, amount, currency: from.currency, date: form.date, notes: form.notes.trim() || `Transfer from ${from.name} to ${to.name}` };
-      if (isLoanAccount(from)) data.loanDueDate = form.loanDueDate;
+      if (needsLoanDueDate(from)) data.loanDueDate = form.loanDueDate;
       const response = await fetch('/api/v3/records/accountTransfers', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ data }) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to save the transfer.');

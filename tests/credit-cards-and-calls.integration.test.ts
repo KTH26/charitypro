@@ -505,3 +505,26 @@ describe('loan due reminders', () => {
     expect(digest.html).toContain('Loans to pay back');
   });
 });
+
+describe('bank sends an old transaction again', () => {
+  it('a row that only lost its [DS] tag is not saved again; two real rows with the same name both stay', async () => {
+    const { db } = setup();
+    const save = async (transactions: any[], now: number) => { const statements = await buildBankFeedSaveStatements(db, 'bmo', transactions, now); if (statements.length) await db.batch(statements); };
+    const rows = () => (db.database.prepare("SELECT id FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 ORDER BY id").all() as any[]).map(row => row.id);
+    await save([{ transaction_id: 'old', date: '2026-08-20', name: '[DS]FONDATION KEREN LNS/PRE', amount: 500, pending: false }], 1);
+    await save([{ transaction_id: 'again', date: '2026-08-20', name: 'FONDATION KEREN LNS/PRE', amount: 500, pending: false }], 2);
+    expect(rows()).toEqual(['bmo:old']);
+    await save([{ transaction_id: 'c1', date: '2026-07-02', name: '[CW]MOBILE CHEQUE DEPOSIT', amount: -900, pending: false }, { transaction_id: 'c2', date: '2026-07-02', name: '[CW]MOBILE CHEQUE DEPOSIT', amount: -900, pending: false }], 3);
+    expect(rows()).toEqual(['bmo:c1', 'bmo:c2', 'bmo:old']);
+  });
+});
+
+describe('monthly loan needs no pay-back date', () => {
+  it('money from a monthly loan is saved without a pay-back date; a loan paid on a date still needs one', async () => {
+    const { db, call } = setup();
+    seed(db, 'accounts', 'monthly', { name: 'Cluj', type: 'liability', subType: 'loan', currency: 'CAD', loanMonthlyPayment: 1000, loanPaymentDay: 1 });
+    seed(db, 'accounts', 'dated', { name: 'Gemach', type: 'liability', subType: 'loan', currency: 'CAD' });
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'monthly', toAccountId: 'bmo', amount: 20000, date: '2025-12-01' } })).status).toBe(201);
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'dated', toAccountId: 'bmo', amount: 500, date: '2025-12-01' } })).status).toBe(400);
+  });
+});

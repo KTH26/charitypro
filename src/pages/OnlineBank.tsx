@@ -3,7 +3,7 @@ import { startLiveRefresh } from '../utils/liveUpdates';
 import { usePlaidLink } from "react-plaid-link";
 import { OnlinePaymentForm } from "../components/OnlinePaymentForm";
 import { CloudTransactionModal } from "../components/CloudTransactionModal";
-import { LoanDueDateField, isLoanAccount } from "../components/LoanDueDateField";
+import { LoanDueDateField, isLoanAccount, needsLoanDueDate } from "../components/LoanDueDateField";
 import { CloudAddAccountModal } from "../components/CloudAddAccountModal";
 
 type BankAccount = {
@@ -413,7 +413,7 @@ export const OnlineBank: React.FC = () => {
   const confirmTransferIn = async () => {
     if (!matching || !transferInSourceId) return;
     const source = allAccounts.find((account) => account.id === transferInSourceId);
-    if (isLoanAccount(source) && !transferInLoanDueDate) { setError("This money comes from a loan account. Choose the date it has to be paid back."); return; }
+    if (needsLoanDueDate(source) && !transferInLoanDueDate) { setError("This money comes from a loan account. Choose the date it has to be paid back."); return; }
     setSaving(true);
     setError("");
     const requestId = matchRequestIds.current[matching.id] || crypto.randomUUID();
