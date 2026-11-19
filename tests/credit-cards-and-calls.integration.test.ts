@@ -473,3 +473,17 @@ describe('expected to come in (credit cards box)', () => {
     ]);
   });
 });
+
+describe('declined payments are not tasks', () => {
+  it('they stay out of the Tasks page and the bell count, and are listed on their own with the payment amount', async () => {
+    const { db, call } = setup();
+    seed(db, 'transactions', 'p1', { donorId: 'd1', amount: 180, currency: 'CAD', type: 'declined', date: '2026-11-01' });
+    seed(db, 'tasks', 'declined-sola-x', { donorId: 'd1', title: 'Sola payment declined', notes: 'Insufficient funds', dueDate: '2026-11-01', priority: 'high', type: 'declined_payment', completed: false, linkedPaymentId: 'p1' });
+    seed(db, 'tasks', 't1', { donorId: 'd1', title: 'Call Moshe', dueDate: '2026-11-01', priority: 'medium', type: 'call', completed: false });
+    const tasks = await call('GET', '/v3/tasks?status=pending');
+    expect(tasks.body.items.map((task: any) => task.id)).toEqual(['t1']);
+    expect(tasks.body.summary.pending).toBe(1);
+    const declined = await call('GET', '/v3/tasks?status=pending&taskType=declined_payment');
+    expect(declined.body.items).toEqual([expect.objectContaining({ id: 'declined-sola-x', donorName: 'Moshe Cohen', paymentAmount: 180, paymentCurrency: 'CAD' })]);
+  });
+});
