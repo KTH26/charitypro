@@ -1,7 +1,40 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, Sparkles, Trash2, X } from 'lucide-react';
+import { Download, Send, Sparkles, Trash2, X } from 'lucide-react';
+import { buildWorkbook, type ExcelColumn } from '../utils/excel';
 
-type Turn = { role: 'user' | 'assistant'; text: string; lookups?: string[]; error?: boolean; steps?: string[]; status?: string; working?: boolean };
+type ExcelOffer = { title: string; path: string; query: Record<string, string>; columns: ExcelColumn[] };
+type Turn = { role: 'user' | 'assistant'; text: string; lookups?: string[]; error?: boolean; steps?: string[]; status?: string; working?: boolean; downloads?: ExcelOffer[] };
+
+// The Excel button: reads every page of the list the AI chose (with your login) and saves the file.
+const pick = (row: any, key: string) => key.split('.').reduce((value, part) => value == null ? value : value[part], row);
+const DownloadButton: React.FC<{ offer: ExcelOffer }> = ({ offer }) => {
+  const [state, setState] = useState('');
+  const download = async () => {
+    setState('Reading…');
+    try {
+      const rows: any[] = [];
+      if (offer.path === '/v3/report-data') {
+        const response = await fetch(`/api${offer.path}?${new URLSearchParams(offer.query)}`); const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Could not read the list.'); rows.push(...(data.rows || []));
+      } else {
+        for (let page = 1; page <= 200; page++) {
+          const params = new URLSearchParams({ ...offer.query, page: String(page), limit: '100' });
+          const response = await fetch(`/api${offer.path}?${params}`); const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || 'Could not read the list.');
+          rows.push(...(data.items || [])); setState(`Reading… ${rows.length}${data.total ? ` of ${data.total}` : ''}`);
+          if (page >= Number(data.totalPages || 1)) break;
+        }
+      }
+      const columns = offer.columns.map(column => ({ ...column, key: column.key.replace(/\./g, '_') }));
+      const flat = rows.map(row => Object.fromEntries(offer.columns.map(column => { let value = pick(row, column.key); if (Array.isArray(value)) value = value.join(', '); else if (value && typeof value === 'object') value = JSON.stringify(value); return [column.key.replace(/\./g, '_'), value ?? '']; })));
+      const totals = Object.fromEntries(columns.filter(column => column.type === 'money').map(column => [column.key, flat.reduce((sum, row) => sum + Number(row[column.key] || 0), 0)]));
+      const blob = buildWorkbook([{ name: offer.title.slice(0, 31).replace(/[\\/?*[\]:]/g, ' '), title: offer.title, columns, rows: flat, totals: Object.keys(totals).length ? { [columns[0].key]: `Total (${flat.length})`, ...totals } : null }]);
+      const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${offer.title.replace(/[^\w\- ]+/g, '').trim() || 'CharityPro'}.xlsx`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+      setState(`Saved (${flat.length} rows)`);
+    } catch (reason: any) { setState(reason.message || 'Could not make the file.'); }
+  };
+  return <button type="button" className="btn btn-secondary btn-sm" onClick={() => void download()} disabled={state.startsWith('Reading')} style={{ marginTop: 6, display: 'inline-flex', gap: 6, alignItems: 'center' }}><Download size={14} /> {state || `Download Excel: ${offer.title}`}</button>;
+};
 
 const EXAMPLES = [
   'How much did we receive this month, by method?',
@@ -61,6 +94,7 @@ export const AskAiButton: React.FC = () => {
           else if (event.type === 'step') update(turn => ({ ...turn, steps: [...(turn.steps || []), event.text] }));
           else if (event.type === 'text') update(turn => ({ ...turn, text: turn.text + event.delta }));
           else if (event.type === 'reset') update(turn => ({ ...turn, text: '' }));
+          else if (event.type === 'download') update(turn => ({ ...turn, downloads: [...(turn.downloads || []), { title: event.title, path: event.path, query: event.query || {}, columns: event.columns || [] }] }));
           else if (event.type === 'done') { update(turn => ({ ...turn, text: event.reply, lookups: event.lookups || [], working: false, status: '' })); finished = true; }
           else if (event.type === 'error') throw new Error(event.error);
         }
@@ -91,7 +125,7 @@ export const AskAiButton: React.FC = () => {
         </div>}
         {turns.map((turn, index) => <div key={index} style={{ justifySelf: turn.role === 'user' ? 'end' : 'stretch', maxWidth: turn.role === 'user' ? '85%' : '100%', background: turn.role === 'user' ? 'var(--navy)' : turn.error ? 'var(--red-bg)' : 'var(--bg-input)', color: turn.role === 'user' ? '#fff' : turn.error ? 'var(--red)' : 'inherit', borderRadius: 10, padding: '8px 12px', fontSize: 13.5, lineHeight: 1.45 }}>
           {turn.role === 'assistant' && (turn.steps?.length || turn.working) ? <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'grid', gap: 2, marginBottom: turn.text ? 6 : 0 }}>{(turn.steps || []).map((step, k) => <div key={k} dir="auto">✓ {step}</div>)}{turn.working && turn.status && <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--navy)', fontWeight: 600 }}><span className="ask-ai-dot" />{turn.status}</div>}</div> : null}{turn.role === 'user' ? <div dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{turn.text}</div> : turn.text ? <Answer text={turn.text} /> : null}
-          {turn.lookups && turn.lookups.length > 0 && <details style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}><summary style={{ cursor: 'pointer' }}>What it looked at ({turn.lookups.length})</summary>{turn.lookups.map((item, k) => <div key={k} style={{ wordBreak: 'break-all' }}>{item}</div>)}</details>}
+          {(turn.downloads || []).map((offer, k) => <div key={k}><DownloadButton offer={offer} /></div>)}{turn.lookups && turn.lookups.length > 0 && <details style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}><summary style={{ cursor: 'pointer' }}>What it looked at ({turn.lookups.length})</summary>{turn.lookups.map((item, k) => <div key={k} style={{ wordBreak: 'break-all' }}>{item}</div>)}</details>}
         </div>)}
         <div ref={bottom} />
       </div>

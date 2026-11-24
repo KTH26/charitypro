@@ -62,6 +62,7 @@ How to work:
 - Use the get_data tool to look things up. Call it as many times as you need (in parallel when the calls don't depend on each other). Use the filters, sort and totals the pages already give rather than reading every row.
 - Never guess a number. If the data doesn't show it, say so. If a list was cut off (more pages), say how many there are in total and that you looked at part.
 - You can only read. If asked to change something (add, edit, delete, send, charge), say that you can't do that yet and tell them where on the site to do it.
+- When they want Excel, a spreadsheet, a file or a download, use make_excel (it shows a download button; the file includes every matching row).
 - Donors have an English name and often a Yiddish/Hebrew name; search works with either.
 
 How to answer:
@@ -85,6 +86,27 @@ const tools: Anthropic.Beta.BetaTool[] = [{
     additionalProperties: false,
   },
 }];
+
+// Lists an Excel file can be made from (the browser reads every page of it, so the file is complete).
+const EXCEL_PATHS = ['/v3/donors', '/v3/pledges', '/v3/payments', '/v3/schedules', '/v3/ledger', '/v3/bills', '/v3/vendors', '/v3/accounts', '/v3/tasks', '/v3/receipts', '/v3/donor-contacts', '/v3/report-data'];
+tools.push({
+  name: 'make_excel',
+  description: `Give the person a "Download Excel" button for a list. Use it whenever they ask for Excel, a spreadsheet, a file or a download, or when the answer is a long list. You do not write the rows: name the list (path + query, the same as get_data) and the columns; their browser reads every page of that list and builds the file.
+path must be one of: ${EXCEL_PATHS.join(', ')}.
+columns: the fields to put in the file, in order, using the exact field names you saw in get_data results (e.g. date, donorName, amount, method, campaignName). header is the column title; type is text, number, money or date.
+Look at one page with get_data first if you are not sure of the field names.`,
+  input_schema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'File title, e.g. "Payments November 2026"' },
+      path: { type: 'string' },
+      query: { type: 'object', additionalProperties: { type: 'string' } },
+      columns: { type: 'array', items: { type: 'object', properties: { key: { type: 'string' }, header: { type: 'string' }, type: { type: 'string', enum: ['text', 'number', 'money', 'date'] } }, required: ['key', 'header'], additionalProperties: false } },
+    },
+    required: ['title', 'path', 'columns'],
+    additionalProperties: false,
+  },
+} as any);
 
 type ChatTurn = { role: 'user' | 'assistant'; text: string };
 
@@ -194,6 +216,17 @@ export const registerAiChatRoutes = (app: any, prefix = '') => {
             const results = await Promise.all(toolUses.map(async block => {
               const input: any = block.input || {};
               lookups.push(`${String(input.path || '')}${input.query && Object.keys(input.query).length ? ` ${JSON.stringify(input.query)}` : ''}`);
+              if (block.name === 'make_excel') {
+                const path = String(input.path || '').split('?')[0];
+                const columns = (Array.isArray(input.columns) ? input.columns : []).filter((column: any) => /^[\w.]{1,60}$/.test(String(column?.key || ''))).slice(0, 40)
+                  .map((column: any) => ({ key: String(column.key), header: String(column.header || column.key).slice(0, 60), type: ['text', 'number', 'money', 'date'].includes(column.type) ? column.type : 'text' }));
+                if (!EXCEL_PATHS.includes(path) || !columns.length) return { type: 'tool_result' as const, tool_use_id: block.id, content: `Could not make the file: path must be one of ${EXCEL_PATHS.join(', ')} and at least one column is needed.`, is_error: true };
+                const query: Record<string, string> = {}; for (const [name, value] of Object.entries(input.query || {})) if (/^[\w.-]{1,40}$/.test(name)) query[name] = String(value).slice(0, 200);
+                const title = String(input.title || 'CharityPro list').slice(0, 80);
+                send({ type: 'download', title, path, query, columns });
+                send({ type: 'step', text: `Made a download button: ${title}` });
+                return { type: 'tool_result' as const, tool_use_id: block.id, content: 'A "Download Excel" button is now shown under your answer. Tell the person to click it. Do not paste the rows.' };
+              }
               const key = JSON.stringify({ path: input.path, query: input.query || {} });
               const label = `Looking at ${describeLookup(input)}`;
               if (seen.has(key)) { send({ type: 'step', text: `${label} (already read)` }); return { type: 'tool_result' as const, tool_use_id: block.id, content: `You already read exactly this a moment ago; it has not changed. Use that result, or change the filters or page.\n${seen.get(key)}` }; }

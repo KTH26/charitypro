@@ -710,17 +710,19 @@ describe('Ask AI', () => {
       sent.push(JSON.parse(String(init.body))); round++;
       return round === 1
         ? streamed('m1', [{ type: 'text', text: 'Let me check his payments.' }, { type: 'tool_use', id: 'a', name: 'get_data', input: { path: '/v3/payments', query: { search: 'moshe', limit: '500' } } }, { type: 'tool_use', id: 'b', name: 'get_data', input: { path: '/v3/backup' } }], 'tool_use')
-        : streamed('m2', [{ type: 'text', text: 'Moshe Cohen gave **$180.00**.' }], 'end_turn');
+        : round === 2 ? streamed('m2', [{ type: 'tool_use', id: 'x', name: 'make_excel', input: { title: 'Moshe payments', path: '/v3/payments', query: { search: 'moshe' }, columns: [{ key: 'date', header: 'Date', type: 'date' }, { key: 'amount', header: 'Amount', type: 'money' }] } }], 'tool_use')
+        : streamed('m3', [{ type: 'text', text: 'Moshe Cohen gave **$180.00**.' }], 'end_turn');
     }) as any;
     try {
       const events = await readEvents(await ask({ DB: db, ANTHROPIC_API_KEY: 'test-key' }));
       expect(events.filter(event => event.type === 'status').map(event => event.text)).toEqual(expect.arrayContaining(['Thinking about your question…', 'Choosing what to look up…', 'Reading what it found…', 'Writing…']));
       const steps = events.filter(event => event.type === 'step').map(event => event.text);
       expect(steps[0]).toBe('Let me check his payments.');
-      expect([...steps].sort()).toEqual(['Let me check his payments.', 'Looking at /v3/backup: could not read it (not allowed)', 'Looking at payments: search “moshe”'].sort());
+      expect([...steps].sort()).toEqual(['Let me check his payments.', 'Looking at /v3/backup: could not read it (not allowed)', 'Looking at payments: search “moshe”', 'Made a download button: Moshe payments'].sort());
       expect(events.some(event => event.type === 'reset')).toBe(true);
+      expect(events.find(event => event.type === 'download')).toMatchObject({ title: 'Moshe payments', path: '/v3/payments', query: { search: 'moshe' }, columns: [{ key: 'date', header: 'Date', type: 'date' }, { key: 'amount', header: 'Amount', type: 'money' }] });
       expect(events.filter(event => event.type === 'text').map(event => event.delta).join('')).toContain('Moshe Cohen gave **$180.00**.');
-      expect(events.at(-1)).toMatchObject({ type: 'done', reply: 'Moshe Cohen gave **$180.00**.', lookups: ['/v3/payments {"search":"moshe","limit":"500"}', '/v3/backup'] });
+      expect(events.at(-1)).toMatchObject({ type: 'done', reply: 'Moshe Cohen gave **$180.00**.', lookups: expect.arrayContaining(['/v3/payments {"search":"moshe","limit":"500"}', '/v3/backup']) });
       expect(sent[0]).toMatchObject({ model: 'claude-opus-5-5', stream: true });
       const results = sent[1].messages.at(-1).content;
       expect(JSON.parse(JSON.parse(results[0].content).body).items.map((item: any) => item.id)).toEqual(['t1']);
