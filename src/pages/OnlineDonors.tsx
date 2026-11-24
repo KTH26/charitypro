@@ -4,7 +4,19 @@ import { OnlineDonorForm, type OnlineDonor } from '../components/OnlineDonorForm
 import { CloudDonorProfileModal } from '../components/CloudDonorProfileModal';
 import { ColumnTh, ColumnFilterChips, useListColumns } from '../components/ColumnTh';
 import { GoogleSheetDonorSyncModal } from '../components/GoogleSheetDonorSyncModal';
-import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu, SingleView } from '../components/ListLayout';
+import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu } from '../components/ListLayout';
+import { Save, Trash2 } from 'lucide-react';
+import type { ColumnKind } from '../components/ColumnTh';
+
+// The tabs on top. Each one is a set of filters; your own saved tabs come after them.
+const BASE_TABS: { key: string; label: string; filters: Record<string, string> }[] = [
+  { key: 'all', label: 'All donors', filters: {} },
+  { key: 'companies', label: 'Companies', filters: { kind: '=company' } },
+  { key: 'open', label: 'With open balance', filters: { openBalance: '0.01..' } },
+  { key: 'pledges', label: 'With pledges', filters: { pledgeCount: '1..' } },
+  { key: 'schedules', label: 'With a monthly schedule', filters: { activeSchedules: '1..' } },
+];
+type DonorSheet = { id: string; name: string; base: string; filters: Record<string, string>; labels: Record<string, { label: string; kind: ColumnKind }>; sort: string; direction: 'asc' | 'desc'; search?: string };
 
 type DonorResponse = { success: boolean; items: OnlineDonor[]; page: number; total: number; totalPages: number; error?: string };
 
@@ -22,10 +34,30 @@ export const OnlineDonors: React.FC = () => {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [sheetSyncOpen, setSheetSyncOpen] = useState(false);
   const cols = useListColumns('name', 'asc', () => setPage(1)); const { sort, direction } = cols;
+  const [tab, setTab] = useState(() => { const wanted = new URLSearchParams(window.location.search).get('tab') || ''; return BASE_TABS.some(item => item.key === wanted) ? wanted : 'all'; });
+  const [sheets, setSheets] = useState<DonorSheet[]>([]);
+  const sheet = tab.startsWith('sheet:') ? sheets.find(item => `sheet:${item.id}` === tab) || null : null;
+  const baseFilters = (BASE_TABS.find(item => item.key === (sheet ? sheet.base : tab)) || BASE_TABS[0]).filters;
+  useEffect(() => { void (async () => { try { const response = await fetch('/api/v3/list-views?list=donors'); const data = await response.json(); if (response.ok && data.success) setSheets(data.views || []); } catch { /* none */ } })(); }, []);
+  const openTab = (key: string) => {
+    setTab(key); setPage(1); setNotice('');
+    const chosen = key.startsWith('sheet:') ? sheets.find(item => `sheet:${item.id}` === key) : null;
+    if (chosen) { cols.applyState({ sort: chosen.sort, direction: chosen.direction, filters: chosen.filters, labels: chosen.labels }); setSearchInput(chosen.search || ''); }
+    else if (sheet) { cols.applyState({}); setSearchInput(''); }
+    const url = new URL(window.location.href); if (key.startsWith('sheet:') || key === 'all') url.searchParams.delete('tab'); else url.searchParams.set('tab', key); window.history.replaceState(null, '', url.toString());
+  };
+  const saveSheets = async (next: DonorSheet[], message: string) => {
+    try { const response = await fetch('/api/v3/list-views', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ list: 'donors', views: next }) }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Could not save the tab.'); setSheets(data.views || []); setNotice(message); return true; }
+    catch (reason: any) { setError(reason.message || 'Could not save the tab.'); return false; }
+  };
+  const current = () => ({ base: sheet ? sheet.base : tab, filters: cols.filters, labels: cols.labels, sort, direction, search: searchInput.trim() });
+  const saveAsTab = async () => { const name = window.prompt('Name for this tab (for example “Need – open balance”):', ''); if (!name || !name.trim()) return; const id = crypto.randomUUID(); if (await saveSheets([...sheets, { id, name: name.trim(), ...current() } as DonorSheet], `Tab “${name.trim()}” saved. It opens the same way every time.`)) setTab(`sheet:${id}`); };
+  const updateTab = async () => { if (sheet) await saveSheets(sheets.map(item => item.id === sheet.id ? { ...item, ...current() } as DonorSheet : item), `Tab “${sheet.name}” updated.`); };
+  const deleteTab = async () => { if (!sheet || !window.confirm(`Delete the tab “${sheet.name}”? The donors are not touched.`)) return; if (await saveSheets(sheets.filter(item => item.id !== sheet.id), 'Tab deleted.')) openTab('all'); };
 
   const load = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(''); }
-    const params = new URLSearchParams({ page: String(page), limit: '50' }); for (const [key, value] of Object.entries(cols.filters)) params.set(`f_${key}`, value);
+    const params = new URLSearchParams({ page: String(page), limit: '50' }); for (const [key, value] of Object.entries({ ...baseFilters, ...cols.filters })) params.set(`f_${key}`, value);
     if (search) params.set('search', search);
     params.set('sort', sort); params.set('direction', direction);
     try {
@@ -41,7 +73,7 @@ export const OnlineDonors: React.FC = () => {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, search, cols.query]);
+  }, [page, search, cols.query, tab, sheets]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -60,10 +92,16 @@ export const OnlineDonors: React.FC = () => {
   return (
     <main className="page list-page">
       <div className="page-inner">
-        <SingleView label="All Donors" count={total} />
+        <div className="list-views" role="tablist" style={{ flexWrap: 'wrap' }}>
+          {BASE_TABS.map(item => <button key={item.key} type="button" role="tab" aria-selected={tab === item.key} className={`list-view${tab === item.key ? ' active' : ''}`} onClick={() => openTab(item.key)}>{tab === item.key && <span className="list-view-count">{total}</span>}<span>{item.label}</span></button>)}
+          {sheets.map(item => <button key={item.id} type="button" role="tab" aria-selected={tab === `sheet:${item.id}`} className={`list-view${tab === `sheet:${item.id}` ? ' active' : ''}`} onClick={() => openTab(`sheet:${item.id}`)} title="Your saved tab">{tab === `sheet:${item.id}` && <span className="list-view-count">{total}</span>}<span>★ {item.name}</span></button>)}
+        </div>
         <div className="list-body">
           <ListToolbar end={<><button className="btn btn-secondary" onClick={() => { setSheetSyncOpen(true); setNotice(''); }}>Sync Google Sheet</button><NewButton onClick={() => { setEditing('new'); setNotice(''); }}>Add Donor</NewButton></>}>
             <input value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder="Live search: name, phone, email, Hebrew name, address or donor ID" />
+            <button type="button" className="btn btn-secondary" onClick={() => void saveAsTab()} title="Save this view (tab, filters, sort and search) as your own tab"><Save size={15} /> Save as tab</button>
+            {sheet && <button type="button" className="btn btn-secondary" onClick={() => void updateTab()}>Update “{sheet.name}”</button>}
+            {sheet && <button type="button" className="btn btn-ghost" onClick={() => void deleteTab()} title="Delete this tab"><Trash2 size={15} /></button>}
             {(searchInput || cols.hasFilters) && <ResetLink onClick={() => { setSearchInput(''); cols.clearFilters(); }} />}
           </ListToolbar>
 <ColumnFilterChips cols={cols} />

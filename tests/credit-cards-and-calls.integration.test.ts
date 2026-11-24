@@ -760,3 +760,20 @@ describe('campaign chosen by hand', () => {
     expect(campaignOf()).toBe('y26');
   });
 });
+
+describe('donors tabs', () => {
+  it('companies, with open balance, with pledges and with a monthly schedule', async () => {
+    const { db, call } = setup();
+    seed(db, 'donors', 'co', { name: 'Klein Holdings Inc', isBusiness: true, businessMemberIds: ['d1'] });
+    seed(db, 'donors', 'd2', { name: 'Abraham Klein' });
+    seed(db, 'pledges', 'p1', { donorId: 'd1', amount: 500, currency: 'CAD', date: '2026-04-01' });
+    seed(db, 'pledges', 'p2', { donorId: 'd2', amount: 100, currency: 'CAD', date: '2026-04-01' });
+    seed(db, 'transactions', 't2', { donorId: 'd2', amount: 100, currency: 'CAD', type: 'approved', date: '2026-04-02', method: 'cash', pledgeId: 'p2' });
+    seed(db, 'recurringPayments', 's1', { donorId: 'd2', amount: 50, currency: 'CAD', frequency: 'monthly', nextDate: '2026-12-01', active: true, method: 'cash' });
+    const names = async (query: string) => (await call('GET', `/v3/donors?limit=50&${query}`)).body.items.map((item: any) => item.name).sort();
+    expect(await names('f_kind=%3Dcompany')).toEqual(['Klein Holdings Inc']);
+    expect(await names('f_pledgeCount=1..')).toEqual(['Abraham Klein', 'Moshe Cohen']);
+    expect(await names('f_openBalance=0.01..')).toEqual(['Moshe Cohen']);
+    expect(await names('f_activeSchedules=1..')).toEqual(['Abraham Klein']);
+  });
+});

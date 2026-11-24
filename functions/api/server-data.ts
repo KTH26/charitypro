@@ -3307,7 +3307,11 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const condition = searchWords.map(() => 'AND lower(d.data) LIKE ?').join(' ');
     const searchBindings = searchWords.map((word: string) => `%${word}%`);
     const yiddish = "trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),''))";
-    const columns = { name: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), phone: textCol("json_extract(d.data,'$.phone')"), email: textCol("json_extract(d.data,'$.email')"), address: textCol("json_extract(d.data,'$.address')"), city: textCol("json_extract(d.data,'$.city')"), tags: textCol("(SELECT group_concat(t.value, ', ') FROM json_each(CASE WHEN json_type(d.data,'$.tags')='array' THEN json_extract(d.data,'$.tags') ELSE '[]' END) t)"), total: numCol('dt.total_given') };
+    const columns = { name: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), phone: textCol("json_extract(d.data,'$.phone')"), email: textCol("json_extract(d.data,'$.email')"), address: textCol("json_extract(d.data,'$.address')"), city: textCol("json_extract(d.data,'$.city')"), tags: textCol("(SELECT group_concat(t.value, ', ') FROM json_each(CASE WHEN json_type(d.data,'$.tags')='array' THEN json_extract(d.data,'$.tags') ELSE '[]' END) t)"), total: numCol('dt.total_given'),
+      // For the tabs: company or donor, how many pledges, how many active monthly schedules.
+      kind: textCol("CASE WHEN json_extract(d.data,'$.isBusiness') IN (1,'true') THEN 'company' ELSE 'donor' END"),
+      pledgeCount: numCol("(SELECT COUNT(*) FROM sync_records pc WHERE pc.type='pledges' AND pc.is_deleted=0 AND json_extract(pc.data,'$.donorId')=d.id)"),
+      activeSchedules: numCol("(SELECT COUNT(*) FROM sync_records sc WHERE sc.type='recurringPayments' AND sc.is_deleted=0 AND COALESCE(json_extract(sc.data,'$.active'),0) IN (1,'true') AND json_extract(sc.data,'$.donorId')=d.id)") };
     const list = listColumns(c, columns, 'name');
     const filterSql = list.conditions.map(part => ` AND ${part}`).join('');
     const allBindings = [...searchBindings, ...list.bindings];
