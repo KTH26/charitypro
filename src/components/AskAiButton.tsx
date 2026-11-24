@@ -33,7 +33,7 @@ const DownloadButton: React.FC<{ offer: ExcelOffer }> = ({ offer }) => {
       setState(`Saved (${flat.length} rows)`);
     } catch (reason: any) { setState(reason.message || 'Could not make the file.'); }
   };
-  return <button type="button" className="btn btn-secondary btn-sm" onClick={() => void download()} disabled={state.startsWith('Reading')} style={{ marginTop: 6, display: 'inline-flex', gap: 6, alignItems: 'center' }}><Download size={14} /> {state || `Download Excel: ${offer.title}`}</button>;
+  return <button type="button" className="btn btn-secondary btn-sm" onClick={() => void download()} disabled={state.startsWith('Reading')} style={{ marginTop: 6, display: 'inline-flex', gap: 6, alignItems: 'center', maxWidth: '100%', whiteSpace: 'normal', textAlign: 'left', height: 'auto', minHeight: 30, overflowWrap: 'anywhere' }}><Download size={14} style={{ flexShrink: 0 }} /> {state || `Download Excel: ${offer.title}`}</button>;
 };
 
 const EXAMPLES = [
@@ -110,7 +110,7 @@ export const AskAiButton: React.FC = () => {
   return <>
     <button type="button" className="btn btn-secondary" onClick={() => setOpen(value => !value)} title="Ask the AI about donors, pledges, payments and reports" style={{ height: 42, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Sparkles size={16} /> Ask AI</button>
     <style>{PULSE}</style>
-    {open && <section role="dialog" aria-label="Ask AI" className="card" style={{ position: 'fixed', right: 16, bottom: 16, top: 70, width: 'min(520px, calc(100vw - 32px))', zIndex: 3000, padding: 0, display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(15,23,42,.3)' }}>
+    {open && <section role="dialog" aria-label="Ask AI" className="card" style={{ position: 'fixed', right: 16, bottom: 16, top: 70, width: 'min(520px, calc(100vw - 32px))', maxWidth: 'calc(100vw - 32px)', overflow: 'hidden', zIndex: 3000, padding: 0, display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(15,23,42,.3)' }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div><strong style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Sparkles size={16} /> Ask AI</strong><small style={{ color: 'var(--text-muted)' }}>Reads your data to answer. It can't change anything.</small></div>
         <span style={{ display: 'flex', gap: 4 }}>
@@ -118,12 +118,12 @@ export const AskAiButton: React.FC = () => {
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)} aria-label="Close"><X size={16} /></button>
         </span>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'grid', gap: 10, alignContent: 'start' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: 14, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, alignContent: 'start', minWidth: 0 }}>
         {!turns.length && <div style={{ display: 'grid', gap: 6 }}>
           <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Ask in plain words, for example:</span>
           {EXAMPLES.map(example => <button key={example} type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'flex-start', textAlign: 'left', whiteSpace: 'normal' }} onClick={() => void ask(example)}>{example}</button>)}
         </div>}
-        {turns.map((turn, index) => <div key={index} style={{ justifySelf: turn.role === 'user' ? 'end' : 'stretch', maxWidth: turn.role === 'user' ? '85%' : '100%', background: turn.role === 'user' ? 'var(--navy)' : turn.error ? 'var(--red-bg)' : 'var(--bg-input)', color: turn.role === 'user' ? '#fff' : turn.error ? 'var(--red)' : 'inherit', borderRadius: 10, padding: '8px 12px', fontSize: 13.5, lineHeight: 1.45 }}>
+        {turns.map((turn, index) => <div key={index} style={{ minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word', justifySelf: turn.role === 'user' ? 'end' : 'stretch', maxWidth: turn.role === 'user' ? '85%' : '100%', background: turn.role === 'user' ? 'var(--navy)' : turn.error ? 'var(--red-bg)' : 'var(--bg-input)', color: turn.role === 'user' ? '#fff' : turn.error ? 'var(--red)' : 'inherit', borderRadius: 10, padding: '8px 12px', fontSize: 13.5, lineHeight: 1.45 }}>
           {turn.role === 'assistant' && (turn.steps?.length || turn.working) ? <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'grid', gap: 2, marginBottom: turn.text ? 6 : 0 }}>{(turn.steps || []).map((step, k) => <div key={k} dir="auto">✓ {step}</div>)}{turn.working && turn.status && <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--navy)', fontWeight: 600 }}><span className="ask-ai-dot" />{turn.status}</div>}</div> : null}{turn.role === 'user' ? <div dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{turn.text}</div> : turn.text ? <Answer text={turn.text} /> : null}
           {(turn.downloads || []).map((offer, k) => <div key={k}><DownloadButton offer={offer} /></div>)}{turn.lookups && turn.lookups.length > 0 && <details style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}><summary style={{ cursor: 'pointer' }}>What it looked at ({turn.lookups.length})</summary>{turn.lookups.map((item, k) => <div key={k} style={{ wordBreak: 'break-all' }}>{item}</div>)}</details>}
         </div>)}

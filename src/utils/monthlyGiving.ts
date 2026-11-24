@@ -8,7 +8,26 @@ import { moneyText } from './money';
 
 export type MonthCell = { amount: number; how: string; byMethod: Record<string, number> };
 export type MonthlySort = 'first' | 'last' | 'hebLast' | 'hebFirst' | 'title' | 'total';
-export type MonthlyRow = { donorId: string; donorNumber: string; donor: string; hebrewName: string; phone: string; firstName: string; lastName: string; hebFirstName: string; hebLastName: string; title: string; total: number; months: Record<string, MonthCell> };
+/** This year's pledges of one donor: pledged, paid on them, left, and how much of what is left a monthly schedule will pay. */
+export type PledgeSummary = { pledged: number; paid: number; left: number; scheduled: number };
+export type MonthlyRow = { donorId: string; donorNumber: string; donor: string; hebrewName: string; phone: string; firstName: string; lastName: string; hebFirstName: string; hebLastName: string; title: string; total: number; months: Record<string, MonthCell>; pledge?: PledgeSummary; extra?: Record<string, any> };
+/** A donor column the user can add to the report (phone, tags, address …). */
+export type ExtraColumn = { key: string; label: string; type?: 'text' | 'money' | 'number' };
+export const PLEDGE_COLUMNS: { key: keyof PledgeSummary; label: string }[] = [{ key: 'pledged', label: 'Pledged' }, { key: 'paid', label: 'Paid' }, { key: 'left', label: 'Left' }, { key: 'scheduled', label: 'Scheduled' }];
+
+/** Adds up each donor's pledges of one year (pledge rows from the report data). */
+export const pledgeSummaries = (pledges: Record<string, any>[], year: string) => {
+  const byDonor = new Map<string, PledgeSummary>();
+  for (const pledge of pledges) {
+    if (String(pledge.campaignYear || pledge.year || '') !== year) continue;
+    const key = String(pledge.donorId || ''); const sum = byDonor.get(key) || { pledged: 0, paid: 0, left: 0, scheduled: 0 };
+    const balance = Number(pledge.balance || 0);
+    sum.pledged += Number(pledge.amountCAD ?? pledge.amount ?? 0); sum.paid += Number(pledge.paid || 0); sum.left += balance; sum.scheduled += Math.min(Number(pledge.scheduled || 0), Math.max(0, balance));
+    byDonor.set(key, sum);
+  }
+  for (const sum of byDonor.values()) { sum.pledged = cents(sum.pledged); sum.paid = cents(sum.paid); sum.left = cents(sum.left); sum.scheduled = cents(sum.scheduled); }
+  return byDonor;
+};
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const monthLabel = (month: string) => `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
@@ -31,7 +50,7 @@ export const howText = (byMethod: Record<string, number>) => {
   return parts.map(([method, amount]) => `${method} ${dollars(cents(amount))}`).join(' + ');
 };
 
-export const buildMonthlyGiving = (payments: Record<string, any>[], donors: Record<string, any>[], fromMonth: string, toMonth: string, options: { onlyGivers?: boolean; sort?: MonthlySort } = {}) => {
+export const buildMonthlyGiving = (payments: Record<string, any>[], donors: Record<string, any>[], fromMonth: string, toMonth: string, options: { onlyGivers?: boolean; sort?: MonthlySort; includeDonorIds?: Iterable<string> } = {}) => {
   const months = monthsBetween(fromMonth, toMonth); const wanted = new Set(months);
   const rows = new Map<string, MonthlyRow>();
   const rowFor = (donorId: string, fallbackName = '') => {
@@ -40,6 +59,8 @@ export const buildMonthlyGiving = (payments: Record<string, any>[], donors: Reco
     return row;
   };
   if (options.onlyGivers === false) donors.forEach(donor => rowFor(String(donor.id)));
+  // Donors who have a pledge this year show even if they gave nothing in these months.
+  for (const donorId of options.includeDonorIds || []) if (donorId && donors.some(item => String(item.id) === donorId)) rowFor(donorId);
   for (const payment of payments) {
     if (payment.status !== 'Approved') continue;
     const month = String(payment.date || '').slice(0, 7); if (!wanted.has(month)) continue;
@@ -70,13 +91,16 @@ export const buildMonthlyGiving = (payments: Record<string, any>[], donors: Reco
   return { months, rows: list, totals, grandTotal: cents(list.reduce((sum, row) => sum + row.total, 0)) };
 };
 
-export const monthlyGivingSheet = (report: ReturnType<typeof buildMonthlyGiving>, title: string): ExcelSheet => {
+export const monthlyGivingSheet = (report: ReturnType<typeof buildMonthlyGiving>, title: string, options: { extras?: ExtraColumn[]; pledgeYear?: string } = {}): ExcelSheet => {
   // The name is split in separate columns so it can be sorted in Excel by any part.
   const columns: ExcelColumn[] = [{ key: 'donorNumber', header: 'Donor #', type: 'text' }, { key: 'firstName', header: 'First name', type: 'text' }, { key: 'lastName', header: 'Last name', type: 'text' }, { key: 'hebFirstName', header: 'Hebrew first name', type: 'text' }, { key: 'hebLastName', header: 'Hebrew last name', type: 'text' }, { key: 'title', header: 'Title', type: 'text' }, { key: 'phone', header: 'Phone', type: 'text' }];
+  for (const extra of options.extras || []) columns.push({ key: `extra-${extra.key}`, header: extra.label, type: extra.type || 'text' });
+  if (options.pledgeYear) for (const column of PLEDGE_COLUMNS) columns.push({ key: `pledge-${column.key}`, header: `${options.pledgeYear} ${column.label.toLowerCase()}`, type: 'money', width: 13 });
   for (const month of report.months) columns.push({ key: `${month}-amount`, header: `${monthLabel(month)} total`, type: 'money', width: 13 }, { key: `${month}-how`, header: `${monthLabel(month)} how paid`, type: 'text', width: 28 });
   columns.push({ key: 'total', header: 'Total', type: 'money', width: 14 });
-  const rows = report.rows.map(row => { const out: Record<string, any> = { donorNumber: row.donorNumber, firstName: row.firstName, lastName: row.lastName, hebFirstName: row.hebFirstName, hebLastName: row.hebLastName, title: row.title, phone: row.phone, total: row.total }; for (const month of report.months) { const cell = row.months[month]; out[`${month}-amount`] = cell ? cell.amount : ''; out[`${month}-how`] = cell ? cell.how : ''; } return out; });
+  const rows = report.rows.map(row => { const out: Record<string, any> = { donorNumber: row.donorNumber, firstName: row.firstName, lastName: row.lastName, hebFirstName: row.hebFirstName, hebLastName: row.hebLastName, title: row.title, phone: row.phone, total: row.total }; for (const extra of options.extras || []) out[`extra-${extra.key}`] = row.extra?.[extra.key] ?? ''; if (options.pledgeYear) for (const column of PLEDGE_COLUMNS) out[`pledge-${column.key}`] = row.pledge ? row.pledge[column.key] : ''; for (const month of report.months) { const cell = row.months[month]; out[`${month}-amount`] = cell ? cell.amount : ''; out[`${month}-how`] = cell ? cell.how : ''; } return out; });
   const totals: Record<string, any> = { firstName: 'Total', total: report.grandTotal };
+  if (options.pledgeYear) for (const column of PLEDGE_COLUMNS) totals[`pledge-${column.key}`] = cents(report.rows.reduce((sum, row) => sum + (row.pledge ? row.pledge[column.key] : 0), 0));
   for (const month of report.months) { totals[`${month}-amount`] = report.totals[month].amount; totals[`${month}-how`] = report.totals[month].how; }
   return { name: 'Monthly by donor', title, columns, rows, totals, freezeColumns: 5 };
 };

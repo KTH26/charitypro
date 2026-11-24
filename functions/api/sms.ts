@@ -99,13 +99,13 @@ export const smsReply = async (db: any, deps: Deps, from: string, rawBody: strin
     const what = rest.replace(/\$?\s*\d[\d,]*(?:\.\d{1,2})?/, '').trim();
     const now = Date.now(); const today = new Date(now).toISOString().slice(0, 10); const id = `texted-payment-${now}-${Math.random().toString(36).slice(2, 8)}`;
     const english = String(account.donor.name || '');
-    const task = { id, donorId: session.donorId, title: `Confirm payment (texted): ${english || name}${amount ? ` $${amount.toLocaleString('en-CA')}` : ''}`, notes: `${from} texted on ${today} that ${name}${english && english !== name ? ` (${english})` : ''} paid${amount ? ` $${amount.toLocaleString('en-CA')}` : ''}${what ? ` – "${what.slice(0, 200)}"` : ''}. Check that it really came in, then enter the payment. Nothing was entered yet.`, dueDate: today, priority: 'high', type: 'payment_report', completed: false, reportedBy: from, reportedAmount: amount || undefined, createdAt: new Date(now).toISOString() };
+    const task = { id, donorId: session.donorId, title: `Confirm payment (texted): ${english || name}${amount ? ` $${amount.toLocaleString('en-CA')}` : ''}`, notes: `${from} texted on ${today} that ${name}${english && english !== name ? ` (${english})` : ''} paid${amount ? ` $${amount.toLocaleString('en-CA')}` : ''}${what ? ` – "${what.slice(0, 200)}"` : ''}. Check that it really came in, then enter the payment. Nothing was entered yet.`, dueDate: today, priority: 'high', type: 'payment_report', completed: false, reportedBy: from, reportedAmount: amount || undefined, reportedText: what ? what.slice(0, 200) : undefined, createdAt: new Date(now).toISOString() };
     const data = JSON.stringify(task);
     await db.batch([
       db.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'tasks',?,?,1,0,?)").bind(id, data, now, `${id}-insert`),
       db.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'tasks',1,'insert',?,?,?,?)").bind(id, data, now, `sms-${id}`, `${id}-insert`),
     ]);
-    return `Noted: ${name}${amount ? ` paid $${amount.toLocaleString('en-CA')}` : ' paid'}${what ? ` (${what.slice(0, 60)})` : ''}. It's in the reminders on the site to confirm and enter. Nothing was entered yet.`;
+    return `Noted: ${name}${amount ? ` paid $${amount.toLocaleString('en-CA')}` : ' paid'}${what ? ` (${what.slice(0, 60)})` : ''}. It's in the bell on the site: click Approve payment there to enter it. Nothing was entered yet.`;
   }
   if (/^[PAL]$/i.test(body)) {
     if (!fresh || !session.donorId) return 'First send the last 4 digits of the donor\'s phone.';

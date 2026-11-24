@@ -61,7 +61,11 @@ export const OnlinePaymentForm: React.FC<{
   /** Pre-fill which pledge(s) this payment pays (for "paid right away" on a new pledge). */
   defaultAllocations?: PledgeAllocationDraft[];
   title?: string;
-}> = ({ onCreated, onCancel, donor: fixedDonor, defaultAmount, defaultDate, defaultSourceAccountId, forceApproved = false, defaultCurrency, defaultAllocations, title }) => {
+  /** Pre-fill the method, check number and notes (for a payment someone texted in). */
+  defaultMethod?: string;
+  defaultCheckNumber?: string;
+  defaultNotes?: string;
+}> = ({ onCreated, onCancel, donor: fixedDonor, defaultAmount, defaultDate, defaultSourceAccountId, forceApproved = false, defaultCurrency, defaultAllocations, title, defaultMethod, defaultCheckNumber, defaultNotes }) => {
   const [picked, setPicked] = useState<PickedDonor | null>(fixedDonor || null);
   const donorId = picked?.id || '';
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -75,7 +79,7 @@ export const OnlinePaymentForm: React.FC<{
   const [exchangeRateSource, setExchangeRateSource] = useState<'bank_of_canada' | 'agreed'>('bank_of_canada');
   const [exchangeRateDate, setExchangeRateDate] = useState('');
   const [loadingRate, setLoadingRate] = useState(false);
-  const [method, setMethod] = useState('');
+  const [method, setMethod] = useState(defaultMethod || '');
   const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
   // Enter a new card right here (Sola secure fields); after saving it is picked automatically.
   const [addingCard, setAddingCard] = useState(false);
@@ -88,12 +92,12 @@ export const OnlinePaymentForm: React.FC<{
   const stripeHandle = useRef<StripeHandle | null>(null);
   const stripeCharged = useRef<{ intentId: string; key: string } | null>(null);
   const [paymentMethodId, setPaymentMethodId] = useState('');
-  const [checkNumber, setCheckNumber] = useState('');
+  const [checkNumber, setCheckNumber] = useState(defaultCheckNumber || '');
   const [availabilityDate, setAvailabilityDate] = useState(defaultDate || localToday());
   const [date, setDate] = useState(defaultDate || localToday());
   const [sourceAccountId, setSourceAccountId] = useState(defaultSourceAccountId || '');
   const [revenueOverride, setRevenueOverride] = useState('');
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(defaultNotes || '');
   const [projectId, setProjectId] = useState('');
   const [fundraiserAllocations, setFundraiserAllocations] = useState<FundraiserAllocationDraft[]>([]);
   const [fundraiserGroupId, setFundraiserGroupId] = useState('');

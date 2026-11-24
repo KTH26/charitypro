@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Filter, X } from 'lucide-react';
 import type { SortDirection } from './SortableTh';
 
@@ -54,7 +55,7 @@ export const ColumnTh: React.FC<{ column: string; label: string; kind?: ColumnKi
   const [open, setOpen] = useState(false);
   const [spot, setSpot] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const root = useRef<HTMLTableCellElement>(null);
-  useEffect(() => { if (!open) return; const close = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); }; document.addEventListener('mousedown', close); return () => document.removeEventListener('mousedown', close); }, [open]);
+  useEffect(() => { if (!open) return; const close = (event: MouseEvent) => { const target = event.target as HTMLElement; if (!root.current?.contains(target) && !target?.closest?.('[data-column-filter-box]')) setOpen(false); }; document.addEventListener('mousedown', close); return () => document.removeEventListener('mousedown', close); }, [open]);
   return (
     <th ref={root} aria-sort={active ? (cols.direction === 'asc' ? 'ascending' : 'descending') : 'none'} style={{ textAlign: align, position: 'relative', whiteSpace: 'nowrap', ...style }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexDirection: align === 'right' ? 'row-reverse' : 'row' }}>
@@ -64,7 +65,7 @@ export const ColumnTh: React.FC<{ column: string; label: string; kind?: ColumnKi
         {filterable && <button type="button" onClick={event => { event.stopPropagation(); const rect = root.current?.getBoundingClientRect(); if (rect) setSpot({ top: rect.bottom + 4, left: Math.max(8, Math.min(window.innerWidth - 266, align === 'right' ? rect.right - 250 : rect.left)) }); setOpen(value => !value); }} title={`Filter ${label}`} aria-label={`Filter ${label}`}
           style={{ border: 0, background: filtered ? 'var(--navy)' : 'transparent', color: filtered ? '#fff' : 'var(--text-muted)', borderRadius: 4, padding: 2, cursor: 'pointer', display: 'inline-grid', placeItems: 'center', opacity: filtered ? 1 : 0.6 }}><Filter size={11} /></button>}
       </span>
-      {open && <ColumnFilterBox column={column} label={label} kind={kind} cols={cols} spot={spot} onClose={() => setOpen(false)} />}
+      {open && createPortal(<ColumnFilterBox column={column} label={label} kind={kind} cols={cols} spot={spot} onClose={() => setOpen(false)} />, document.body)}
     </th>
   );
 };
@@ -82,7 +83,7 @@ const ColumnFilterBox: React.FC<{ column: string; label: string; kind: ColumnKin
   };
   const inputType = kind === 'date' ? 'date' : 'number';
   return (
-    <div onClick={event => event.stopPropagation()} className="card" style={{ position: 'fixed', top: spot.top, left: spot.left, zIndex: 2000, width: 250, padding: 12, display: 'grid', gap: 8, textAlign: 'left', fontWeight: 400, boxShadow: '0 12px 30px rgba(15,23,42,.18)', textTransform: 'none', letterSpacing: 0 }}>
+    <div data-column-filter-box onClick={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()} className="card" style={{ position: 'fixed', top: spot.top, left: spot.left, zIndex: 5000, width: 250, padding: 12, display: 'grid', gap: 8, textAlign: 'left', fontWeight: 400, boxShadow: '0 12px 30px rgba(15,23,42,.18)', textTransform: 'none', letterSpacing: 0 }}>
       <strong style={{ fontSize: 13 }}>Filter: {label}</strong>
       {kind === 'text' ? <>
         <select value={mode} onChange={event => setMode(event.target.value)}>
