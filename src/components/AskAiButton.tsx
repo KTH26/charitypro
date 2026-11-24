@@ -1,0 +1,83 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Send, Sparkles, Trash2, X } from 'lucide-react';
+
+type Turn = { role: 'user' | 'assistant'; text: string; lookups?: string[]; error?: boolean };
+
+const EXAMPLES = [
+  'How much did we receive this month, by method?',
+  'Which donors pledged for Campaign 2026 and still owe more than $500?',
+  'Show me the declined card payments from last week.',
+  'What money is expected to come in until the end of the month?',
+];
+
+// A small, safe reader for the AI's answers: **bold**, lists, simple tables, line breaks. No HTML from the answer is used.
+const inline = (text: string) => text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.startsWith('**') && part.endsWith('**') ? <strong key={index}>{part.slice(2, -2)}</strong> : <React.Fragment key={index}>{part}</React.Fragment>);
+const Answer: React.FC<{ text: string }> = ({ text }) => {
+  const lines = text.split('\n'); const out: React.ReactNode[] = [];
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      const rows: string[][] = [];
+      while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index])) { if (!/^\s*\|[\s:|-]+\|\s*$/.test(lines[index])) rows.push(lines[index].trim().slice(1, -1).split('|').map(cell => cell.trim())); index++; }
+      index--;
+      out.push(<div key={index} style={{ overflowX: 'auto', margin: '6px 0' }}><table style={{ borderCollapse: 'collapse', fontSize: 12.5 }}><tbody>{rows.map((row, r) => <tr key={r}>{row.map((cell, k) => <td key={k} style={{ border: '1px solid var(--border)', padding: '3px 6px', fontWeight: r === 0 ? 700 : 400, whiteSpace: 'nowrap' }} dir="auto">{inline(cell)}</td>)}</tr>)}</tbody></table></div>);
+    } else if (/^\s*[-*]\s+/.test(line)) out.push(<div key={index} style={{ paddingLeft: 14, textIndent: -10 }} dir="auto">• {inline(line.replace(/^\s*[-*]\s+/, ''))}</div>);
+    else if (/^#{1,4}\s+/.test(line)) out.push(<div key={index} style={{ fontWeight: 700, marginTop: 6 }} dir="auto">{inline(line.replace(/^#{1,4}\s+/, ''))}</div>);
+    else if (!line.trim()) out.push(<div key={index} style={{ height: 6 }} />);
+    else out.push(<div key={index} dir="auto">{inline(line)}</div>);
+  }
+  return <>{out}</>;
+};
+
+/** "Ask AI": ask questions about donors, pledges, payments and reports in plain words. Read only. */
+export const AskAiButton: React.FC = () => {
+  const [open, setOpen] = useState(false);
+  const [turns, setTurns] = useState<Turn[]>(() => { try { return JSON.parse(sessionStorage.getItem('ask-ai-turns') || '[]'); } catch { return []; } });
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const bottom = useRef<HTMLDivElement>(null);
+  useEffect(() => { try { sessionStorage.setItem('ask-ai-turns', JSON.stringify(turns.slice(-30))); } catch { /* not kept */ } bottom.current?.scrollIntoView({ block: 'end' }); }, [turns, open]);
+
+  const ask = async (question: string) => {
+    const text = question.trim(); if (!text || busy) return;
+    const next: Turn[] = [...turns, { role: 'user', text }];
+    setTurns(next); setInput(''); setBusy(true);
+    try {
+      const response = await fetch('/api/v3/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next.filter(turn => !turn.error).map(turn => ({ role: turn.role, text: turn.text })) }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || `The AI could not answer (${response.status}).`);
+      setTurns(current => [...current, { role: 'assistant', text: data.reply, lookups: data.lookups || [] }]);
+    } catch (reason: any) {
+      setTurns(current => [...current, { role: 'assistant', text: reason.message || 'The AI could not answer.', error: true }]);
+    } finally { setBusy(false); }
+  };
+
+  return <>
+    <button type="button" className="btn btn-secondary" onClick={() => setOpen(value => !value)} title="Ask the AI about donors, pledges, payments and reports" style={{ height: 42, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Sparkles size={16} /> Ask AI</button>
+    {open && <section role="dialog" aria-label="Ask AI" className="card" style={{ position: 'fixed', right: 16, bottom: 16, top: 70, width: 'min(520px, calc(100vw - 32px))', zIndex: 3000, padding: 0, display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(15,23,42,.3)' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div><strong style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Sparkles size={16} /> Ask AI</strong><small style={{ color: 'var(--text-muted)' }}>Reads your data to answer. It can't change anything.</small></div>
+        <span style={{ display: 'flex', gap: 4 }}>
+          {turns.length > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTurns([])} title="Start a new conversation"><Trash2 size={15} /></button>}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)} aria-label="Close"><X size={16} /></button>
+        </span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'grid', gap: 10, alignContent: 'start' }}>
+        {!turns.length && <div style={{ display: 'grid', gap: 6 }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Ask in plain words, for example:</span>
+          {EXAMPLES.map(example => <button key={example} type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'flex-start', textAlign: 'left', whiteSpace: 'normal' }} onClick={() => void ask(example)}>{example}</button>)}
+        </div>}
+        {turns.map((turn, index) => <div key={index} style={{ justifySelf: turn.role === 'user' ? 'end' : 'stretch', maxWidth: turn.role === 'user' ? '85%' : '100%', background: turn.role === 'user' ? 'var(--navy)' : turn.error ? 'var(--red-bg)' : 'var(--bg-input)', color: turn.role === 'user' ? '#fff' : turn.error ? 'var(--red)' : 'inherit', borderRadius: 10, padding: '8px 12px', fontSize: 13.5, lineHeight: 1.45 }}>
+          {turn.role === 'user' ? <div dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{turn.text}</div> : <Answer text={turn.text} />}
+          {turn.lookups && turn.lookups.length > 0 && <details style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}><summary style={{ cursor: 'pointer' }}>What it looked at ({turn.lookups.length})</summary>{turn.lookups.map((item, k) => <div key={k} style={{ wordBreak: 'break-all' }}>{item}</div>)}</details>}
+        </div>)}
+        {busy && <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Looking it up…</div>}
+        <div ref={bottom} />
+      </div>
+      <form onSubmit={event => { event.preventDefault(); void ask(input); }} style={{ borderTop: '1px solid var(--border)', padding: 10, display: 'flex', gap: 8 }}>
+        <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void ask(input); } }} placeholder="Ask a question…" rows={2} dir="auto" style={{ flex: 1, resize: 'none' }} disabled={busy} />
+        <button type="submit" className="btn btn-primary" disabled={busy || !input.trim()} aria-label="Send"><Send size={16} /></button>
+      </form>
+    </section>}
+  </>;
+};

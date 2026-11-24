@@ -679,3 +679,41 @@ describe('business accounts', () => {
     expect(blocked.status).toBe(409);
   });
 });
+
+describe('Ask AI', () => {
+  it('needs the key, reads only allowed pages with the same permissions, and answers', async () => {
+    const { registerAiChatRoutes } = await import('../functions/api/ai-chat');
+    const { db } = setup();
+    seed(db, 'transactions', 't1', { donorId: 'd1', amount: 180, currency: 'CAD', type: 'approved', date: '2026-11-01', method: 'cash' });
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userEmail', 'tester@example.com'); await next(); });
+    registerServerDataRoutes(app as any); registerAiChatRoutes(app);
+    const ask = (env: any) => app.request('/v3/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', text: 'How much did Moshe give?' }] }) }, env);
+    expect((await ask({ DB: db })).status).toBe(503);
+
+    // A pretend Claude: first asks for two pages (one not allowed), then answers.
+    const sent: any[] = []; const realFetch = globalThis.fetch;
+    let round = 0;
+    globalThis.fetch = (async (_url: any, init: any) => {
+      sent.push(JSON.parse(String(init.body)));
+      round++;
+      const content = round === 1
+        ? [{ type: 'tool_use', id: 'a', name: 'get_data', input: { path: '/v3/payments', query: { search: 'moshe', limit: '500' } } }, { type: 'tool_use', id: 'b', name: 'get_data', input: { path: '/v3/backup' } }]
+        : [{ type: 'text', text: 'Moshe Cohen gave **$180.00**.' }];
+      return new Response(JSON.stringify({ id: `m${round}`, type: 'message', role: 'assistant', model: 'claude-opus-5-5', content, stop_reason: round === 1 ? 'tool_use' : 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as any;
+    try {
+      const response = await ask({ DB: db, ANTHROPIC_API_KEY: 'test-key' });
+      const data: any = await response.json();
+      expect(data).toMatchObject({ success: true, reply: 'Moshe Cohen gave **$180.00**.' });
+      expect(data.lookups).toEqual(['/v3/payments {"search":"moshe","limit":"500"}', '/v3/backup']);
+      const results = sent[1].messages.at(-1).content;
+      expect(JSON.parse(results[0].content)).toMatchObject({ status: 200 });
+      expect(JSON.parse(JSON.parse(results[0].content).body).items.map((item: any) => item.id)).toEqual(['t1']);
+      expect(results[1]).toMatchObject({ is_error: true });
+      expect(sent[0].model).toBe('claude-opus-5-5');
+      const logged = db.database.prepare("SELECT new_data FROM audit_log WHERE record_type='aiChat'").get() as any;
+      expect(JSON.parse(logged.new_data)).toMatchObject({ question: 'How much did Moshe give?' });
+    } finally { globalThis.fetch = realFetch; }
+  });
+});
