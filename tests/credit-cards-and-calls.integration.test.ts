@@ -744,3 +744,19 @@ describe('donor tags', () => {
     expect((await call('GET', '/v3/donors?limit=50&f_tags=need')).body.items).toEqual([]);
   });
 });
+
+describe('campaign chosen by hand', () => {
+  it('a pledge with a campaign chosen by hand keeps it when saved or organized, until turned back to by-date', async () => {
+    const { db, call } = setup();
+    seed(db, 'campaigns', 'y26', { name: 'Campaign 2026', year: 2026, startDate: '2026-03-01', endDate: '2027-02-28', currency: 'CAD', status: 'active' });
+    seed(db, 'campaigns', 'y27', { name: 'Campaign 2027', year: 2027, startDate: '2027-03-01', endDate: '2028-02-29', currency: 'CAD', status: 'active' });
+    seed(db, 'pledges', 'pm', { donorId: 'd1', amount: 500, currency: 'CAD', date: '2026-03-24', campaignId: 'y27', campaignLocked: true });
+    const campaignOf = () => JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='pm'").get() as any).data)).campaignId;
+    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 1, data: { notes: 'x', campaignId: 'y26' } })).status).toBe(200);
+    expect(campaignOf()).toBe('y27');
+    await call('POST', '/v3/campaigns/assign-pledges');
+    expect(campaignOf()).toBe('y27');
+    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 2, data: { campaignLocked: false, campaignId: 'y26' } })).status).toBe(200);
+    expect(campaignOf()).toBe('y26');
+  });
+});

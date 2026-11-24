@@ -1081,7 +1081,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (type === 'pledges') {
       const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
       // The main campaign comes from the date; a sub-campaign of that main campaign is kept when chosen.
-      record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId);
+      // A campaign chosen by hand (campaignLocked) is kept; otherwise the date decides.
+      const lockedCampaign: any = record.campaignLocked === true && record.campaignId ? await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first() : null;
+      if (!lockedCampaign) { record.campaignLocked = false; record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId); }
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -1181,7 +1183,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (type === 'pledges') {
       const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
       // The main campaign comes from the date; a sub-campaign of that main campaign is kept when chosen.
-      record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId);
+      // A campaign chosen by hand (campaignLocked) is kept, unless this save turns it off or picks another one by hand.
+      if (existing.campaignLocked === true && body.data?.campaignLocked !== false && !(body.data?.campaignLocked === true && body.data?.campaignId)) record.campaignId = existing.campaignId;
+      const lockedCampaign: any = record.campaignLocked === true && record.campaignId ? await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first() : null;
+      if (!lockedCampaign) { record.campaignLocked = false; record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId); }
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -1335,7 +1340,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       const pledge = parseSetting(row.data, {}); const date = isoDate(pledge.date);
       const campaign = date ? campaigns.find((item: any) => isoDate(item.startDate) <= date && isoDate(item.endDate) >= date) : null;
       if (!campaign) { unmatched += 1; continue; }
-      if (String(pledge.campaignId || '') === campaign.id || keptCampaign(String(pledge.campaignId || ''))) { unchanged += 1; continue; }
+      if (String(pledge.campaignId || '') === campaign.id || keptCampaign(String(pledge.campaignId || '')) || pledge.campaignLocked === true) { unchanged += 1; continue; }
       const next = { ...pledge, id: String(row.id), campaignId: campaign.id }; const data = JSON.stringify(next); const revision = Number(row.revision) + 1; const operationId = `${mutationId}-${row.id}`;
       changes.push([
         c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='pledges' AND id=? AND revision=? AND is_deleted=0").bind(data, revision, now, operationId, row.id, row.revision),
