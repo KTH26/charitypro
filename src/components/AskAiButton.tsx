@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Send, Sparkles, Trash2, X } from 'lucide-react';
 
-type Turn = { role: 'user' | 'assistant'; text: string; lookups?: string[]; error?: boolean };
+type Turn = { role: 'user' | 'assistant'; text: string; lookups?: string[]; error?: boolean; steps?: string[]; status?: string; working?: boolean };
 
 const EXAMPLES = [
   'How much did we receive this month, by method?',
@@ -29,10 +29,12 @@ const Answer: React.FC<{ text: string }> = ({ text }) => {
   return <>{out}</>;
 };
 
+const PULSE = '@keyframes askAiPulse { 0%, 100% { opacity: .25 } 50% { opacity: 1 } } .ask-ai-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: askAiPulse 1s ease-in-out infinite; }';
+
 /** "Ask AI": ask questions about donors, pledges, payments and reports in plain words. Read only. */
 export const AskAiButton: React.FC = () => {
   const [open, setOpen] = useState(false);
-  const [turns, setTurns] = useState<Turn[]>(() => { try { return JSON.parse(sessionStorage.getItem('ask-ai-turns') || '[]'); } catch { return []; } });
+  const [turns, setTurns] = useState<Turn[]>(() => { try { return (JSON.parse(sessionStorage.getItem('ask-ai-turns') || '[]') as Turn[]).filter(turn => !turn.working); } catch { return []; } });
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
@@ -40,20 +42,38 @@ export const AskAiButton: React.FC = () => {
 
   const ask = async (question: string) => {
     const text = question.trim(); if (!text || busy) return;
-    const next: Turn[] = [...turns, { role: 'user', text }];
-    setTurns(next); setInput(''); setBusy(true);
+    const history: Turn[] = [...turns, { role: 'user', text }];
+    // The answer bubble is filled live: what it is doing now, each look-up, then the answer as it is written.
+    setTurns([...history, { role: 'assistant', text: '', steps: [], status: 'Starting…', working: true }]); setInput(''); setBusy(true);
+    const update = (change: (turn: Turn) => Turn) => setTurns(current => { const next = [...current]; next[next.length - 1] = change(next[next.length - 1]); return next; });
     try {
-      const response = await fetch('/api/v3/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next.filter(turn => !turn.error).map(turn => ({ role: turn.role, text: turn.text })) }) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) throw new Error(data.error || `The AI could not answer (${response.status}).`);
-      setTurns(current => [...current, { role: 'assistant', text: data.reply, lookups: data.lookups || [] }]);
+      const response = await fetch('/api/v3/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history.filter(turn => !turn.error).map(turn => ({ role: turn.role, text: turn.text })) }) });
+      if (!response.ok || !response.body) { const data = await response.json().catch(() => ({})); throw new Error(data.error || `The AI could not answer (${response.status}).`); }
+      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let finished = false;
+      while (!finished) {
+        const { value, done } = await reader.read(); if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newline).trim(); buffer = buffer.slice(newline + 1); if (!line) continue;
+          let event: any; try { event = JSON.parse(line); } catch { continue; }
+          if (event.type === 'status') update(turn => ({ ...turn, status: event.text }));
+          else if (event.type === 'step') update(turn => ({ ...turn, steps: [...(turn.steps || []), event.text] }));
+          else if (event.type === 'text') update(turn => ({ ...turn, text: turn.text + event.delta }));
+          else if (event.type === 'reset') update(turn => ({ ...turn, text: '' }));
+          else if (event.type === 'done') { update(turn => ({ ...turn, text: event.reply, lookups: event.lookups || [], working: false, status: '' })); finished = true; }
+          else if (event.type === 'error') throw new Error(event.error);
+        }
+      }
+      if (!finished) throw new Error('The answer stopped before it was finished. Please try again.');
     } catch (reason: any) {
-      setTurns(current => [...current, { role: 'assistant', text: reason.message || 'The AI could not answer.', error: true }]);
+      update(turn => ({ ...turn, text: reason.message || 'The AI could not answer.', error: true, working: false, status: '' }));
     } finally { setBusy(false); }
   };
 
   return <>
     <button type="button" className="btn btn-secondary" onClick={() => setOpen(value => !value)} title="Ask the AI about donors, pledges, payments and reports" style={{ height: 42, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Sparkles size={16} /> Ask AI</button>
+    <style>{PULSE}</style>
     {open && <section role="dialog" aria-label="Ask AI" className="card" style={{ position: 'fixed', right: 16, bottom: 16, top: 70, width: 'min(520px, calc(100vw - 32px))', zIndex: 3000, padding: 0, display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(15,23,42,.3)' }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div><strong style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Sparkles size={16} /> Ask AI</strong><small style={{ color: 'var(--text-muted)' }}>Reads your data to answer. It can't change anything.</small></div>
@@ -68,10 +88,9 @@ export const AskAiButton: React.FC = () => {
           {EXAMPLES.map(example => <button key={example} type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'flex-start', textAlign: 'left', whiteSpace: 'normal' }} onClick={() => void ask(example)}>{example}</button>)}
         </div>}
         {turns.map((turn, index) => <div key={index} style={{ justifySelf: turn.role === 'user' ? 'end' : 'stretch', maxWidth: turn.role === 'user' ? '85%' : '100%', background: turn.role === 'user' ? 'var(--navy)' : turn.error ? 'var(--red-bg)' : 'var(--bg-input)', color: turn.role === 'user' ? '#fff' : turn.error ? 'var(--red)' : 'inherit', borderRadius: 10, padding: '8px 12px', fontSize: 13.5, lineHeight: 1.45 }}>
-          {turn.role === 'user' ? <div dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{turn.text}</div> : <Answer text={turn.text} />}
+          {turn.role === 'assistant' && (turn.steps?.length || turn.working) ? <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'grid', gap: 2, marginBottom: turn.text ? 6 : 0 }}>{(turn.steps || []).map((step, k) => <div key={k} dir="auto">✓ {step}</div>)}{turn.working && turn.status && <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--navy)', fontWeight: 600 }}><span className="ask-ai-dot" />{turn.status}</div>}</div> : null}{turn.role === 'user' ? <div dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{turn.text}</div> : turn.text ? <Answer text={turn.text} /> : null}
           {turn.lookups && turn.lookups.length > 0 && <details style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}><summary style={{ cursor: 'pointer' }}>What it looked at ({turn.lookups.length})</summary>{turn.lookups.map((item, k) => <div key={k} style={{ wordBreak: 'break-all' }}>{item}</div>)}</details>}
         </div>)}
-        {busy && <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Looking it up…</div>}
         <div ref={bottom} />
       </div>
       <form onSubmit={event => { event.preventDefault(); void ask(input); }} style={{ borderTop: '1px solid var(--border)', padding: 10, display: 'flex', gap: 8 }}>

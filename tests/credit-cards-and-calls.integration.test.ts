@@ -681,7 +681,21 @@ describe('business accounts', () => {
 });
 
 describe('Ask AI', () => {
-  it('needs the key, reads only allowed pages with the same permissions, and answers', async () => {
+  // A pretend Claude that answers in the live (streaming) format.
+  const sse = (events: any[]) => new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  const streamed = (id: string, blocks: any[], stopReason: string) => {
+    const events: any[] = [{ type: 'message_start', message: { id, type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } }];
+    blocks.forEach((block, index) => {
+      if (block.type === 'text') { events.push({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } }); for (const piece of block.text.match(/.{1,8}/g)) events.push({ type: 'content_block_delta', index, delta: { type: 'text_delta', text: piece } }); }
+      else { events.push({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} } }); events.push({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } }); }
+      events.push({ type: 'content_block_stop', index });
+    });
+    events.push({ type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 10 } }, { type: 'message_stop' });
+    return sse(events);
+  };
+  const readEvents = async (response: Response) => (await response.text()).split('\n').filter(Boolean).map(line => JSON.parse(line));
+
+  it('needs the key, reads only allowed pages with the same permissions, shows each step live, and answers', async () => {
     const { registerAiChatRoutes } = await import('../functions/api/ai-chat');
     const { db } = setup();
     seed(db, 'transactions', 't1', { donorId: 'd1', amount: 180, currency: 'CAD', type: 'approved', date: '2026-11-01', method: 'cash' });
@@ -691,27 +705,24 @@ describe('Ask AI', () => {
     const ask = (env: any) => app.request('/v3/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', text: 'How much did Moshe give?' }] }) }, env);
     expect((await ask({ DB: db })).status).toBe(503);
 
-    // A pretend Claude: first asks for two pages (one not allowed), then answers.
-    const sent: any[] = []; const realFetch = globalThis.fetch;
-    let round = 0;
+    const sent: any[] = []; const realFetch = globalThis.fetch; let round = 0;
     globalThis.fetch = (async (_url: any, init: any) => {
-      sent.push(JSON.parse(String(init.body)));
-      round++;
-      const content = round === 1
-        ? [{ type: 'tool_use', id: 'a', name: 'get_data', input: { path: '/v3/payments', query: { search: 'moshe', limit: '500' } } }, { type: 'tool_use', id: 'b', name: 'get_data', input: { path: '/v3/backup' } }]
-        : [{ type: 'text', text: 'Moshe Cohen gave **$180.00**.' }];
-      return new Response(JSON.stringify({ id: `m${round}`, type: 'message', role: 'assistant', model: 'claude-opus-5-5', content, stop_reason: round === 1 ? 'tool_use' : 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      sent.push(JSON.parse(String(init.body))); round++;
+      return round === 1
+        ? streamed('m1', [{ type: 'text', text: 'Let me check his payments.' }, { type: 'tool_use', id: 'a', name: 'get_data', input: { path: '/v3/payments', query: { search: 'moshe', limit: '500' } } }, { type: 'tool_use', id: 'b', name: 'get_data', input: { path: '/v3/backup' } }], 'tool_use')
+        : streamed('m2', [{ type: 'text', text: 'Moshe Cohen gave **$180.00**.' }], 'end_turn');
     }) as any;
     try {
-      const response = await ask({ DB: db, ANTHROPIC_API_KEY: 'test-key' });
-      const data: any = await response.json();
-      expect(data).toMatchObject({ success: true, reply: 'Moshe Cohen gave **$180.00**.' });
-      expect(data.lookups).toEqual(['/v3/payments {"search":"moshe","limit":"500"}', '/v3/backup']);
+      const events = await readEvents(await ask({ DB: db, ANTHROPIC_API_KEY: 'test-key' }));
+      expect(events.filter(event => event.type === 'status').map(event => event.text)).toEqual(expect.arrayContaining(['Thinking about your question…', 'Choosing what to look up…', 'Reading what it found…', 'Writing…']));
+      expect(events.filter(event => event.type === 'step').map(event => event.text)).toEqual(['Let me check his payments.', 'Looking at payments: search “moshe”', 'Looking at /v3/backup']);
+      expect(events.some(event => event.type === 'reset')).toBe(true);
+      expect(events.filter(event => event.type === 'text').map(event => event.delta).join('')).toContain('Moshe Cohen gave **$180.00**.');
+      expect(events.at(-1)).toMatchObject({ type: 'done', reply: 'Moshe Cohen gave **$180.00**.', lookups: ['/v3/payments {"search":"moshe","limit":"500"}', '/v3/backup'] });
+      expect(sent[0]).toMatchObject({ model: 'claude-opus-5-5', stream: true });
       const results = sent[1].messages.at(-1).content;
-      expect(JSON.parse(results[0].content)).toMatchObject({ status: 200 });
       expect(JSON.parse(JSON.parse(results[0].content).body).items.map((item: any) => item.id)).toEqual(['t1']);
       expect(results[1]).toMatchObject({ is_error: true });
-      expect(sent[0].model).toBe('claude-opus-5-5');
       const logged = db.database.prepare("SELECT new_data FROM audit_log WHERE record_type='aiChat'").get() as any;
       expect(JSON.parse(logged.new_data)).toMatchObject({ question: 'How much did Moshe give?' });
     } finally { globalThis.fetch = realFetch; }

@@ -61,6 +61,8 @@ How to answer:
 
 const tools: Anthropic.Beta.BetaTool[] = [{
   name: 'get_data',
+  // The tool input streams as it is written; getData checks every input (allowed path, simple query) before using it.
+  eager_input_streaming: true,
   description: `Read data from CharityPro (read only). path must be one of these (replace {id} with a real id from an earlier result):\n${ALLOWED_PATHS.map(item => `- ${item.path}: ${item.what}`).join('\n')}\nquery holds the URL query parameters as strings. Lists return {items, total, totalPages} (page size up to 100).`,
   input_schema: {
     type: 'object',
@@ -74,6 +76,24 @@ const tools: Anthropic.Beta.BetaTool[] = [{
 }];
 
 type ChatTurn = { role: 'user' | 'assistant'; text: string };
+
+// "Looking at payments: search 'moshe', from 2026-11-01" - what a look-up reads, in plain words.
+const PAGE_NAMES: [RegExp, string][] = [
+  [/^\/v3\/donors\/[^/]+\/profile$/, 'a donor’s page'], [/^\/v3\/donors\/[^/]+\/statement$/, 'a donor statement'], [/^\/v3\/donors$/, 'donors'],
+  [/^\/v3\/pledges\/[^/]+\/details$/, 'one pledge'], [/^\/v3\/pledges$/, 'pledges'], [/^\/v3\/payments$/, 'payments'], [/^\/v3\/schedules$/, 'schedules'],
+  [/^\/v3\/ledger$/, 'all money movements'], [/^\/v3\/bills$/, 'expenses'], [/^\/v3\/vendors$/, 'vendors'], [/^\/v3\/accounts\/[^/]+\/ledger$/, 'one account'],
+  [/^\/v3\/accounts$/, 'the chart of accounts'], [/^\/v3\/profit-loss$/, 'profit and loss'], [/^\/v3\/tasks$/, 'tasks'], [/^\/v3\/receipts$/, 'receipts'],
+  [/^\/v3\/expected-income$/, 'money expected to come in'], [/^\/v3\/loans-payable$/, 'loans'], [/^\/v3\/credit-cards-due$/, 'credit cards due'],
+  [/^\/v3\/donor-contacts$/, 'the call tracker'], [/^\/v3\/records\/campaigns$/, 'campaigns'], [/^\/v3\/report-data$/, 'a full report'], [/^\/v3\/summary$/, 'the overall totals'],
+];
+const QUERY_WORDS: Record<string, string> = { search: 'search', from: 'from', to: 'to', status: 'status', method: 'method', source: 'report', sort: 'sorted by', page: 'page' };
+export const describeLookup = (input: any) => {
+  const path = String(input?.path || '').split('?')[0];
+  const name = PAGE_NAMES.find(([pattern]) => pattern.test(path))?.[1] || path;
+  const query = Object.entries(input?.query || {}).filter(([key, value]) => String(value || '') && (QUERY_WORDS[key] || key.startsWith('f_'))).slice(0, 4)
+    .map(([key, value]) => key.startsWith('f_') ? `${key.slice(2)} ${String(value).replace(/^\^/, 'starts with ').replace(/^=/, 'is ').replace('..', ' to ')}` : `${QUERY_WORDS[key]} ${key === 'search' ? `“${value}”` : value}`);
+  return query.length ? `${name}: ${query.join(', ')}` : name;
+};
 
 export const registerAiChatRoutes = (app: any, prefix = '') => {
   app.post('/v3/ai/chat', async (c: any) => {
@@ -108,45 +128,71 @@ export const registerAiChatRoutes = (app: any, prefix = '') => {
     // Today's date goes after the conversation (not in the system prompt), so the system prompt stays cacheable.
     messages.push({ role: 'system', content: `Today is ${today} (Toronto).` } as any);
     const lookups: string[] = [];
-    try {
-      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const response = await client.beta.messages.create({
-          model: MODEL,
-          max_tokens: 16000,
-          system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-          tools,
-          messages,
-          output_config: { effort: 'medium' },
-          betas: ['server-side-fallback-2026-07-01'],
-          fallbacks: 'default',
-        } as any) as Anthropic.Beta.BetaMessage;
-        if (response.stop_reason === 'refusal') return c.json({ success: true, reply: 'Sorry, I can’t help with that question.', lookups });
-        const toolUses = response.content.filter((block): block is Anthropic.Beta.BetaToolUseBlock => block.type === 'tool_use');
-        if (response.stop_reason !== 'tool_use' || !toolUses.length) {
-          const reply = response.content.filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === 'text').map(block => block.text).join('\n').trim();
-          await logQuestion(c, history[history.length - 1].text, reply, lookups);
-          return c.json({ success: true, reply: reply || (response.stop_reason === 'max_tokens' ? 'The answer was too long. Please ask a narrower question.' : 'No answer.'), lookups });
-        }
-        messages.push({ role: 'assistant', content: response.content as any });
-        const results = await Promise.all(toolUses.map(async block => {
-          const input: any = block.input || {};
-          lookups.push(`${String(input.path || '')}${input.query && Object.keys(input.query).length ? ` ${JSON.stringify(input.query)}` : ''}`);
-          try {
-            const result = await getData(input);
-            return { type: 'tool_result' as const, tool_use_id: block.id, content: JSON.stringify(result), ...('error' in result ? { is_error: true } : {}) };
-          } catch (reason: any) {
-            return { type: 'tool_result' as const, tool_use_id: block.id, content: `Error: ${reason?.message || 'could not read'}`, is_error: true };
+    const question = history[history.length - 1].text;
+
+    // The answer is sent as it happens, one JSON line per event, so the chat window can show every step live:
+    //   {type:"status", text}  what it is doing now        {type:"step", text}  a look-up it made
+    //   {type:"text", delta}   the answer as it is written  {type:"reset"}       drop the text so far (it was a note before a look-up)
+    //   {type:"done", reply, lookups}                        {type:"error", error}
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start: async controller => {
+        const send = (event: any) => { try { controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`)); } catch { /* the window was closed */ } };
+        try {
+          for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            send({ type: 'status', text: round === 0 ? 'Thinking about your question…' : 'Reading what it found…' });
+            const runner = client.beta.messages.stream({
+              model: MODEL,
+              max_tokens: 16000,
+              system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+              tools,
+              messages,
+              output_config: { effort: 'medium' },
+              betas: ['server-side-fallback-2026-07-01'],
+              fallbacks: 'default',
+            } as any);
+            let writing = false;
+            runner.on('text', (delta: string) => { if (!writing) { writing = true; send({ type: 'status', text: 'Writing…' }); } send({ type: 'text', delta }); });
+            runner.on('streamEvent', (event: any) => { if (event?.type === 'content_block_start' && event.content_block?.type === 'tool_use') send({ type: 'status', text: 'Choosing what to look up…' }); });
+            const response = await runner.finalMessage() as Anthropic.Beta.BetaMessage;
+            if (response.stop_reason === 'refusal') { send({ type: 'reset' }); send({ type: 'done', reply: 'Sorry, I can’t help with that question.', lookups }); return; }
+            const toolUses = response.content.filter((block): block is Anthropic.Beta.BetaToolUseBlock => block.type === 'tool_use');
+            if (response.stop_reason !== 'tool_use' || !toolUses.length) {
+              const reply = response.content.filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === 'text').map(block => block.text).join('\n').trim();
+              await logQuestion(c, question, reply, lookups);
+              send({ type: 'done', reply: reply || (response.stop_reason === 'max_tokens' ? 'The answer was too long. Please ask a narrower question.' : 'No answer.'), lookups });
+              return;
+            }
+            // Text written before a look-up is a note, not the answer: show it as a step and clear it.
+            const note = response.content.filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === 'text').map(block => block.text).join(' ').trim();
+            if (writing) send({ type: 'reset' });
+            if (note) send({ type: 'step', text: note.length > 160 ? `${note.slice(0, 160)}…` : note });
+            messages.push({ role: 'assistant', content: response.content as any });
+            const results = await Promise.all(toolUses.map(async block => {
+              const input: any = block.input || {};
+              lookups.push(`${String(input.path || '')}${input.query && Object.keys(input.query).length ? ` ${JSON.stringify(input.query)}` : ''}`);
+              send({ type: 'step', text: `Looking at ${describeLookup(input)}` });
+              try {
+                const result = await getData(input);
+                return { type: 'tool_result' as const, tool_use_id: block.id, content: JSON.stringify(result), ...('error' in result ? { is_error: true } : {}) };
+              } catch (reason: any) {
+                return { type: 'tool_result' as const, tool_use_id: block.id, content: `Error: ${reason?.message || 'could not read'}`, is_error: true };
+              }
+            }));
+            messages.push({ role: 'user', content: results });
           }
-        }));
-        messages.push({ role: 'user', content: results });
-      }
-      return c.json({ success: true, reply: 'This question needed too many look-ups. Please ask a narrower question.', lookups });
-    } catch (error: any) {
-      if (error instanceof Anthropic.AuthenticationError) return c.json({ success: false, error: 'The AI key in Cloudflare is not valid. Create a new key and update ANTHROPIC_API_KEY.' }, 502);
-      if (error instanceof Anthropic.RateLimitError) return c.json({ success: false, error: 'The AI is busy (or the Anthropic account has no credit left). Try again in a minute.' }, 429);
-      if (error instanceof Anthropic.APIError) return c.json({ success: false, error: `The AI could not answer (${error.status ?? 'error'}): ${String(error.message || '').slice(0, 200)}` }, 502);
-      return c.json({ success: false, error: 'The AI could not answer. Please try again.' }, 500);
-    }
+          send({ type: 'done', reply: 'This question needed too many look-ups. Please ask a narrower question.', lookups });
+        } catch (error: any) {
+          send({ type: 'error', error: error instanceof Anthropic.AuthenticationError ? 'The AI key in Cloudflare is not valid. Create a new key and update ANTHROPIC_API_KEY.'
+            : error instanceof Anthropic.RateLimitError ? 'The AI is busy (or the Anthropic account has no credit left). Try again in a minute.'
+            : error instanceof Anthropic.APIError ? `The AI could not answer (${error.status ?? 'error'}): ${String(error.message || '').slice(0, 200)}`
+            : 'The AI could not answer. Please try again.' });
+        } finally {
+          try { controller.close(); } catch { /* already closed */ }
+        }
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' } });
   });
 };
 
