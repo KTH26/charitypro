@@ -22,8 +22,10 @@ export const pledgeSummaries = (pledges: Record<string, any>[], which: string | 
   for (const pledge of pledges) {
     if (!counts(pledge)) continue;
     const key = String(pledge.donorId || ''); const sum = byDonor.get(key) || { pledged: 0, paid: 0, left: 0, scheduled: 0 };
-    const balance = Number(pledge.balance || 0);
-    sum.pledged += Number(pledge.amountCAD ?? pledge.amount ?? 0); sum.paid += Number(pledge.paid || 0); sum.left += balance; sum.scheduled += Math.min(Number(pledge.scheduled || 0), Math.max(0, balance));
+    // Left = pledged minus paid (so Pledged − Paid = Left on every row). Scheduled = what his monthly schedule will still pay.
+    // (The pledge's "balance" also takes off the scheduled payments still to come, so it is not used here.)
+    const pledged = Number(pledge.amountCAD ?? pledge.amount ?? 0); const paid = Number(pledge.paid || 0);
+    sum.pledged += pledged; sum.paid += paid; sum.left += pledged - paid; sum.scheduled += Math.max(0, Number(pledge.scheduled || 0));
     byDonor.set(key, sum);
   }
   for (const sum of byDonor.values()) { sum.pledged = cents(sum.pledged); sum.paid = cents(sum.paid); sum.left = cents(sum.left); sum.scheduled = cents(sum.scheduled); }
