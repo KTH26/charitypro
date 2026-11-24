@@ -73,13 +73,13 @@ export const OnlineDonors: React.FC = () => {
           {error && <div className="list-notice bad">{error}</div>}
           <section className="list-table">
             {loading ? <div className="list-loading">Loading donors from the cloud...</div> : <div className="list-scroll"><table>
-              <thead><tr><ColumnTh cols={cols} column="name" label="Donor" /><ColumnTh cols={cols} column="yiddish" label="Yiddish name" /><ColumnTh cols={cols} column="phone" label="Phone" /><ColumnTh cols={cols} column="email" label="Email" /><ColumnTh cols={cols} column="address" label="Address" /><ColumnTh cols={cols} column="openBalance" label="Open balance" kind="number" align="right" /><th className="row-actions" /></tr></thead>
+              <thead><tr><ColumnTh cols={cols} column="name" label="Donor" /><ColumnTh cols={cols} column="yiddish" label="Yiddish name" /><ColumnTh cols={cols} column="phone" label="Phone" /><ColumnTh cols={cols} column="email" label="Email" /><ColumnTh cols={cols} column="address" label="Address" /><ColumnTh cols={cols} column="tags" label="Tags" /><ColumnTh cols={cols} column="openBalance" label="Open balance" kind="number" align="right" /><th className="row-actions" /></tr></thead>
               <tbody>{items.map(donor => <tr key={donor.id} onClick={() => setProfileId(donor.id)} style={{ cursor: 'pointer' }}>
                 <td><div className="cell-main">{donor.name}</div><div className="cell-sub">{donor.displayId || donor.id}</div></td><td dir="rtl" style={{ fontWeight: 600, textAlign: 'left' }}>{[donor.preTitle, donor.hebFirstName, donor.hebLastName, donor.title].filter(Boolean).join(' ') || '—'}</td>
-                <td>{donor.phone}</td><td>{donor.email || ''}</td><td>{donor.address || ''}</td>
+                <td>{donor.phone}</td><td>{donor.email || ''}</td><td>{donor.address || ''}</td><td>{(Array.isArray((donor as any).tags) ? (donor as any).tags as string[] : []).map(tag => <span key={tag} className="badge" dir="auto" style={{ background: 'var(--info-soft)', color: 'var(--info-ink)', marginRight: 4, whiteSpace: 'nowrap' }}>{tag}</span>)}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700, color: Number(donor.openBalance || 0)>0?'var(--red)':'var(--green)' }}>${Number(donor.openBalance || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className="row-actions"><RowMenu items={[{ label: 'Open donor', onClick: () => setProfileId(donor.id) }, { label: 'Edit', onClick: () => { setEditing(donor); setNotice(''); } }]} /></td>
-              </tr>)}{items.length === 0 && <tr><td colSpan={7} className="list-empty">No matching donors.</td></tr>}</tbody>
+              </tr>)}{items.length === 0 && <tr><td colSpan={8} className="list-empty">No matching donors.</td></tr>}</tbody>
             </table></div>}
             <ListFooter page={page} totalPages={totalPages} total={total} pageSize={50} shown={items.length} loading={loading} onPage={setPage} />
           </section>

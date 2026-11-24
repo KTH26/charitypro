@@ -152,6 +152,12 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
 export const registerReportDataRoutes = (app: any) => {
   const allowed = (c: any) => ((c.get('userRoles') || []) as string[]).includes('administrator');
   // Every tag already used on a pledge, for the pledge window.
+  // Every tag already used on a donor (from DonorFuse: recurring, Pledge, need …), for the donor window.
+  app.get('/v3/donor-tags', async (c: any) => {
+    const result = await c.env.DB.prepare("SELECT DISTINCT t.value AS tag FROM sync_records r, json_each(CASE WHEN json_type(r.data,'$.tags')='array' THEN json_extract(r.data,'$.tags') ELSE '[]' END) t WHERE r.type='donors' AND r.is_deleted=0").all();
+    const tags = [...new Set(((result.results || []) as any[]).map(row => String(row.tag || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return c.json({ success: true, tags });
+  });
   app.get('/v3/pledge-tags', async (c: any) => {
     const result = await c.env.DB.prepare("SELECT DISTINCT t.value AS tag FROM sync_records r, json_each(CASE WHEN json_type(r.data,'$.tags')='array' THEN json_extract(r.data,'$.tags') ELSE '[]' END) t WHERE r.type='pledges' AND r.is_deleted=0").all();
     const tags = [...new Set(((result.results || []) as any[]).map(row => String(row.tag || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));

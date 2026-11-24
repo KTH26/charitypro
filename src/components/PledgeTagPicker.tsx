@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 
 /** Tags on a pledge (like DonorFuse): click a tag that is already used, or type a new one. */
-export const PledgeTagPicker: React.FC<{ value: string[]; onChange: (tags: string[]) => void }> = ({ value, onChange }) => {
+export const PledgeTagPicker: React.FC<{ value: string[]; onChange: (tags: string[]) => void; source?: string }> = ({ value, onChange, source = '/api/v3/pledge-tags' }) => {
   const [known, setKnown] = useState<string[]>([]); const [typed, setTyped] = useState('');
-  useEffect(() => { fetch('/api/v3/pledge-tags').then(response => response.json()).then(data => { if (data.success) setKnown(data.tags || []); }).catch(() => undefined); }, []);
+  useEffect(() => { fetch(source).then(response => response.json()).then(data => { if (data.success) setKnown(data.tags || []); }).catch(() => undefined); }, [source]);
   const add = (tag: string) => { const clean = tag.trim().slice(0, 60); if (clean && !value.some(item => item.toLowerCase() === clean.toLowerCase())) onChange([...value, clean]); setTyped(''); };
   const others = known.filter(tag => !value.some(item => item.toLowerCase() === tag.toLowerCase()));
   return <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>

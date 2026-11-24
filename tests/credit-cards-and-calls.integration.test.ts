@@ -732,3 +732,15 @@ describe('Ask AI', () => {
     } finally { globalThis.fetch = realFetch; }
   });
 });
+
+describe('donor tags', () => {
+  it('a donor keeps its tags, the list can filter and sort by them, and the tag list shows what is in use', async () => {
+    const { db, call } = setup();
+    const made = await call('POST', '/v3/donors', { requestId: crypto.randomUUID(), firstName: 'Yoel', lastName: 'Stern', phone: '514-555-0177', tags: ['need', 'recurring', 'need', ' '] });
+    expect(made.body.item.tags).toEqual(['need', 'recurring']);
+    const updated = await call('PUT', `/v3/donors/${made.body.item.id}`, { requestId: crypto.randomUUID(), revision: 1, firstName: 'Yoel', lastName: 'Stern', phone: '514-555-0177', tags: ['Done'] });
+    expect(updated.body.item.tags).toEqual(['Done']);
+    expect((await call('GET', '/v3/donors?limit=50&f_tags=%5Edone')).body.items.map((item: any) => item.name)).toEqual(['Yoel Stern']);
+    expect((await call('GET', '/v3/donors?limit=50&f_tags=need')).body.items).toEqual([]);
+  });
+});

@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { BusinessMembersField } from './BusinessMembersField';
+import { PledgeTagPicker } from './PledgeTagPicker';
 
 export type OnlineDonor = {
   id: string;
@@ -24,6 +25,8 @@ export type OnlineDonor = {
   /** A business account: one check from a company, divided between its donors. */
   isBusiness?: boolean;
   businessMemberIds?: string[];
+  /** Donor tags, like in DonorFuse (recurring, Pledge, need …). */
+  tags?: string[];
   totalGiven: number;
   openBalance?: number;
 };
@@ -40,6 +43,7 @@ export const OnlineDonorForm: React.FC<{
     preTitle: donor?.preTitle || '', hebFirstName: donor?.hebFirstName || '', hebLastName: donor?.hebLastName || '',
     title: donor?.title || '', postTitle: donor?.postTitle || '', homePhone: donor?.homePhone || '', mobilePhone: donor?.mobilePhone || '', receiptName: donor?.receiptName || ''
   });
+  const [tags, setTags] = useState<string[]>(Array.isArray(donor?.tags) ? donor!.tags! : []);
   const [business, setBusiness] = useState({ isBusiness: Boolean(donor?.isBusiness), memberIds: donor?.businessMemberIds || [] });
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -61,7 +65,7 @@ export const OnlineDonorForm: React.FC<{
       const response = await fetch(donor ? `/api/v3/donors/${encodeURIComponent(donor.id)}` : '/api/v3/donors', {
         method: donor ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestId },
-        body: JSON.stringify({ ...form, isBusiness: business.isBusiness, businessMemberIds: business.isBusiness ? business.memberIds : [], requestId, ...(donor ? { revision: donor.revision } : {}) })
+        body: JSON.stringify({ ...form, tags, isBusiness: business.isBusiness, businessMemberIds: business.isBusiness ? business.memberIds : [], requestId, ...(donor ? { revision: donor.revision } : {}) })
       });
       const data = await response.json();
       if (!response.ok || !data.success) {
@@ -95,6 +99,7 @@ export const OnlineDonorForm: React.FC<{
           <label className="form-group" style={{ margin: 0 }}><span>Donor ID</span><input value={form.displayId} onChange={e => set('displayId', e.target.value)} placeholder="Generated automatically if blank" /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Address</span><input value={form.address} onChange={e => set('address', e.target.value)} /></label>
           <label className="form-group" style={{ margin: 0 }}><span>Legal name for receipts</span><input value={form.receiptName} onChange={e => set('receiptName', e.target.value)} placeholder={`${[form.firstName, form.lastName].filter(Boolean).join(' ') || 'Same as the donor name'}`} /><small style={{ color: 'var(--text-muted)' }}>A company, the wife's name … Leave empty to use the donor's name.</small></label>
+          <div style={{ gridColumn: '1 / -1' }}><PledgeTagPicker value={tags} onChange={setTags} source="/api/v3/donor-tags" /></div>
           <BusinessMembersField isBusiness={business.isBusiness} memberIds={business.memberIds} selfId={donor?.id} onChange={next => setBusiness(next)} />
         </div>
         <label className="form-group" style={{ margin: '14px 0 0' }}><span>Notes</span><textarea rows={3} maxLength={2000} value={form.notes} onChange={e => set('notes', e.target.value)} /></label>

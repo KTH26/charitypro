@@ -476,6 +476,8 @@ const resolveCoveredDeclines = async (db: any) => {
  * Whose pledges a payment of this donor may go on: the donor's own, and for a business account
  * (one check from a company, the receipt in the company's name) also the pledges of the donors linked to it.
  */
+/** Donor tags (like DonorFuse: recurring, Pledge, need …): short text, no repeats, at most 30. */
+export const cleanDonorTags = (raw: unknown) => [...new Set((Array.isArray(raw) ? raw : []).map(tag => String(tag || '').trim().slice(0, 60)).filter(Boolean))].slice(0, 30);
 /** A business account's linked donors: real donors only, not itself, at most 200. */
 export const cleanBusinessMembers = async (db: any, selfId: string, raw: unknown) => {
   const ids = [...new Set((Array.isArray(raw) ? raw : []).map(String).filter(id => id && id !== selfId))].slice(0, 200);
@@ -3300,7 +3302,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const condition = searchWords.map(() => 'AND lower(d.data) LIKE ?').join(' ');
     const searchBindings = searchWords.map((word: string) => `%${word}%`);
     const yiddish = "trim(COALESCE(json_extract(d.data,'$.preTitle'),'')||' '||COALESCE(json_extract(d.data,'$.hebFirstName'),'')||' '||COALESCE(json_extract(d.data,'$.hebLastName'),'')||' '||COALESCE(json_extract(d.data,'$.title'),''))";
-    const columns = { name: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), phone: textCol("json_extract(d.data,'$.phone')"), email: textCol("json_extract(d.data,'$.email')"), address: textCol("json_extract(d.data,'$.address')"), city: textCol("json_extract(d.data,'$.city')"), total: numCol('dt.total_given') };
+    const columns = { name: textCol("json_extract(d.data,'$.name')"), yiddish: textCol(yiddish), phone: textCol("json_extract(d.data,'$.phone')"), email: textCol("json_extract(d.data,'$.email')"), address: textCol("json_extract(d.data,'$.address')"), city: textCol("json_extract(d.data,'$.city')"), tags: textCol("(SELECT group_concat(t.value, ', ') FROM json_each(CASE WHEN json_type(d.data,'$.tags')='array' THEN json_extract(d.data,'$.tags') ELSE '[]' END) t)"), total: numCol('dt.total_given') };
     const list = listColumns(c, columns, 'name');
     const filterSql = list.conditions.map(part => ` AND ${part}`).join('');
     const allBindings = [...searchBindings, ...list.bindings];
@@ -3593,6 +3595,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       preTitle: text('preTitle'), hebFirstName: text('hebFirstName'), hebLastName: text('hebLastName'),
       title: text('title'), postTitle: text('postTitle'), homePhone: text('homePhone'), mobilePhone: text('mobilePhone'), receiptName: text('receiptName'),
       cards: [], sponsorshipDays: [],
+      tags: cleanDonorTags(body.tags),
       ...(body.isBusiness === true ? { isBusiness: true, businessMemberIds: await cleanBusinessMembers(c.env.DB, id, body.businessMemberIds) } : {})
     };
     const now = Date.now();
@@ -3643,6 +3646,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const textFields = ['address','notes','preTitle','hebFirstName','hebLastName','title','postTitle','homePhone','mobilePhone','receiptName'];
     const next: any = { ...existing, firstName, lastName, name: `${firstName} ${lastName}`.trim(), phone, email };
     for (const field of textFields) if (body[field] !== undefined) next[field] = String(body[field] || '').trim().slice(0, field === 'notes' ? 2000 : 500);
+    if (body.tags !== undefined) next.tags = cleanDonorTags(body.tags);
     // Business account: one check from a company, divided between its donors; the receipt is in the company's name.
     if (body.isBusiness !== undefined) next.isBusiness = body.isBusiness === true;
     if (body.businessMemberIds !== undefined || body.isBusiness === false) next.businessMemberIds = next.isBusiness ? await cleanBusinessMembers(c.env.DB, id, body.businessMemberIds ?? existing.businessMemberIds) : [];
