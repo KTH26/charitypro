@@ -16,10 +16,11 @@ export type ExtraColumn = { key: string; label: string; type?: 'text' | 'money' 
 export const PLEDGE_COLUMNS: { key: keyof PledgeSummary; label: string }[] = [{ key: 'pledged', label: 'Pledged' }, { key: 'paid', label: 'Paid' }, { key: 'left', label: 'Left' }, { key: 'scheduled', label: 'Scheduled' }];
 
 /** Adds up each donor's pledges of one year (pledge rows from the report data). */
-export const pledgeSummaries = (pledges: Record<string, any>[], year: string) => {
+export const pledgeSummaries = (pledges: Record<string, any>[], which: string | ((pledge: Record<string, any>) => boolean)) => {
   const byDonor = new Map<string, PledgeSummary>();
+  const counts = typeof which === 'function' ? which : (pledge: Record<string, any>) => String(pledge.campaignYear || pledge.year || '') === which;
   for (const pledge of pledges) {
-    if (String(pledge.campaignYear || pledge.year || '') !== year) continue;
+    if (!counts(pledge)) continue;
     const key = String(pledge.donorId || ''); const sum = byDonor.get(key) || { pledged: 0, paid: 0, left: 0, scheduled: 0 };
     const balance = Number(pledge.balance || 0);
     sum.pledged += Number(pledge.amountCAD ?? pledge.amount ?? 0); sum.paid += Number(pledge.paid || 0); sum.left += balance; sum.scheduled += Math.min(Number(pledge.scheduled || 0), Math.max(0, balance));
