@@ -67,7 +67,9 @@ export const AskAiButton: React.FC = () => {
       }
       if (!finished) throw new Error('The answer stopped before it was finished. Please try again.');
     } catch (reason: any) {
-      update(turn => ({ ...turn, text: reason.message || 'The AI could not answer.', error: true, working: false, status: '' }));
+      const message = String(reason?.message || '');
+      const cut = reason instanceof TypeError || /network|failed to fetch|load failed/i.test(message);
+      update(turn => ({ ...turn, text: cut ? 'The connection was cut before the answer was finished. Please try again (a narrower question is faster).' : message || 'The AI could not answer.', error: true, working: false, status: '' }));
     } finally { setBusy(false); }
   };
 

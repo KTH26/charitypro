@@ -13,7 +13,17 @@ import { hasPermission } from './permissions';
 
 const MODEL = 'claude-opus-5-5';
 const MAX_TOOL_ROUNDS = 10;
-const MAX_RESULT_CHARS = 60000;
+const MAX_RESULT_CHARS = 30000;
+
+// Technical fields the AI never needs (versions, sync flags, internal links). Dropping them makes answers faster and cheaper.
+const NOISE = new Set(['revision', 'updatedAt', 'updated_at', 'invoiceSaved', 'sponsor', 'category', 'gatewayResult', 'history', 'pledgeAutoLinked', 'pledgeAutoLinkedAt', 'coveredExpectationIds', 'coveredScheduledPaymentIds', 'expectationId', 'exchangeRateSource', 'solaBatchId', 'batchTransactionId', 'last_operation_id', 'invoiceId', 'appliedPayments', 'pendingPayments', 'cards', 'sponsorshipDays', 'fundraiserAllocations', 'paymentMethodId', 'idempotencyKey', 'requestId']);
+const slim = (value: any, depth = 0): any => {
+  if (Array.isArray(value)) return value.map(item => slim(item, depth + 1));
+  if (!value || typeof value !== 'object' || depth > 6) return value;
+  const out: any = {};
+  for (const [key, item] of Object.entries(value)) { if (NOISE.has(key) || item === null || item === '' || (Array.isArray(item) && !item.length)) continue; out[key] = slim(item, depth + 1); }
+  return out;
+};
 
 // The pages the AI may read. {id} = one record's id. Nothing here can change data (GET only).
 const ALLOWED_PATHS: { path: string; what: string }[] = [
@@ -48,6 +58,7 @@ const SYSTEM_PROMPT = `You are the CharityPro assistant for Hatzolah Tosh, a Can
 Staff ask you about donors, pledges, payments, schedules, campaigns, receipts and the accounting. Answer from the data only.
 
 How to work:
+- Be quick: ask for exactly what you need with filters, a date range and a sort, instead of reading whole lists. Totals (total, totalCAD) come with every list.
 - Use the get_data tool to look things up. Call it as many times as you need (in parallel when the calls don't depend on each other). Use the filters, sort and totals the pages already give rather than reading every row.
 - Never guess a number. If the data doesn't show it, say so. If a list was cut off (more pages), say how many there are in total and that you looked at part.
 - You can only read. If asked to change something (add, edit, delete, send, charge), say that you can't do that yet and tell them where on the site to do it.
@@ -87,11 +98,17 @@ const PAGE_NAMES: [RegExp, string][] = [
   [/^\/v3\/donor-contacts$/, 'the call tracker'], [/^\/v3\/records\/campaigns$/, 'campaigns'], [/^\/v3\/report-data$/, 'a full report'], [/^\/v3\/summary$/, 'the overall totals'],
 ];
 const QUERY_WORDS: Record<string, string> = { search: 'search', from: 'from', to: 'to', status: 'status', method: 'method', source: 'report', sort: 'sorted by', page: 'page' };
+const rangeWords = (value: string) => {
+  if (value.startsWith('^')) return `starts with ${value.slice(1)}`; if (value.startsWith('=')) return `is ${value.slice(1)}`;
+  if (!value.includes('..')) return `contains ${value}`;
+  const [from, to] = value.split('..');
+  return from && to ? (from === to ? `is ${from}` : `${from} to ${to}`) : from ? `${from} or more` : `up to ${to}`;
+};
 export const describeLookup = (input: any) => {
   const path = String(input?.path || '').split('?')[0];
   const name = PAGE_NAMES.find(([pattern]) => pattern.test(path))?.[1] || path;
   const query = Object.entries(input?.query || {}).filter(([key, value]) => String(value || '') && (QUERY_WORDS[key] || key.startsWith('f_'))).slice(0, 4)
-    .map(([key, value]) => key.startsWith('f_') ? `${key.slice(2)} ${String(value).replace(/^\^/, 'starts with ').replace(/^=/, 'is ').replace('..', ' to ')}` : `${QUERY_WORDS[key]} ${key === 'search' ? `“${value}”` : value}`);
+    .map(([key, value]) => key.startsWith('f_') ? `${key.slice(2)} ${rangeWords(String(value))}` : `${QUERY_WORDS[key]} ${key === 'search' ? `“${value}”` : value}`);
   return query.length ? `${name}: ${query.join(', ')}` : name;
 };
 
@@ -118,7 +135,8 @@ export const registerAiChatRoutes = (app: any, prefix = '') => {
       if (query.has('limit') && Number(query.get('limit')) > 100) query.set('limit', '100');
       let executionCtx: any; try { executionCtx = c.executionCtx; } catch { executionCtx = undefined; }
       const response = await app.request(`${prefix}${path}${query.size ? `?${query}` : ''}`, { method: 'GET', headers }, c.env, executionCtx);
-      const text = await response.text();
+      const raw = await response.text();
+      let text = raw; try { text = JSON.stringify(slim(JSON.parse(raw))); } catch { /* not JSON: keep as is */ }
       return { status: response.status, body: text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)} …[cut: the result was ${text.length} characters; use filters, a smaller limit or another page]` : text };
     };
 
@@ -138,6 +156,11 @@ export const registerAiChatRoutes = (app: any, prefix = '') => {
     const stream = new ReadableStream({
       start: async controller => {
         const send = (event: any) => { try { controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`)); } catch { /* the window was closed */ } };
+        // A small signal every 5 seconds, so the connection never goes quiet (a quiet connection can be cut on the way).
+        const heartbeat = setInterval(() => send({ type: 'ping' }), 5000);
+        const seen = new Map<string, string>(); // the same look-up twice gets the first answer back
+        const started = Date.now();
+        console.log('ai-chat start', JSON.stringify({ user: String(c.get('userEmail') || ''), question: question.slice(0, 200) }));
         try {
           for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
             send({ type: 'status', text: round === 0 ? 'Thinking about your question…' : 'Reading what it found…' });
@@ -147,7 +170,7 @@ export const registerAiChatRoutes = (app: any, prefix = '') => {
               system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
               tools,
               messages,
-              output_config: { effort: 'medium' },
+              output_config: { effort: 'low' }, // quick look-ups: low effort answers much faster, and is enough for reading lists and adding up
               betas: ['server-side-fallback-2026-07-01'],
               fallbacks: 'default',
             } as any);
@@ -171,11 +194,21 @@ export const registerAiChatRoutes = (app: any, prefix = '') => {
             const results = await Promise.all(toolUses.map(async block => {
               const input: any = block.input || {};
               lookups.push(`${String(input.path || '')}${input.query && Object.keys(input.query).length ? ` ${JSON.stringify(input.query)}` : ''}`);
-              send({ type: 'step', text: `Looking at ${describeLookup(input)}` });
+              const key = JSON.stringify({ path: input.path, query: input.query || {} });
+              const label = `Looking at ${describeLookup(input)}`;
+              if (seen.has(key)) { send({ type: 'step', text: `${label} (already read)` }); return { type: 'tool_result' as const, tool_use_id: block.id, content: `You already read exactly this a moment ago; it has not changed. Use that result, or change the filters or page.\n${seen.get(key)}` }; }
+              const lookupStarted = Date.now();
               try {
-                const result = await getData(input);
-                return { type: 'tool_result' as const, tool_use_id: block.id, content: JSON.stringify(result), ...('error' in result ? { is_error: true } : {}) };
+                const result: any = await getData(input);
+                const failed = 'error' in result || Number(result.status) >= 400;
+                const seconds = ((Date.now() - lookupStarted) / 1000).toFixed(1);
+                console.log('ai-chat lookup', JSON.stringify({ path: input.path, query: input.query || {}, status: result.status ?? 'refused', seconds, size: String(result.body || '').length }));
+                send({ type: 'step', text: failed ? `${label}: could not read it (${result.error ? 'not allowed' : `error ${result.status}`})` : label });
+                const content = JSON.stringify(result); if (!failed) seen.set(key, content);
+                return { type: 'tool_result' as const, tool_use_id: block.id, content, ...(failed ? { is_error: true } : {}) };
               } catch (reason: any) {
+                console.log('ai-chat lookup failed', JSON.stringify({ path: input.path, error: String(reason?.message || reason).slice(0, 300) }));
+                send({ type: 'step', text: `${label}: could not read it (${String(reason?.message || 'error').slice(0, 80)})` });
                 return { type: 'tool_result' as const, tool_use_id: block.id, content: `Error: ${reason?.message || 'could not read'}`, is_error: true };
               }
             }));
@@ -183,11 +216,14 @@ export const registerAiChatRoutes = (app: any, prefix = '') => {
           }
           send({ type: 'done', reply: 'This question needed too many look-ups. Please ask a narrower question.', lookups });
         } catch (error: any) {
+          console.log('ai-chat error', String(error?.status || ''), String(error?.message || error).slice(0, 500));
           send({ type: 'error', error: error instanceof Anthropic.AuthenticationError ? 'The AI key in Cloudflare is not valid. Create a new key and update ANTHROPIC_API_KEY.'
             : error instanceof Anthropic.RateLimitError ? 'The AI is busy (or the Anthropic account has no credit left). Try again in a minute.'
             : error instanceof Anthropic.APIError ? `The AI could not answer (${error.status ?? 'error'}): ${String(error.message || '').slice(0, 200)}`
             : 'The AI could not answer. Please try again.' });
         } finally {
+          clearInterval(heartbeat);
+          console.log('ai-chat end', JSON.stringify({ seconds: Math.round((Date.now() - started) / 1000), lookups: lookups.length }));
           try { controller.close(); } catch { /* already closed */ }
         }
       },

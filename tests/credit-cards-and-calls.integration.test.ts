@@ -715,7 +715,9 @@ describe('Ask AI', () => {
     try {
       const events = await readEvents(await ask({ DB: db, ANTHROPIC_API_KEY: 'test-key' }));
       expect(events.filter(event => event.type === 'status').map(event => event.text)).toEqual(expect.arrayContaining(['Thinking about your question…', 'Choosing what to look up…', 'Reading what it found…', 'Writing…']));
-      expect(events.filter(event => event.type === 'step').map(event => event.text)).toEqual(['Let me check his payments.', 'Looking at payments: search “moshe”', 'Looking at /v3/backup']);
+      const steps = events.filter(event => event.type === 'step').map(event => event.text);
+      expect(steps[0]).toBe('Let me check his payments.');
+      expect([...steps].sort()).toEqual(['Let me check his payments.', 'Looking at /v3/backup: could not read it (not allowed)', 'Looking at payments: search “moshe”'].sort());
       expect(events.some(event => event.type === 'reset')).toBe(true);
       expect(events.filter(event => event.type === 'text').map(event => event.delta).join('')).toContain('Moshe Cohen gave **$180.00**.');
       expect(events.at(-1)).toMatchObject({ type: 'done', reply: 'Moshe Cohen gave **$180.00**.', lookups: ['/v3/payments {"search":"moshe","limit":"500"}', '/v3/backup'] });
