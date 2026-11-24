@@ -7,9 +7,12 @@ import { isOperationAlreadyApplied } from './idempotency';
 import { registerServerDataRoutes, buildBankFeedSaveStatements, bankSyncStartDate } from './server-data';
 import { registerReportDataRoutes } from './report-data';
 import { registerAiChatRoutes } from './ai-chat';
+import { withDatabaseRetry } from './db-retry';
 
 const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string, ENABLE_DEBUG_ENDPOINTS?: string, CRON_SECRET?: string, SOLA_API_KEY?: string, ANTHROPIC_API_KEY?: string } }>().basePath('/api')
 
+// If the database is briefly too busy, every query waits a moment and tries again (see db-retry.ts).
+app.use('*', async (c, next) => { if (c.env?.DB) (c.env as any).DB = withDatabaseRetry(c.env.DB); await next(); });
 app.use('*', requireAuth);
 app.use('/debug/*',async(c,next)=>{if(c.env.ENABLE_DEBUG_ENDPOINTS!=='true')return c.json({success:false,error:'Not found.'},404);if(!hasPermission((c.get('userRoles')||[]) as string[],'system.manage'))return c.json({success:false,error:'Forbidden.'},403);await next();});
 

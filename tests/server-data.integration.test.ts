@@ -974,6 +974,17 @@ describe('server-driven bank deposit matching', () => {
     const second=await app.request('/v3/automation/daily-sola',{method:'POST'},{DB:db} as any);const secondBody:any=await second.json();expect(secondBody.reconciliation).toMatchObject({approvedFound:0,matched:0,imported:0});expect(db.database.prepare("SELECT COUNT(*) AS count FROM sync_records WHERE type='transactions'").get().count).toBe(2);
   });
 
+  it('gives a payment the Sola date by the Sola number at the end of its note (and only that payment)', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');
+    seedRecord(db,'transactions','noted-payment',{id:'noted-payment',donorId:'d1',amount:50,amountCAD:50,currency:'CAD',method:'credit_card',date:'2026-10-01',type:'approved',notes:'Imported via Sola Sync. Ref: 555'});
+    seedRecord(db,'transactions','other-payment',{id:'other-payment',donorId:'d1',amount:50,amountCAD:50,currency:'CAD',method:'credit_card',date:'2026-10-01',type:'approved',notes:'Imported via Sola Sync. Ref: 1555'});
+    vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({ReportData:[{RefNum:'555',Name:'Nobody Mapped',Date:'2026-10-09',Amount:'50',Status:'Approved'}],xRecordsReturned:1,xReportingMaxTransactions:1000}),{status:200,headers:{'Content-Type':'application/json'}}));
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/sola/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startDate:'2026-10-09',endDate:'2026-10-09'})},{DB:db} as any);expect(response.status).toBe(200);
+    const dateOf=(id:string)=>JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id=?").get(id) as any).data).date;
+    expect(dateOf('noted-payment')).toBe('2026-10-09');expect(dateOf('other-payment')).toBe('2026-10-01');
+  });
+
   it('combines repeated Sola failures and a later approval into one approved scheduled payment', async () => {
     const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');seedRecord(db,'donors','retry-donor',{id:'retry-donor',name:'Retry Donor'});seedRecord(db,'solaDonorMappings','sola-map-retry',{solaName:'Retry Donor',donorId:'retry-donor'});seedRecord(db,'paymentExpectations','retry-expectation',{id:'retry-expectation',donorId:'retry-donor',amount:100,currency:'CAD',expectedDate:'2026-10-09',status:'due',pendingTransactionId:'retry-payment',scheduleId:'retry-schedule'});seedRecord(db,'transactions','retry-payment',{id:'retry-payment',donorId:'retry-donor',amount:100,amountCAD:100,currency:'CAD',method:'credit_card',date:'2026-10-09',type:'pending',expectationId:'retry-expectation',scheduleId:'retry-schedule'});
     const attempts=[...Array.from({length:5},(_,index)=>({RefNum:`declined-${index}`,Name:'Retry Donor',Date:'2026-10-09',Amount:'100',Status:'Declined'})),...Array.from({length:2},(_,index)=>({RefNum:`error-${index}`,Name:'Retry Donor',Date:'2026-10-09',Amount:'100',Status:'Error'})),{RefNum:'approved-final',Name:'Retry Donor',Date:'2026-10-09',Amount:'100',Status:'Approved'}];
