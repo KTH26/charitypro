@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, List, MoreHorizontal, Plus } from 'lucide-react';
 
 // Shared pieces that give every list page the same DonorFuse-style layout:
@@ -90,9 +91,10 @@ export const RowMenu: React.FC<{ items: RowMenuItem[] }> = ({ items }) => {
   const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
   const open = position !== null;
   const ref = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const close = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setPosition(null); };
+    const close = (event: MouseEvent) => { const target = event.target as Node; if (!ref.current?.contains(target) && !menu.current?.contains(target)) setPosition(null); };
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPosition(null); };
     const hide = () => setPosition(null);
     document.addEventListener('mousedown', close);
@@ -109,7 +111,10 @@ export const RowMenu: React.FC<{ items: RowMenuItem[] }> = ({ items }) => {
   const toggle = (event: React.MouseEvent<HTMLButtonElement>) => {
     if (open) { setPosition(null); return; }
     const rect = event.currentTarget.getBoundingClientRect();
-    setPosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+    // Near the bottom of the screen the menu opens upward, so it is never cut off.
+    const height = items.filter(item => !item.hidden).length * 38 + 12;
+    const top = rect.bottom + 4 + height > window.innerHeight - 8 ? Math.max(8, rect.top - 4 - height) : rect.bottom + 4;
+    setPosition({ top, right: Math.max(8, window.innerWidth - rect.right) });
   };
   const setOpen = (value: boolean) => { if (!value) setPosition(null); };
   const visible = items.filter(item => !item.hidden);
@@ -117,7 +122,8 @@ export const RowMenu: React.FC<{ items: RowMenuItem[] }> = ({ items }) => {
   return (
     <div className="row-menu" ref={ref} onClick={event => event.stopPropagation()}>
       <button type="button" className="row-menu-btn" aria-label="Row actions" aria-haspopup="menu" aria-expanded={open} onClick={toggle}><MoreHorizontal size={16} /></button>
-      {position && <div className="row-menu-list" role="menu" style={{ top: position.top, right: position.right }}>
+      {/* Placed on the page itself (not inside the list), so the frozen totals bar never covers it. */}
+      {position && createPortal(<div ref={menu} className="row-menu-list" role="menu" style={{ top: position.top, right: position.right }} onClick={event => event.stopPropagation()}>
         {visible.map(item => <button
           key={item.label}
           type="button"
@@ -126,7 +132,7 @@ export const RowMenu: React.FC<{ items: RowMenuItem[] }> = ({ items }) => {
           disabled={item.disabled}
           onClick={() => { setOpen(false); item.onClick(); }}
         >{item.label}</button>)}
-      </div>}
+      </div>, document.body)}
     </div>
   );
 };
