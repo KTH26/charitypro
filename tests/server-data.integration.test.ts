@@ -1001,6 +1001,58 @@ describe('server-driven bank deposit matching', () => {
     const response=await app.request('/v3/sola/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startDate:'2026-10-10',endDate:'2026-10-12'})},{DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(body.reconciliation).toMatchObject({approvedFound:3,matched:2,recovered:1,imported:1});expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='october-payment'").get() as any).data)).toMatchObject({type:'approved',solaRef:'october-approved-1'});expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='september-payment'").get() as any).data)).toMatchObject({type:'approved',solaRef:'october-approved-2'});expect(db.database.prepare("SELECT COUNT(*) count FROM sync_records WHERE type='transactions' AND json_extract(data,'$.amount')=90").get().count).toBe(1);expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND id='declined-sola-september-expectation'").get() as any).data)).toMatchObject({completed:true});
   });
 
+  it('matches a scheduled payment to the donor Sola charge when the schedule amount was changed in Sola (66.40 -> 68), also when the charge came in first', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');seedRecord(db,'donors','change-donor',{id:'change-donor',name:'Change Donor'});seedRecord(db,'solaDonorMappings','sola-map-change',{solaName:'Change Donor',donorId:'change-donor'});
+    // October: already wrongly marked "not received", and the $68 sits as a separate payment.
+    seedRecord(db,'paymentExpectations','oct-exp',{id:'oct-exp',donorId:'change-donor',amount:66.4,expectedDate:'2026-10-20',status:'declined',pendingTransactionId:'oct-scheduled',declineReason:'No approved Sola charge was found within the two-day verification window.'});
+    seedRecord(db,'transactions','oct-scheduled',{id:'oct-scheduled',donorId:'change-donor',amount:66.4,method:'credit_card',date:'2026-10-20',type:'declined',expectationId:'oct-exp',scheduleId:'change-schedule',declineReason:'No approved Sola charge was found within the two-day verification window.'});
+    seedRecord(db,'tasks','declined-sola-oct-exp',{id:'declined-sola-oct-exp',donorId:'change-donor',title:'Sola payment not received',type:'declined_payment',completed:false,linkedPaymentId:'oct-scheduled'});
+    seedRecord(db,'transactions','sola-payment-oct',{id:'sola-payment-oct',donorId:'change-donor',amount:68,amountCAD:68,method:'credit_card',date:'2026-10-20',type:'approved',solaRef:'oct-ref'});
+    // November: the scheduled line is still waiting; Sola charged $68 on the same day.
+    seedRecord(db,'paymentExpectations','nov-exp',{id:'nov-exp',donorId:'change-donor',amount:66.4,expectedDate:'2026-11-20',status:'due',pendingTransactionId:'nov-scheduled'});
+    seedRecord(db,'transactions','nov-scheduled',{id:'nov-scheduled',donorId:'change-donor',amount:66.4,method:'credit_card',date:'2026-11-20',type:'pending',expectationId:'nov-exp',scheduleId:'change-schedule'});
+    vi.spyOn(globalThis,'fetch').mockImplementation(async(_input,init)=>{const day=String(JSON.parse(String(init?.body||'{}')).xBeginDate).slice(0,10);const rows=day==='2026-11-20'?[{RefNum:'nov-ref',Name:'Change Donor',Date:'2026-11-20',Amount:'68',Status:'Approved'}]:[];return new Response(JSON.stringify({ReportData:rows,xRecordsReturned:rows.length,xReportingMaxTransactions:1000}),{status:200,headers:{'Content-Type':'application/json'}});});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);
+    const response=await app.request('/v3/sola/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startDate:'2026-11-20',endDate:'2026-11-23'})},{DB:db} as any);const body:any=await response.json();expect(response.status).toBe(200);expect(body.reconciliation).toMatchObject({amountChangedMatched:2,recovered:1});
+    const active=(db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND is_deleted=0 ORDER BY id").all() as any[]).map(row=>JSON.parse(row.data));
+    expect(active).toHaveLength(2);expect(active.every(item=>item.type==='approved'&&item.amount===68)).toBe(true);
+    expect(active.find(item=>item.solaRef==='oct-ref')).toMatchObject({coveredExpectationIds:['oct-exp'],scheduleId:'change-schedule',scheduledDate:'2026-10-20'});
+    expect(active.find(item=>item.solaRef==='nov-ref')).toMatchObject({coveredExpectationIds:['nov-exp']});
+    for(const id of ['oct-exp','nov-exp'])expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='paymentExpectations' AND id=?").get(id) as any).data)).toMatchObject({status:'fulfilled'});
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND id='declined-sola-oct-exp'").get() as any).data)).toMatchObject({completed:true});
+  });
+
+  it('does not match a different-amount charge from far away in the month', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');
+    seedRecord(db,'paymentExpectations','far-exp',{id:'far-exp',donorId:'far-donor',amount:100,expectedDate:'2026-11-20',status:'declined',pendingTransactionId:'far-scheduled'});
+    seedRecord(db,'transactions','far-scheduled',{id:'far-scheduled',donorId:'far-donor',amount:100,method:'credit_card',date:'2026-11-20',type:'declined',expectationId:'far-exp',declineReason:'No approved Sola charge was found within the two-day verification window.'});
+    seedRecord(db,'transactions','far-gift',{id:'far-gift',donorId:'far-donor',amount:500,amountCAD:500,method:'credit_card',date:'2026-11-03',type:'approved',solaRef:'gift-ref'});
+    vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({ReportData:[],xRecordsReturned:0,xReportingMaxTransactions:1000}),{status:200,headers:{'Content-Type':'application/json'}}));
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);
+    const body:any=await (await app.request('/v3/sola/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startDate:'2026-11-23',endDate:'2026-11-23'})},{DB:db} as any)).json();expect(body.reconciliation).toMatchObject({amountChangedMatched:0});
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='far-scheduled'").get() as any).data)).toMatchObject({type:'declined'});
+  });
+
+  it('lists every Sola decline or error once per donor, month and amount, reads the name from first/last name, and closes it when a later charge is approved', async () => {
+    const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');seedRecord(db,'donors','roth',{id:'roth',name:'Abraham Roth'});seedRecord(db,'solaDonorMappings','sola-map-roth',{solaName:'Abraham Roth',donorId:'roth'});
+    let rows:any[]=[{RefNum:'e1',xBillFirstName:'Abraham',xBillLastName:'Roth',Date:'2026-11-21',Amount:'30',Status:'Error'},{RefNum:'e2',xBillFirstName:'Abraham',xBillLastName:'Roth',Date:'2026-11-24',Amount:'30',Status:'Error'},{RefNum:'d1',Name:'Not Linked Person',Date:'2026-11-24',Amount:'75',Status:'Declined'},{RefNum:'u1',Date:'2026-11-24',Amount:'10',Status:'Error'}];
+    vi.spyOn(globalThis,'fetch').mockImplementation(async(_input,init)=>{const day=String(JSON.parse(String(init?.body||'{}')).xBeginDate).slice(0,10);const dayRows=rows.filter(row=>row.Date===day);return new Response(JSON.stringify({ReportData:dayRows,xRecordsReturned:dayRows.length,xReportingMaxTransactions:1000}),{status:200,headers:{'Content-Type':'application/json'}});});
+    const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);await next();});registerServerDataRoutes(app as any);
+    const sync=()=>app.request('/v3/sola/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startDate:'2026-11-21',endDate:'2026-11-25'})},{DB:db} as any);
+    expect((await sync()).status).toBe(200);
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='solaTransactions' AND id='e1'").get() as any).data).name).toBe('Abraham Roth');
+    const tasks=()=>(db.database.prepare("SELECT data FROM sync_records WHERE type='tasks' AND is_deleted=0 ORDER BY id").all() as any[]).map(row=>JSON.parse(row.data));
+    expect(tasks()).toHaveLength(2);
+    expect(tasks().find(task=>task.donorId==='roth')).toMatchObject({type:'declined_payment',completed:false,amount:30,dueDate:'2026-11-24',solaRefs:['e1','e2']});
+    expect(tasks().find(task=>!task.donorId)).toMatchObject({title:'Sola payment declined: Not Linked Person',amount:75,completed:false});
+    expect(db.database.prepare("SELECT COUNT(*) count FROM sync_records WHERE type='transactions'").get().count).toBe(0);
+    const listed:any=await (await app.request('/v3/tasks?taskType=declined_payment&status=pending',{},{DB:db} as any)).json();expect(listed.items).toHaveLength(2);
+    expect((await sync()).status).toBe(200);expect(tasks()).toHaveLength(2);
+    rows=[...rows,{RefNum:'a1',xBillFirstName:'Abraham',xBillLastName:'Roth',Date:'2026-11-25',Amount:'30',Status:'Approved'}];
+    expect((await sync()).status).toBe(200);
+    expect(tasks().find(task=>task.donorId==='roth')).toMatchObject({completed:true});expect(tasks().find(task=>!task.donorId)).toMatchObject({completed:false});
+  });
+
   it('uses one larger Sola approval to fulfill several older declined installments', async () => {
     const db=new MockD1();databases.push(db);seedRecord(db,'solaApiKey','solaApiKey','test-secret');seedRecord(db,'donors','catchup-donor',{id:'catchup-donor',name:'Catchup Donor'});seedRecord(db,'solaDonorMappings','sola-map-catchup',{solaName:'Catchup Donor',donorId:'catchup-donor'});
     for(const [month,amount] of [['07',100],['08',150],['09',200]] as const){const expectationId=`catchup-expectation-${month}`;const paymentId=`catchup-payment-${month}`;seedRecord(db,'paymentExpectations',expectationId,{id:expectationId,donorId:'catchup-donor',amount,expectedDate:`2026-${month}-10`,status:'declined',pendingTransactionId:paymentId});seedRecord(db,'transactions',paymentId,{id:paymentId,donorId:'catchup-donor',amount,amountCAD:amount,method:'credit_card',date:`2026-${month}-10`,type:'declined',expectationId});seedRecord(db,'tasks',`declined-sola-${expectationId}`,{id:`declined-sola-${expectationId}`,donorId:'catchup-donor',type:'declined_payment',completed:false,linkedPaymentId:paymentId});}

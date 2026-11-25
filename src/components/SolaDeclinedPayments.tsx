@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, CreditCard, RotateCcw } from 'lucide-react';
 import { startLiveRefresh } from '../utils/liveUpdates';
 
-type Declined = { id: string; revision: number; donorId?: string; donorName?: string; title: string; notes?: string; dueDate: string; completed?: boolean; completedAt?: string; paymentAmount?: number; paymentCurrency?: string; paymentType?: string };
+type Declined = { id: string; revision: number; donorId?: string; donorName?: string; title: string; notes?: string; dueDate: string; completed?: boolean; completedAt?: string; paymentAmount?: number; paymentCurrency?: string; paymentType?: string; solaName?: string; amount?: number; currency?: string };
 
 const money = (value: number, currency = 'CAD') => `${currency} $${Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const monthName = (month: string) => new Intl.DateTimeFormat('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`));
@@ -36,7 +36,9 @@ export const SolaDeclinedPayments: React.FC = () => {
 
   const months = useMemo(() => [...new Set(items.map(item => String(item.dueDate || '').slice(0, 7)).filter(Boolean))].sort().reverse(), [items]);
   const visible = items.filter(item => !month || String(item.dueDate || '').startsWith(month)).sort((a, b) => String(b.dueDate).localeCompare(String(a.dueDate)) || String(a.donorName || '').localeCompare(String(b.donorName || '')));
-  const totals = visible.reduce<Record<string, number>>((sum, item) => item.paymentAmount ? { ...sum, [item.paymentCurrency || 'CAD']: (sum[item.paymentCurrency || 'CAD'] || 0) + item.paymentAmount } : sum, {});
+  const amountOf = (item: Declined) => item.paymentAmount ?? item.amount ?? 0;
+  const currencyOf = (item: Declined) => item.paymentCurrency || item.currency || 'CAD';
+  const totals = visible.reduce<Record<string, number>>((sum, item) => amountOf(item) ? { ...sum, [currencyOf(item)]: (sum[currencyOf(item)] || 0) + amountOf(item) } : sum, {});
 
   const setSolved = async (item: Declined, solved: boolean) => {
     setBusy(item.id); setError('');
@@ -73,9 +75,9 @@ export const SolaDeclinedPayments: React.FC = () => {
         <thead><tr><th>Date</th><th>Donor</th><th>What happened</th><th style={{ textAlign: 'right' }}>Amount</th><th></th></tr></thead>
         <tbody>{visible.map(item => <tr key={item.id}>
           <td style={{ whiteSpace: 'nowrap' }}>{niceDate(item.dueDate)}</td>
-          <td style={{ fontWeight: 600 }}>{item.donorName || 'Unknown donor'}</td>
+          <td style={{ fontWeight: 600 }}>{item.donorName || item.solaName || 'Unknown donor'}</td>
           <td><div style={{ fontWeight: 600 }}>{item.title === 'Sola payment not received' ? 'Did not come in' : 'Declined'}{item.paymentType === 'approved' ? <span style={{ color: 'var(--green)', marginLeft: 6 }}>· paid since</span> : null}</div>{item.notes ? <small style={{ color: 'var(--text-muted)' }}>{item.notes}</small> : null}</td>
-          <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{item.paymentAmount ? money(item.paymentAmount, item.paymentCurrency) : '—'}</td>
+          <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{amountOf(item) ? money(amountOf(item), currencyOf(item)) : '—'}</td>
           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{show === 'open'
             ? <button type="button" className="btn btn-sm btn-secondary" disabled={busy === item.id} onClick={() => void setSolved(item, true)}><Check size={14} /> Solved</button>
             : <button type="button" className="btn btn-sm btn-ghost" disabled={busy === item.id} title="Put it back on the follow-up list" onClick={() => void setSolved(item, false)}><RotateCcw size={14} /> Undo</button>}</td>
