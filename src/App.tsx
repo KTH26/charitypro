@@ -14,6 +14,7 @@ import { OnlineVendors } from './pages/OnlineVendors';
 import { OnlineTransactions } from './pages/OnlineTransactions';
 import { OnlineWriteChecks } from './pages/OnlineWriteChecks';
 import { OnlineTasks } from './pages/OnlineTasks';
+import { OnlineChangeRequests } from './pages/OnlineChangeRequests';
 import { OnlineCampaigns } from './pages/OnlineCampaigns';
 import { OnlineAuditHistory } from './pages/OnlineAuditHistory';
 import { OnlineDonorFuseReconcile } from './pages/OnlineDonorFuseReconcile';
@@ -67,6 +68,7 @@ function App() {
         <Route path="/reports" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reports...</div>}><OnlineReports /></React.Suspense>)} />
         <Route path="/profit-loss" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading Profit & Loss...</div>}><OnlineProfitLoss /></React.Suspense>)} />
         <Route path="/tasks" element={cloudPage(<OnlineTasks />)} />
+        <Route path="/change-requests" element={cloudPage(<OnlineChangeRequests />)} />
         <Route path="/receipts" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading receipts...</div>}><OnlineReceipts /></React.Suspense>)} />
         <Route path="/reminders" element={cloudPage(<React.Suspense fallback={<div className="card" style={{ padding: 40, textAlign: 'center' }}>Loading reminders...</div>}><OnlineReminders /></React.Suspense>)} />
         <Route path="/audit-history" element={cloudPage(<OnlineAuditHistory />)} />

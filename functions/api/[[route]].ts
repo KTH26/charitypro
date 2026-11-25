@@ -7,6 +7,7 @@ import { isOperationAlreadyApplied } from './idempotency';
 import { registerServerDataRoutes, buildBankFeedSaveStatements, bankSyncStartDate } from './server-data';
 import { registerReportDataRoutes } from './report-data';
 import { registerAiChatRoutes } from './ai-chat';
+import { registerChangeRequestRoutes } from './change-requests';
 import { withDatabaseRetry } from './db-retry';
 
 const app = new Hono<{ Bindings: { DB: D1Database, PLAID_CLIENT_ID: string, PLAID_SECRET: string, PLAID_ENV?: string, ENABLE_SYNC_REPAIR_ENDPOINTS?: string, ENABLE_DEBUG_ENDPOINTS?: string, CRON_SECRET?: string, SOLA_API_KEY?: string, ANTHROPIC_API_KEY?: string } }>().basePath('/api')
@@ -738,5 +739,6 @@ app.get('/debug/stats', async (c) => {
 registerServerDataRoutes(app);
 registerReportDataRoutes(app);
 registerAiChatRoutes(app, '/api');
+registerChangeRequestRoutes(app);
 
 export const onRequest = handle(app)

@@ -5,6 +5,7 @@ import {
   LogOut, Menu, Receipt, Settings, ShieldCheck, Users, X } from 'lucide-react';
 import { ReminderBell } from './ReminderBell';
 import { AskAiButton } from './AskAiButton';
+import { ChangeRequestButton } from './ChangeRequestButton';
 import { PageExportButton } from './PageExportButton';
 import { startLiveRefresh, subscribeLiveStatus, type LiveStatus } from '../utils/liveUpdates';
 
@@ -48,7 +49,8 @@ const categories: NavCategory[] = [
     { path: '/profit-loss', label: 'Profit & Loss' }
   ] },
   { label: 'Tasks & Activities', icon: ListChecks, items: [
-    { path: '/tasks', label: 'Tasks' }
+    { path: '/tasks', label: 'Tasks' },
+    { path: '/change-requests', label: 'Change requests' }
   ] },
   { label: 'Settings', icon: Settings, items: [
     { path: '/settings', label: 'Settings' }
@@ -149,7 +151,7 @@ export const CloudLayout: React.FC<{ children: React.ReactNode }> = ({ children 
             <button className="menu-toggle" type="button" aria-label={menuHidden ? 'Show menu' : 'Hide menu'} title={menuHidden ? 'Show menu' : 'Hide menu'} onClick={() => setMenuHidden(value => !value)}>{menuHidden ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}</button>
             <h1>{pageLabel}</h1>
           </div>
-          <div className="topbar-actions"><AskAiButton/><PageExportButton path={location.pathname}/><ReminderBell/><div className={`cloud-status cloud-status-${liveStatus}`} title={liveTitle} role="status" aria-live="polite"><span />{liveLabel}</div></div>
+          <div className="topbar-actions"><ChangeRequestButton/><AskAiButton/><PageExportButton path={location.pathname}/><ReminderBell/><div className={`cloud-status cloud-status-${liveStatus}`} title={liveTitle} role="status" aria-live="polite"><span />{liveLabel}</div></div>
         </header>
         <div className="content-area" style={{ padding: 0 }}>{children}</div>
       </main>
