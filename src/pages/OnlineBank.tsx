@@ -53,6 +53,8 @@ type BillCandidate = {
   paidDate?: string;
   status: string;
   categoryName: string;
+  isPayroll?: boolean;
+  isPayrollExpense?: boolean;
 };
 type RefundCandidate = BillCandidate & {
   refundableAmount: number;
@@ -1045,7 +1047,7 @@ export const OnlineBank: React.FC = () => {
                     <option value="">Select bill</option>
                     {billCandidates.map((bill) => (
                       <option key={bill.id} value={bill.id}>
-                        {bill.vendor} — {bill.currency || "CAD"} ${bill.amount.toFixed(2)} — {bill.dueDate} — {bill.status}
+                        {bill.isPayroll || bill.isPayrollExpense ? "Payroll payment: " : ""}{bill.vendor} — {bill.currency || "CAD"} ${bill.amount.toFixed(2)} — {bill.dueDate} — {bill.status}
                       </option>
                     ))}
                   </select>
