@@ -548,7 +548,7 @@ describe('each loan has its own pay-back plan', () => {
     const before = await call('GET', '/v3/loans-payable?today=2026-11-01');
     expect(before.body.accounts).toEqual([expect.objectContaining({ id: 'cluj', owed: 8000 })]);
     expect(before.body.items).toEqual([
-      expect.objectContaining({ monthly: true, remaining: 1000, dueDate: '2026-10-15', totalOwed: 3000, monthlyAmount: 1000 }),
+      expect.objectContaining({ monthly: true, remaining: 1000, dueDate: '2026-11-15', totalOwed: 3000, monthlyAmount: 1000 }),
       expect.objectContaining({ remaining: 5000, dueDate: '2027-03-01' }),
     ]);
     // $1,000 paid back: it goes to the monthly payment that was due (not to the loan due in March).
@@ -809,5 +809,15 @@ describe('donors tabs', () => {
     expect(await names('f_pledgeCount=1..')).toEqual(['Abraham Klein', 'Moshe Cohen']);
     expect(await names('f_openBalance=0.01..')).toEqual(['Moshe Cohen']);
     expect(await names('f_activeSchedules=1..')).toEqual(['Abraham Klein']);
+  });
+});
+
+describe('editing a pledge amount', () => {
+  it('the amount in CAD (used for totals) changes with it', async () => {
+    const { db, call } = setup();
+    seed(db, 'pledges', 'pk', { donorId: 'd1', amount: 18820, amountCAD: 18820, currency: 'CAD', date: '2026-03-08' });
+    const saved = await call('PUT', '/v3/records/pledges/pk', { revision: 1, data: { amount: 21420 } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.item).toMatchObject({ amount: 21420, amountCAD: 21420 });
   });
 });

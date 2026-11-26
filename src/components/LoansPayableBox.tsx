@@ -24,6 +24,8 @@ type LoanItem = {
 type LoanAccount = { id: string; name: string; currency: string; owed: number; revision?: number; loanMonthlyPayment?: number; loanPaymentDay?: number };
 
 const money = (value: number, currency = 'CAD') => `${currency} $${Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** Short money for the small line under a loan: $500 or $16,000 (no cents when whole). */
+const short = (value: number) => `$${Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const today = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
 const daysUntil = (date: string) => Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today()}T00:00:00Z`)) / 86400000);
 const niceDate = (date: string) => date ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`)) : '';
@@ -110,8 +112,8 @@ export const LoansPayableBox: React.FC = () => {
             const days = item.dueDate ? daysUntil(item.dueDate) : null;
             const tone = days === null || days < 0 ? 'is-late' : days <= 7 ? 'is-soon' : '';
             return <tr key={key}>
-              <td style={{ fontWeight: 600, cursor: 'pointer' }} title="Click to see this loan: money in and payments made" onClick={() => void openHistory(item.accountId)}><span style={{ textDecoration: 'underline', textDecorationColor: 'var(--border)' }}>{item.accountName}</span>{item.monthly ? <small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 600 }}>{item.monthlyAmount ? `${item.description ? `${item.description} · ` : ''}${money(item.monthlyAmount, item.currency)} every month${item.paid ? ` · ${money(item.paid, item.currency)} of it paid` : ''}` : `Monthly payment${item.paidThisMonth ? ` · ${money(item.paidThisMonth, item.currency)} paid this month` : ''}`} · {money(item.totalOwed || 0, item.currency)} left on {item.monthlyAmount ? 'this loan' : 'the loan'}</small> : null}</td>
-              <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{money(item.remaining, item.currency)}</td>
+              <td style={{ fontWeight: 600, cursor: 'pointer' }} title="Click to see this loan: money in and payments made" onClick={() => void openHistory(item.accountId)}><span style={{ textDecoration: 'underline', textDecorationColor: 'var(--border)' }}>{item.accountName}</span>{item.monthly ? <small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 600 }}>{short(item.monthlyAmount || item.amount)} a month · {short(item.totalOwed || 0)} left</small> : null}</td>
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{item.currency === 'CAD' ? short(item.remaining) : money(item.remaining, item.currency)}</td>
               <td>{editing === key
                 ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                   <input type="date" value={newDate} onChange={event => setNewDate(event.target.value)} autoFocus style={{ width: 145 }} />

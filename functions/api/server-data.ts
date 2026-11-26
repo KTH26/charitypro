@@ -189,7 +189,7 @@ export const monthlyLoanPayments = (result: { items: any[]; accounts: any[] }, l
  * starting on its pay day after the money came. Money paid back goes to whatever is due first.
  * Each monthly loan shows one line: the next payment still due (late months first).
  */
-export const calculateLoanPlans = (loanAccounts: { id: string; name: string; currency: string; data: any; revision: number }[], borrowed: Map<string, LoanEvent[]>, repaid: Map<string, number>, today: string) => {
+export const calculateLoanPlans = (loanAccounts: { id: string; name: string; currency: string; data: any; revision: number }[], borrowed: Map<string, LoanEvent[]>, repaid: Map<string, number>, today: string, payments?: Map<string, { date: string; amount: number; refund?: boolean }[]>) => {
   const round = (value: number) => Math.round(value * 100) / 100;
   const dayIn = (year: number, monthIndex: number, day: number) => { const date = new Date(Date.UTC(year, monthIndex, 1)); const last = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate(); return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), Math.min(day, last))).toISOString().slice(0, 10); };
   /** The k-th monthly due date: the first pay day after the money came, then one month apart. */
@@ -222,8 +222,15 @@ export const calculateLoanPlans = (loanAccounts: { id: string; name: string; cur
       const base = { ...event, amount, accountId: account.id, accountName: account.name, currency: account.currency };
       const plan = plans[index];
       if (!plan) { items.push({ ...base, remaining, paid }); return; }
-      const next = mine.find(part => part.applied < part.amount - 0.004) as Part;
-      items.push({ ...base, remaining: round(next.amount - next.applied), paid: next.applied, dueDate: next.due, monthly: true, monthlyAmount: plan.monthly, payDay: plan.day, totalOwed: remaining });
+      // A monthly loan shows only this month's payment (next month's once this month is paid), never months from before.
+      const month = today.slice(0, 7); const [year, monthNumber] = month.split('-').map(Number);
+      const paidThisMonth = round((payments?.get(account.id) || []).filter(payment => !payment.refund && String(payment.date || '').startsWith(month)).reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+      const thisMonthDone = paidThisMonth >= plan.monthly - 0.004;
+      const firstDue = monthlyDue(event.date || today, plan.day, 0);
+      const thisDue = dayIn(year, monthNumber - 1 + (thisMonthDone ? 1 : 0), plan.day);
+      const dueDate = thisDue > firstDue ? thisDue : firstDue;
+      const stillThisMonth = dueDate.startsWith(month) ? round(Math.max(0, plan.monthly - paidThisMonth)) : plan.monthly;
+      items.push({ ...base, remaining: round(Math.min(remaining, stillThisMonth)), paid: dueDate.startsWith(month) ? Math.min(paidThisMonth, plan.monthly) : 0, dueDate, monthly: true, monthlyAmount: plan.monthly, payDay: plan.day, totalOwed: remaining });
     });
     accounts.push({ id: account.id, name: account.name, currency: account.currency, owed: round(owed), revision: account.revision });
   }
@@ -741,7 +748,7 @@ export const loadLoansPayable = async (db: any, today: string) => {
     const perLoan = loanAccounts.filter(account => (borrowed.get(account.id) || []).some(event => Number(event.monthly || 0) > 0));
     const others = loanAccounts.filter(account => !perLoan.includes(account));
     const old = monthlyLoanPayments(calculateLoansPayable(others, borrowed, repaid), others, payments, today);
-    const planned = calculateLoanPlans(perLoan, borrowed, repaid, today);
+    const planned = calculateLoanPlans(perLoan, borrowed, repaid, today, payments);
     const order = new Map(loanAccounts.map((account, index) => [account.id, index]));
     const items = [...old.items, ...planned.items].sort((a, b) => (a.dueDate ? 1 : 0) - (b.dueDate ? 1 : 0) || (a.dueDate || '').localeCompare(b.dueDate || '') || (a.date || '').localeCompare(b.date || ''));
     const accounts = [...old.accounts, ...planned.accounts].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
@@ -1209,6 +1216,14 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       // The pledge's campaign is exactly the one sent (or the one it already had when none is sent). The date never decides it.
       record.campaignId = String(record.campaignId || '').trim() || null;
       delete record.campaignLocked;
+      // When the amount or currency changes, the amount in CAD (what totals use) changes with it.
+      const amountChanged = Math.abs(Number(record.amount || 0) - Number(existing.amount || 0)) > 0.004 || String(record.currency || 'CAD') !== String(existing.currency || 'CAD');
+      if (String(record.currency || 'CAD') !== 'USD') { if ('amountCAD' in record) record.amountCAD = Math.round(Number(record.amount || 0) * 100) / 100; }
+      else if (amountChanged && !('amountCAD' in body.data)) {
+        const rate = String(existing.currency) === 'USD' && Number(existing.amount) > 0 && Number(existing.amountCAD) > 0 ? Number(existing.amountCAD) / Number(existing.amount) : 0;
+        if (rate > 0) record.amountCAD = Math.round(Number(record.amount || 0) * rate * 100) / 100;
+        else delete record.amountCAD;
+      }
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
