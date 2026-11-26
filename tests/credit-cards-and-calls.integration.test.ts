@@ -821,3 +821,20 @@ describe('editing a pledge amount', () => {
     expect(saved.body.item).toMatchObject({ amount: 21420, amountCAD: 21420 });
   });
 });
+
+describe('a schedule pays its own pledge', () => {
+  it('a schedule with no pledge set counts on the pledge its last payment went to, not on the newest pledge', async () => {
+    const { db, call } = setup();
+    seed(db, 'pledges', 'yearly', { donorId: 'd1', amount: 1200, currency: 'CAD', date: '2026-03-01' });
+    seed(db, 'pledges', 'lights', { donorId: 'd1', amount: 142, currency: 'CAD', date: '2026-10-27' });
+    seed(db, 'recurringPayments', 'sch', { donorId: 'd1', amount: 100, currency: 'CAD', frequency: 'monthly', nextDate: '2026-12-20', active: true });
+    seed(db, 'transactions', 't1', { donorId: 'd1', amount: 100, currency: 'CAD', type: 'approved', date: '2026-10-20', method: 'credit_card', scheduleId: 'sch', pledgeId: 'yearly' });
+    seed(db, 'transactions', 't2', { donorId: 'd1', amount: 142, currency: 'CAD', type: 'approved', date: '2026-10-27', method: 'credit_card', pledgeId: 'lights' });
+    const lights = (await call('GET', '/v3/pledges/lights/details')).body;
+    expect(lights.summary.scheduled).toBe(0);
+    expect(lights.schedules).toHaveLength(0);
+    const yearly = (await call('GET', '/v3/pledges/yearly/details')).body;
+    expect(yearly.summary.scheduled).toBeGreaterThan(0);
+    expect(yearly.schedules.map((item: any) => item.id)).toEqual(['sch']);
+  });
+});
