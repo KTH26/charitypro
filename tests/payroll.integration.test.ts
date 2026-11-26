@@ -146,4 +146,17 @@ describe('payroll', () => {
     expect((await t.call('PUT', `/v3/records/bills/${added.id}`, { revision: 1, data: { amount: 450, memo: 'Short week' } })).status).toBe(200);
     expect(await t.balance()).toBe(450);
   });
+
+  it('the payroll window can change a wage entry and a payment without turning them into bills', async () => {
+    const t = setup();
+    const wage = (await t.earnings(1500, '2026-11-27')).data.item;
+    expect((await t.call('PUT', `/v3/records/bills/${wage.id}`, { revision: 1, data: { dueDate: '2026-11-28', memo: 'Week 48', amount: 1600, earningType: 'Bonus' } })).status).toBe(200);
+    const paid = (await t.payment(600, '2026-11-29')).data.item;
+    expect((await t.call('PUT', `/v3/records/bills/${paid.id}`, { revision: 1, data: { dueDate: '2026-11-30', paidDate: '2026-11-30', memo: 'Cheque', amount: 700, sourceAccountId: 'bank-1', t4aEligible: true } })).status).toBe(200);
+    expect(await t.balance()).toBe(900);
+    const saved = t.payrollBills();
+    expect(saved.find((bill: any) => bill.id === wage.id)).toMatchObject({ status: 'pending', earningType: 'Bonus', dueDate: '2026-11-28', isPayroll: true });
+    expect(saved.find((bill: any) => bill.id === paid.id)).toMatchObject({ status: 'paid', paidDate: '2026-11-30', amount: 700, t4aEligible: true });
+    expect((await t.call('GET', '/v3/bills?limit=50')).data.items).toHaveLength(0);
+  });
 });

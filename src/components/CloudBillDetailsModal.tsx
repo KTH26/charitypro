@@ -1,11 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Edit2, Trash2, X } from 'lucide-react';
 import { CloudTransactionModal } from './CloudTransactionModal';
+import { PayrollEntryModal } from './PayrollEntryModal';
 
 type Account = { id: string; name: string; type: string };
 const money = (value: number) => Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const CloudBillDetailsModal: React.FC<{ bill: any; onClose: () => void; onMarkPaid?: (bill: any) => void; onUpdated?: (bill: any) => void; onDeleted?: (bill: any) => void }> = ({ bill: initialBill, onClose, onMarkPaid, onUpdated, onDeleted }) => {
+type BillDetailsProps = { bill: any; onClose: () => void; onMarkPaid?: (bill: any) => void; onUpdated?: (bill: any) => void; onDeleted?: (bill: any) => void };
+// A Payroll-page entry (wage earnings or a payment to the person) is not a bill: show it in the payroll window.
+export const CloudBillDetailsModal: React.FC<BillDetailsProps> = props => props.bill?.isPayroll ? <PayrollEntryModal bill={props.bill} onClose={props.onClose} onUpdated={props.onUpdated} onDeleted={props.onDeleted} /> : <BillDetailsWindow {...props} />;
+
+const BillDetailsWindow: React.FC<BillDetailsProps> = ({ bill: initialBill, onClose, onMarkPaid, onUpdated, onDeleted }) => {
   const [bill, setBill] = useState(initialBill); const [editing, setEditing] = useState(false); const [saving, setSaving] = useState(false); const [error, setError] = useState(''); const [accounts, setAccounts] = useState<Account[]>([]);
   const [form, setForm] = useState({ vendor: initialBill.vendor || '', amount: String(initialBill.amount || ''), currency: initialBill.currency || 'CAD', exchangeRate: String(initialBill.exchangeRate || 1.35), dueDate: initialBill.dueDate || '', category: initialBill.category || '', status: initialBill.status || 'pending', sourceAccountId: initialBill.sourceAccountId || '', taxable: Boolean(initialBill.taxable), memo: initialBill.memo || '' });
   const requestId = useRef('');
