@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DonorNames } from '../components/DonorNames';
 import { Link } from 'react-router-dom';
 import { Send, Settings2 } from 'lucide-react';
 import { ColumnTh, ColumnFilterChips, useListColumns } from '../components/ColumnTh';
 import { ListFooter, ListToolbar, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 import { startLiveRefresh } from '../utils/liveUpdates';
 
-type Waiting = { paymentId: string; donorId: string; donorName: string; email: string; amount: number; date: string; method: string; receiptNumber: string; error: string };
-type Receipt = { id: string; paymentId: string; receiptNumber: string; donorName: string; amount: number; giftDate: string; method: string; status: string; sentTo?: string; sentAt?: string; error?: string; voidReason?: string; voidedAt?: string };
+type Waiting = { paymentId: string; donorId: string; donorName: string; donorYiddish?: string; email: string; amount: number; date: string; method: string; receiptNumber: string; error: string };
+type Receipt = { id: string; paymentId: string; receiptNumber: string; donorName: string; donorYiddish?: string; amount: number; giftDate: string; method: string; status: string; sentTo?: string; sentAt?: string; error?: string; voidReason?: string; voidedAt?: string };
 type Tab = 'waiting' | 'sent' | 'failed' | 'void';
 const METHODS: Record<string, string> = { credit_card: 'Credit card', check: 'Check', e_transfer: 'E-Transfer', wire: 'Wire', ach: 'ACH', cash: 'Cash', vouchers: 'Vouchers', eizer: 'Eizer', bnei_leivy: 'Bnei Leivy', other: 'Other' };
 const money = (value: number) => '$' + Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -145,7 +146,7 @@ export const OnlineReceipts: React.FC = () => {
         {tab === 'waiting' ? <><thead><tr><th /><ColumnTh cols={cols} column="date" label="Date" kind="date"/><ColumnTh cols={cols} column="donor" label="Donor"/><ColumnTh cols={cols} column="email" label="Email"/><ColumnTh cols={cols} column="method" label="Paid by"/><ColumnTh cols={cols} column="amount" label="Amount" kind="number" align="right"/><th className="row-actions" /></tr></thead><tbody>
           {waiting.map(item => <tr key={item.paymentId}>
             <td><input type="checkbox" disabled={!item.email} checked={selected.has(item.paymentId)} onChange={() => toggle(item.paymentId)} /></td>
-            <td>{item.date}</td><td style={{ fontWeight: 600 }}>{item.donorName}</td>
+            <td>{item.date}</td><td style={{ fontWeight: 600 }}><DonorNames name={item.donorName} yiddish={item.donorYiddish} bold={false} /></td>
             <td>{item.email || <span style={{ color: 'var(--red)' }}>No email – add it on the donor</span>}{item.error && <div style={{ color: 'var(--red)', fontSize: 12 }}>Last try: {item.error}</div>}</td>
             <td>{METHODS[item.method] || item.method}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{money(item.amount)}</td>
             <td className="row-actions" style={{ whiteSpace: 'nowrap' }}><button className="btn btn-secondary btn-sm" disabled={!item.email || sending} onClick={() => void send([item.paymentId])}>Send</button> <RowMenu items={[{ label: 'View', onClick: () => void openPdf(item.paymentId) }]} /></td>
@@ -153,7 +154,7 @@ export const OnlineReceipts: React.FC = () => {
           {waiting.length === 0 && <tr><td colSpan={7} className="list-empty">Every payment got its receipt.</td></tr>}
         </tbody></> : <><thead><tr><ColumnTh cols={cols} column="number" label="Receipt #" kind="number"/><ColumnTh cols={cols} column="giftDate" label="Date of gift" kind="date"/><ColumnTh cols={cols} column="donor" label="Donor"/><ColumnTh cols={cols} column="method" label="Paid by"/><ColumnTh cols={cols} column="amount" label="Amount" kind="number" align="right"/><ColumnTh cols={cols} column="sentTo" label={tab === 'void' ? 'Why cancelled' : tab === 'failed' ? 'Problem' : 'Sent to'}/><th className="row-actions" /></tr></thead><tbody>
           {receipts.map(item => <tr key={item.id}>
-            <td style={{ fontWeight: 600 }}>{item.receiptNumber}</td><td>{item.giftDate}</td><td style={{ fontWeight: 600 }}>{item.donorName}</td><td>{METHODS[item.method] || item.method}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{money(item.amount)}</td>
+            <td style={{ fontWeight: 600 }}>{item.receiptNumber}</td><td>{item.giftDate}</td><td style={{ fontWeight: 600 }}><DonorNames name={item.donorName} yiddish={item.donorYiddish} bold={false} /></td><td>{METHODS[item.method] || item.method}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{money(item.amount)}</td>
             <td style={{ fontSize: 13 }}>{tab === 'void' ? `${item.voidReason || '—'} (${String(item.voidedAt || '').slice(0, 10)})` : tab === 'failed' ? <span style={{ color: 'var(--red)' }}>{item.error}</span> : `${item.sentTo || ''} · ${String(item.sentAt || '').slice(0, 10)}`}</td>
             <td className="row-actions"><RowMenu items={[
               { label: 'View', onClick: () => void openPdf(item.paymentId, tab === 'void' ? item.receiptNumber : '') },

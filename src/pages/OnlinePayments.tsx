@@ -37,7 +37,7 @@ const money = (value: unknown) => Number(value || 0).toLocaleString('en-CA', { m
 type PaymentColumn = { key: string; label: string; kind?: ColumnKind; right?: boolean; cell: (payment: OnlinePayment) => React.ReactNode };
 const ALL_COLUMNS: PaymentColumn[] = [
   { key: 'date', label: 'Date', kind: 'date', cell: p => p.date },
-  { key: 'donor', label: 'Donor', cell: p => <span className="cell-main">{p.donorName}</span> },
+  { key: 'donor', label: 'Donor', cell: p => <><span className="cell-main">{p.donorName}</span>{p.donorYiddish && <div dir="rtl" style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'left' }}>{p.donorYiddish}</div>}</> },
   { key: 'yiddish', label: 'Yiddish name', cell: p => <span dir="rtl">{p.donorYiddish || ''}</span> },
   { key: 'donorNumber', label: 'Donor #', cell: p => p.donorNumber || '' },
   { key: 'city', label: 'City', cell: p => p.donorCity || '' },
