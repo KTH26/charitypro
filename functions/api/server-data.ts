@@ -68,14 +68,17 @@ export const cleanBillSplits = async (db: any, raw: any, amount: number): Promis
   if (ids.some(id => !expenseIds.has(id))) return { error: 'Each split line needs a valid expense category.' };
   return { splits };
 };
-// Payroll is saved as bills but is NOT a normal bill: it lives on the Payroll page only.
-// A bill is payroll when it has isPayroll or isPayrollExpense.
-// Payroll not paid = earnings (money we owe the person, +). Payroll paid = a payment to the person (-).
+// Two kinds of payroll are saved as bills:
+// 1. Payroll-page entries (isPayroll): Add Earnings (not paid = money we owe the person, +) and Record Payment (paid, -).
+//    These live on the Payroll page only, never in Bills.
+// 2. A real bill credited to an employee (isPayrollExpense + employeeId), e.g. rent paid for them: a normal expense
+//    in its own category (shows in Bills), and once paid it also comes off that employee's payroll balance (-).
 // Earnings never become "paid": paying someone is always its own payment (Record Payment or a bank match).
 const payrollBillSql = (alias = '') => { const p = alias ? `${alias}.` : ''; return `(COALESCE(json_extract(${p}data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(${p}data,'$.isPayrollExpense'),0)=1)`; };
-const payrollEarningsSql = (alias = '') => { const p = alias ? `${alias}.` : ''; return `(${payrollBillSql(alias)} AND COALESCE(json_extract(${p}data,'$.status'),'')<>'paid')`; };
+const payrollPageSql = (alias = '') => { const p = alias ? `${alias}.` : ''; return `COALESCE(json_extract(${p}data,'$.isPayroll'),0)=1`; };
+const payrollEarningsSql = (alias = '') => { const p = alias ? `${alias}.` : ''; return `(${payrollPageSql(alias)} AND COALESCE(json_extract(${p}data,'$.status'),'')<>'paid')`; };
 const isPayrollBill = (bill: any) => Boolean(bill?.isPayroll || bill?.isPayrollExpense);
-const isPayrollEarnings = (bill: any) => isPayrollBill(bill) && bill?.status !== 'paid';
+const isPayrollEarnings = (bill: any) => Boolean(bill?.isPayroll) && bill?.status !== 'paid';
 const PAYROLL_EARNINGS_CANNOT_BE_PAID = 'This is payroll earnings (money owed to the person), not a bill. To pay it, use Record Payment on the Payroll page, or match the bank transaction as a new payroll expense for this person.';
 // A payroll payment to the same person, same amount, within 3 days: probably the same money entered twice.
 // (3 days, so last week's salary of the same amount is never mistaken for this week's.)
@@ -1314,10 +1317,10 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
     if (type === 'pledges' && record.followUpDate && !isoDate(String(record.followUpDate))) return c.json({ success: false, error: 'Enter a valid pledge follow-up date.' }, 400);
     // Payroll earnings stay earnings and payroll payments stay payments; otherwise one entry would count twice on the balance.
-    if (type === 'bills' && (isPayrollBill(existing) || isPayrollBill(record)) && (existing.status === 'paid') !== (record.status === 'paid')) {
-      return c.json({ success: false, error: existing.status === 'paid' ? 'A payroll payment cannot be changed back to unpaid. Delete it if it was entered by mistake.' : isPayrollBill(existing) ? PAYROLL_EARNINGS_CANNOT_BE_PAID : 'To pay someone through payroll, use Record Payment on the Payroll page.' }, 409);
+    if (type === 'bills' && existing.isPayroll && (existing.status === 'paid') !== (record.status === 'paid')) {
+      return c.json({ success: false, error: existing.status === 'paid' ? 'A payroll payment cannot be changed back to unpaid. Delete it if it was entered by mistake.' : PAYROLL_EARNINGS_CANNOT_BE_PAID }, 409);
     }
-    if (type === 'bills' && isPayrollBill(existing) && existing.bankTransactionId && Math.abs(Number(record.amount) - Number(existing.amount)) >= 0.005) {
+    if (type === 'bills' && existing.isPayroll && existing.bankTransactionId && Math.abs(Number(record.amount) - Number(existing.amount)) >= 0.005) {
       return c.json({ success: false, error: 'This payroll payment is linked to a bank transaction, so its amount must stay the same as the bank.' }, 409);
     }
     if (type === 'bills') {
@@ -2190,7 +2193,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const type = String(c.req.query('type') || 'employees');
     if (!['employees','fundraisers'].includes(type)) return c.json({ success: false, error: 'Choose employees or fundraisers.' }, 400);
     const limit = boundedLimit(c.req.query('limit')); const page = boundedPage(c.req.query('page')); const offset = (page - 1) * limit; const search=String(c.req.query('search')||'').trim().toLowerCase();
-    const payrollBalance = `(SELECT COALESCE(SUM(CASE WHEN json_extract(b.data,'$.status')='paid' THEN -COALESCE(json_extract(b.data,'$.amount'),0) WHEN json_extract(b.data,'$.status')='void' THEN 0 ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND (COALESCE(json_extract(b.data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(b.data,'$.isPayrollExpense'),0)=1) AND (json_extract(b.data,'$.employeeId')=e.id OR lower(json_extract(b.data,'$.vendor'))=lower('Payroll: '||json_extract(e.data,'$.name'))))`;
+    const payrollBalance = `(SELECT COALESCE(SUM(CASE WHEN json_extract(b.data,'$.status')='paid' THEN -COALESCE(json_extract(b.data,'$.amount'),0) WHEN json_extract(b.data,'$.status')='void' OR COALESCE(json_extract(b.data,'$.isPayroll'),0)=0 THEN 0 ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) FROM sync_records b WHERE b.type='bills' AND b.is_deleted=0 AND (COALESCE(json_extract(b.data,'$.isPayroll'),0)=1 OR COALESCE(json_extract(b.data,'$.isPayrollExpense'),0)=1) AND (json_extract(b.data,'$.employeeId')=e.id OR lower(json_extract(b.data,'$.vendor'))=lower('Payroll: '||json_extract(e.data,'$.name'))))`;
     const commissionBalance = type === 'fundraisers' ? `+(SELECT COALESCE(SUM(COALESCE(json_extract(t.data,'$.amountCAD'),json_extract(t.data,'$.amount'),0)*COALESCE(json_extract(e.data,'$.percentage'),0)/100),0) FROM sync_records t WHERE t.type='transactions' AND t.is_deleted=0 AND json_extract(t.data,'$.type')='approved' AND json_extract(t.data,'$.fundraiserId')=e.id)` : '';
     const [listResult, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT e.id,e.data,e.revision,e.updated_at,(${payrollBalance}${commissionBalance}) AS balance_owed FROM sync_records e WHERE e.type=? AND e.is_deleted=0 AND (?='' OR lower(e.data) LIKE ?) ORDER BY lower(json_extract(e.data,'$.name')) LIMIT ? OFFSET ?`).bind(type,search,`%${search}%`,limit,offset),
@@ -3942,7 +3945,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const account = String(c.req.query('account') || '').trim();
     const from = String(c.req.query('from') || '').trim();
     const to = String(c.req.query('to') || '').trim();
-    const conditions = ["b.type='bills'", 'b.is_deleted=0', `NOT ${payrollBillSql('b')}`];
+    const conditions = ["b.type='bills'", 'b.is_deleted=0', `NOT ${payrollPageSql('b')}`];
     const bindings: any[] = [];
     if (status === 'open') conditions.push("json_extract(b.data,'$.status') IN ('pending','urgent','scheduled')");
     else if (status !== 'all') { conditions.push("json_extract(b.data,'$.status')=?"); bindings.push(status); }
@@ -4001,7 +4004,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const search = String(c.req.query('search') || '').trim().toLowerCase();
     const condition = search ? " AND lower(COALESCE(json_extract(data,'$.vendor'),'')) LIKE ?" : '';
     const bindings: any[] = search ? [`%${search}%`] : [];
-    const base = `type='bills' AND is_deleted=0 AND NOT ${payrollBillSql()} AND trim(COALESCE(json_extract(data,'$.vendor'),''))<>''`;
+    const base = `type='bills' AND is_deleted=0 AND NOT ${payrollPageSql()} AND trim(COALESCE(json_extract(data,'$.vendor'),''))<>''`;
     // Totals are per vendor, so their filters go in HAVING.
     const columns = { name: textCol("json_extract(data,'$.vendor')"), total: numCol("COALESCE(SUM(json_extract(data,'$.amount')),0)"), balance: numCol("COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0)"), count: numCol('COUNT(*)') };
     const list = listColumns(c, columns, 'name'); const having = list.conditions.length ? ` HAVING ${list.conditions.join(' AND ')}` : ''; bindings.push(...list.bindings);
@@ -4060,8 +4063,8 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       LEFT JOIN sync_records src ON src.type='accounts' AND src.id=json_extract(b.data,'$.sourceAccountId') AND src.is_deleted=0`;
     const [vendor, bills, summary] = await c.env.DB.batch([
       c.env.DB.prepare("SELECT id,data,revision,updated_at FROM sync_records WHERE type='vendors' AND is_deleted=0 AND lower(json_extract(data,'$.name'))=lower(?) LIMIT 1").bind(name),
-      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE b.type='bills' AND b.is_deleted=0 AND NOT ${payrollBillSql('b')} AND lower(json_extract(b.data,'$.vendor'))=lower(?) ORDER BY json_extract(b.data,'$.dueDate') DESC,b.id DESC LIMIT 50`).bind(name),
-      c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')='paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS total_paid,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS total_owed FROM sync_records WHERE type='bills' AND is_deleted=0 AND NOT ${payrollBillSql()} AND lower(json_extract(data,'$.vendor'))=lower(?)`).bind(name)
+      c.env.DB.prepare(`SELECT b.id,b.data,b.revision,b.updated_at,json_extract(cat.data,'$.name') AS category_name,json_extract(src.data,'$.name') AS source_name FROM sync_records b ${joins} WHERE b.type='bills' AND b.is_deleted=0 AND NOT ${payrollPageSql('b')} AND lower(json_extract(b.data,'$.vendor'))=lower(?) ORDER BY json_extract(b.data,'$.dueDate') DESC,b.id DESC LIMIT 50`).bind(name),
+      c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')='paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS total_paid,COALESCE(SUM(CASE WHEN json_extract(data,'$.status')<>'paid' THEN json_extract(data,'$.amount') ELSE 0 END),0) AS total_owed FROM sync_records WHERE type='bills' AND is_deleted=0 AND NOT ${payrollPageSql()} AND lower(json_extract(data,'$.vendor'))=lower(?)`).bind(name)
     ]);
     const vendorRow: any = vendor.results[0];
     const stats: any = summary.results[0] || {};

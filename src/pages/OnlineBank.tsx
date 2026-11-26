@@ -1047,7 +1047,7 @@ export const OnlineBank: React.FC = () => {
                     <option value="">Select bill</option>
                     {billCandidates.map((bill) => (
                       <option key={bill.id} value={bill.id}>
-                        {bill.isPayroll || bill.isPayrollExpense ? "Payroll payment: " : ""}{bill.vendor} — {bill.currency || "CAD"} ${bill.amount.toFixed(2)} — {bill.dueDate} — {bill.status}
+                        {bill.isPayroll ? "Payroll payment: " : ""}{bill.vendor} — {bill.currency || "CAD"} ${bill.amount.toFixed(2)} — {bill.dueDate} — {bill.status}
                       </option>
                     ))}
                   </select>

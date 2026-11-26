@@ -73,6 +73,28 @@ describe('payroll', () => {
     expect(categories.items.find((item: any) => item.id === 'payroll-expense').ytd).toBe(500);
   });
 
+  it('a real bill credited to an employee shows in Bills AND comes off their payroll once paid', async () => {
+    const t = setup();
+    seed(t.db, 'accounts', 'rent', { id: 'rent', name: 'Rent', type: 'expense', currency: 'CAD' });
+    await t.earnings(3000, '2026-11-01');
+    // Rent paid by the bank for the employee: the expense stays Rent (for the government), the employee is owed less.
+    const rent = await t.bankMatch({ action: 'expense', bankTransactionId: 'rent-tx', bankDate: '2026-11-02', amount: 3000, vendor: 'rent', category: 'rent', isPayrollExpense: true, employeeId: 'emp-1' });
+    expect(rent.status).toBe(200);
+    expect(await t.balance()).toBe(0);
+    const bills = (await t.call('GET', '/v3/bills?limit=50')).data.items;
+    expect(bills.map((item: any) => item.vendor)).toEqual(['rent']);
+    expect(bills[0].category).toBe('rent');
+    expect((await t.call('GET', '/v3/vendors?limit=50')).data.items.map((item: any) => item.name)).toEqual(['rent']);
+    const categories = (await t.call('GET', '/v3/expense-categories?year=2026')).data.items;
+    expect(categories.find((item: any) => item.id === 'rent').ytd).toBe(3000);
+    expect(categories.find((item: any) => item.id === 'payroll-expense').ytd).toBe(0);
+    // A bill for the employee that is not paid yet does not change the balance; paying it does.
+    const gas = (await t.call('POST', '/v3/bills', { requestId: 'gas', vendor: 'Petro Canada', amount: 100, dueDate: '2026-11-05', category: 'office', internalCategory: 'Gas', status: 'pending', isPayrollExpense: true, employeeId: 'emp-1' })).data.item;
+    expect(await t.balance()).toBe(0);
+    expect((await t.call('PATCH', `/v3/bills/${gas.id}/pay`, { revision: 1, sourceAccountId: 'bank-1', paidDate: '2026-11-06' })).status).toBe(200);
+    expect(await t.balance()).toBe(-100);
+  });
+
   it('a bank transaction matched to the payroll payment takes it off once', async () => {
     const t = setup();
     await t.earnings(500, '2026-11-02');
