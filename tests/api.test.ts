@@ -256,8 +256,10 @@ describe('Backend API & Security Rules', () => {
       const [result] = calculatePledgeFinancials(
         [{ id: 'p1', donorId: 'd1', date: '2026-03-01', amount: 1200 }],
         [
-          { id: 'paid', donorId: 'd1', date: '2026-06-20', amount: 75, type: 'approved' },
-          { id: 'pending', donorId: 'd1', date: '2026-07-20', amount: 75, type: 'pending' }
+          { id: 'paid', donorId: 'd1', date: '2026-06-20', amount: 75, type: 'approved', pledgeId: 'p1' },
+          { id: 'pending', donorId: 'd1', date: '2026-07-20', amount: 75, type: 'pending', pledgeId: 'p1' },
+          // Not linked to the pledge: never counted by its date.
+          { id: 'loose', donorId: 'd1', date: '2026-06-21', amount: 50, type: 'approved' }
         ],
         [{ id: 'schedule', donorId: 'd1', nextDate: '2026-08-20', endDate: '2027-02-20', frequency: 'monthly', amount: 75, active: true }]
       );

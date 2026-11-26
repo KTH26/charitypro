@@ -531,6 +531,36 @@ describe('monthly loan needs no pay-back date', () => {
   });
 });
 
+describe('each loan has its own pay-back plan', () => {
+  it('one loan account: one loan on a date and one loan paid every month', async () => {
+    const { db, call } = setup();
+    seed(db, 'accounts', 'cluj', { name: 'Cluj', type: 'liability', subType: 'loan', currency: 'CAD' });
+    // Loan 1: $5,000 back on one date.
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'cluj', toAccountId: 'bmo', amount: 5000, date: '2026-09-01', loanDueDate: '2027-03-01' } })).status).toBe(201);
+    // Loan 2: $3,000 paid back $1,000 every month on the 15th (first payment Oct 15).
+    const monthly = await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'cluj', toAccountId: 'bmo', amount: 3000, date: '2026-10-01', loanMonthlyPayment: 1000, loanPaymentDay: 15, loanDueDate: null } });
+    expect(monthly.status).toBe(201);
+    expect(monthly.body.item).toMatchObject({ loanMonthlyPayment: 1000, loanPaymentDay: 15 });
+    expect(monthly.body.item.loanDueDate).toBeUndefined();
+    // A monthly plan needs its day.
+    expect((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'cluj', toAccountId: 'bmo', amount: 10, date: '2026-10-01', loanMonthlyPayment: 100 } })).status).toBe(400);
+
+    const before = await call('GET', '/v3/loans-payable?today=2026-11-01');
+    expect(before.body.accounts).toEqual([expect.objectContaining({ id: 'cluj', owed: 8000 })]);
+    expect(before.body.items).toEqual([
+      expect.objectContaining({ monthly: true, remaining: 1000, dueDate: '2026-10-15', totalOwed: 3000, monthlyAmount: 1000 }),
+      expect.objectContaining({ remaining: 5000, dueDate: '2027-03-01' }),
+    ]);
+    // $1,000 paid back: it goes to the monthly payment that was due (not to the loan due in March).
+    expect([200, 201]).toContain((await call('POST', '/v3/records/accountTransfers', { data: { fromAccountId: 'bmo', toAccountId: 'cluj', amount: 1000, date: '2026-10-16' } })).status);
+    const after = await call('GET', '/v3/loans-payable?today=2026-11-01');
+    expect(after.body.items).toEqual([
+      expect.objectContaining({ monthly: true, remaining: 1000, dueDate: '2026-11-15', totalOwed: 2000 }),
+      expect.objectContaining({ remaining: 5000, dueDate: '2027-03-01' }),
+    ]);
+  });
+});
+
 describe('sort and filter on every column', () => {
   it('pledges: filter donor starting with, Yiddish name, date range; sort by open balance across all pages', async () => {
     const { db, call } = setup();
@@ -591,19 +621,17 @@ describe('sub-campaigns', () => {
     expect(main).toMatchObject({ pledges: 2, pledged: 1100, paid: 100, campaignIds: ['main', 'sub'] });
     expect(sub).toMatchObject({ pledges: 1, pledged: 100, paid: 100, parentId: 'main', campaign: 'Campaign 2025 › Addition' });
   });
-  it('saving or organizing keeps a pledge in its sub-campaign; a pledge can be put in a sub-campaign', async () => {
+  it('saving keeps a pledge in its sub-campaign; a pledge can be put in any campaign chosen on it', async () => {
     const { db, call } = subSetup();
     const campaignOf = (id: string) => JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id=?").get(id) as any).data)).campaignId;
     expect((await call('PUT', '/v3/records/pledges/ps', { revision: 1, data: { notes: 'changed' } })).status).toBe(200);
-    expect(campaignOf('ps')).toBe('sub');
-    await call('POST', '/v3/campaigns/assign-pledges');
     expect(campaignOf('ps')).toBe('sub');
     expect(campaignOf('pm')).toBe('main');
     expect((await call('PUT', '/v3/records/pledges/pm', { revision: 1, data: { campaignId: 'sub' } })).status).toBe(200);
     expect(campaignOf('pm')).toBe('sub');
     const made = await call('POST', '/v3/records/pledges', { data: { donorId: 'd1', amount: 5, currency: 'CAD', date: '2025-08-01', campaignId: 'c1' } });
     expect(made.status).toBe(201);
-    expect(campaignOf(made.body.item.id)).toBe('main'); // a campaign that is not a sub-campaign of the date's campaign is not kept
+    expect(campaignOf(made.body.item.id)).toBe('c1'); // the campaign chosen on the pledge is kept, whatever its date
   });
   it('the donor window shows the campaign of each pledge and payment, and the pledge each schedule pays', async () => {
     const { call } = subSetup();
@@ -617,7 +645,7 @@ describe('sub-campaigns', () => {
 });
 
 describe('special campaigns', () => {
-  it('a pledge put in a special campaign stays there; new pledges are never put in it by date', async () => {
+  it('a pledge put in a special campaign stays there; a pledge with no campaign is never put in one by date', async () => {
     const { db, call } = setup();
     seed(db, 'campaigns', 'year', { name: 'Campaign 2025', year: 2025, startDate: '2025-03-01', endDate: '2026-02-28', currency: 'CAD', status: 'active' });
     seed(db, 'campaigns', 'amb', { name: 'Ambulance 81', special: true, year: 2025, startDate: '2025-12-01', endDate: '2026-02-28', currency: 'CAD', status: 'active' });
@@ -625,10 +653,9 @@ describe('special campaigns', () => {
     const special = await call('POST', '/v3/records/pledges', { data: { donorId: 'd1', amount: 10000, currency: 'CAD', date: '2025-12-10', campaignId: 'amb' } });
     const normal = await call('POST', '/v3/records/pledges', { data: { donorId: 'd1', amount: 50, currency: 'CAD', date: '2025-12-11' } });
     expect(campaignOf(special.body.item.id)).toBe('amb');
-    expect(campaignOf(normal.body.item.id)).toBe('year');
-    await call('POST', '/v3/campaigns/assign-pledges');
-    expect(campaignOf(special.body.item.id)).toBe('amb');
-    expect(campaignOf(normal.body.item.id)).toBe('year');
+    expect(campaignOf(normal.body.item.id)).toBeNull();
+    expect((await call('PUT', `/v3/records/pledges/${normal.body.item.id}`, { revision: 1, data: { notes: 'x' } })).status).toBe(200);
+    expect(campaignOf(normal.body.item.id)).toBeNull();
   });
 });
 
@@ -677,6 +704,12 @@ describe('business accounts', () => {
     // a normal donor still cannot put money on someone else's pledge
     const blocked = await call('POST', '/v3/payments', { requestId: crypto.randomUUID(), donorId: 'd1', amount: 50, currency: 'CAD', method: 'cash', date: '2026-05-02', sourceAccountId: 'bmo', offsetAccountId: 'donations', type: 'approved', allocations: [{ pledgeId: 'p2', amount: 50 }] });
     expect(blocked.status).toBe(409);
+    // a payment with no pledge chosen is a plain donation: it is never linked to a pledge by its date
+    const plain = await call('POST', '/v3/payments', { requestId: crypto.randomUUID(), donorId: 'd1', amount: 25, currency: 'CAD', method: 'cash', date: '2026-05-03', sourceAccountId: 'bmo', offsetAccountId: 'donations', type: 'approved' });
+    expect(plain.body.success).toBe(true);
+    expect(plain.body.item.pledgeId).toBeUndefined();
+    const p1 = (await call('GET', '/v3/donors/d1/profile')).body;
+    expect(p1.pledges.find((item: any) => item.id === 'p1')).toMatchObject({ paid: 600 });
   });
 });
 
@@ -745,19 +778,20 @@ describe('donor tags', () => {
   });
 });
 
-describe('campaign chosen by hand', () => {
-  it('a pledge with a campaign chosen by hand keeps it when saved or organized, until turned back to by-date', async () => {
+describe('campaign chosen on the pledge', () => {
+  it('a pledge keeps its campaign when saved without one, changes only when another is chosen, and can have none', async () => {
     const { db, call } = setup();
     seed(db, 'campaigns', 'y26', { name: 'Campaign 2026', year: 2026, startDate: '2026-03-01', endDate: '2027-02-28', currency: 'CAD', status: 'active' });
     seed(db, 'campaigns', 'y27', { name: 'Campaign 2027', year: 2027, startDate: '2027-03-01', endDate: '2028-02-29', currency: 'CAD', status: 'active' });
-    seed(db, 'pledges', 'pm', { donorId: 'd1', amount: 500, currency: 'CAD', date: '2026-03-24', campaignId: 'y27', campaignLocked: true });
+    seed(db, 'pledges', 'pm', { donorId: 'd1', amount: 500, currency: 'CAD', date: '2026-03-24', campaignId: 'y27' });
     const campaignOf = () => JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='pm'").get() as any).data)).campaignId;
-    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 1, data: { notes: 'x', campaignId: 'y26' } })).status).toBe(200);
+    // The date is in Campaign 2026, but the pledge stays in the campaign it has.
+    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 1, data: { notes: 'x' } })).status).toBe(200);
     expect(campaignOf()).toBe('y27');
-    await call('POST', '/v3/campaigns/assign-pledges');
-    expect(campaignOf()).toBe('y27');
-    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 2, data: { campaignLocked: false, campaignId: 'y26' } })).status).toBe(200);
+    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 2, data: { campaignId: 'y26' } })).status).toBe(200);
     expect(campaignOf()).toBe('y26');
+    expect((await call('PUT', '/v3/records/pledges/pm', { revision: 3, data: { campaignId: '' } })).status).toBe(200);
+    expect(campaignOf()).toBeNull();
   });
 });
 

@@ -3,7 +3,7 @@ import { startLiveRefresh } from '../utils/liveUpdates';
 import { usePlaidLink } from "react-plaid-link";
 import { OnlinePaymentForm } from "../components/OnlinePaymentForm";
 import { CloudTransactionModal } from "../components/CloudTransactionModal";
-import { LoanDueDateField, isLoanAccount, needsLoanDueDate } from "../components/LoanDueDateField";
+import { LoanDueDateField, loanPlanData, loanPlanError } from "../components/LoanDueDateField";
 import { CloudAddAccountModal } from "../components/CloudAddAccountModal";
 
 type BankAccount = {
@@ -413,7 +413,7 @@ export const OnlineBank: React.FC = () => {
   const confirmTransferIn = async () => {
     if (!matching || !transferInSourceId) return;
     const source = allAccounts.find((account) => account.id === transferInSourceId);
-    if (needsLoanDueDate(source) && !transferInLoanDueDate) { setError("This money comes from a loan account. Choose the date it has to be paid back."); return; }
+    const loanProblem = loanPlanError(source, transferInLoanDueDate); if (loanProblem) { setError(loanProblem); return; }
     setSaving(true);
     setError("");
     const requestId = matchRequestIds.current[matching.id] || crypto.randomUUID();
@@ -422,7 +422,7 @@ export const OnlineBank: React.FC = () => {
       const response = await fetch("/api/v3/bank/match-outgoing", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": requestId },
-        body: JSON.stringify({ requestId, action: "transfer_in", accountId: selectedBank, bankTransactionId: matching.id, bankDate: matching.date, description: matching.description, amount: Math.abs(matching.amount), sourceAccountId: transferInSourceId, ...(isLoanAccount(source) ? { loanDueDate: transferInLoanDueDate } : {}) }),
+        body: JSON.stringify({ requestId, action: "transfer_in", accountId: selectedBank, bankTransactionId: matching.id, bankDate: matching.date, description: matching.description, amount: Math.abs(matching.amount), sourceAccountId: transferInSourceId, ...loanPlanData(source, transferInLoanDueDate) }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) { delete matchRequestIds.current[matching.id]; throw new Error(data.error || "Unable to record this transfer."); }

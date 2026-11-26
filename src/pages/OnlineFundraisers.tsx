@@ -4,7 +4,7 @@ import { ColumnTh, ColumnFilterChips, sortFilterRows, useListColumns } from '../
 import { ListFooter, ListToolbar, NewButton, ResetLink, RowMenu, ViewTabs } from '../components/ListLayout';
 import { startLiveRefresh } from '../utils/liveUpdates';
 import { FundraiserAllocationEditor, type FundraiserAllocationDraft } from '../components/FundraiserAllocationEditor';
-import { LoanDueDateField, isLoanAccount, needsLoanDueDate } from '../components/LoanDueDateField';
+import { LoanDueDateField, loanPlanData, loanPlanError } from '../components/LoanDueDateField';
 
 type Fundraiser = { id: string; revision: number; name: string; phone?: string; email?: string; percentage?: number; notes?: string; totalRaised?: number; commissionEarned?: number; commissionPaid?: number; balanceOwed?: number };
 type Team = { id: string; revision: number; name: string; allocations: FundraiserAllocationDraft[] };
@@ -172,10 +172,10 @@ const PayFundraiserModal: React.FC<{ fundraiser: Fundraiser; accounts: Account[]
     if (!Number.isFinite(amount) || amount <= 0) { setError('Enter an amount above zero.'); return; }
     if (amount - owed > 0.005) { setError(`We owe only ${money(owed)}.`); return; }
     if (!form.sourceAccountId) { setError('Choose the account the money is paid from.'); return; }
-    if (needsLoanDueDate(source) && !form.loanDueDate) { setError('This money comes from a loan account. Choose the date it has to be paid back.'); return; }
+    const loanProblem = loanPlanError(source, form.loanDueDate); if (loanProblem) { setError(loanProblem); return; }
     setSaving(true); setError(''); key.current = key.current || crypto.randomUUID();
     try {
-      const response = await fetch('/api/v3/fundraiser-payouts', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key.current }, body: JSON.stringify({ requestId: key.current, fundraiserId: fundraiser.id, amount, date: form.date, sourceAccountId: form.sourceAccountId, memo: form.memo.trim(), ...(isLoanAccount(source) ? { loanDueDate: form.loanDueDate } : {}) }) });
+      const response = await fetch('/api/v3/fundraiser-payouts', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key.current }, body: JSON.stringify({ requestId: key.current, fundraiserId: fundraiser.id, amount, date: form.date, sourceAccountId: form.sourceAccountId, memo: form.memo.trim(), ...loanPlanData(source, form.loanDueDate) }) });
       const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save the payment.');
       onPaid(amount);
     } catch (reason: any) { key.current = ''; setError(reason.message || 'Unable to save the payment.'); }

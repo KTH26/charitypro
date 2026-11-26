@@ -7,8 +7,8 @@ import { OnlinePaymentForm } from './OnlinePaymentForm';
 import { PledgeTagPicker } from './PledgeTagPicker';
 import { type CalendarSlot, type Dedication, slotId, slotLabel } from '../utils/hebrewCalendar';
 
-export type PledgeForEdit = { id: string; revision: number; donorId: string; donorName: string; campaignId?: string; campaignLocked?: boolean; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string; followUpDate?: string; followUpNote?: string; fundraiserGroupId?: string; fundraiserAllocations?: FundraiserAllocationDraft[]; tags?: string[] };
-type Campaign = { id: string; parentId?: string; special?: boolean; name: string; year: number; startDate: string; endDate: string };
+export type PledgeForEdit = { id: string; revision: number; donorId: string; donorName: string; campaignId?: string; amount: number; currency: 'CAD' | 'USD'; date: string; notes?: string; followUpDate?: string; followUpNote?: string; fundraiserGroupId?: string; fundraiserAllocations?: FundraiserAllocationDraft[]; tags?: string[] };
+type Campaign = { id: string; parentId?: string; special?: boolean; name: string; year: number; startDate: string; endDate: string; status?: string };
 type PledgeForm = { id: string; revision: number; amount: string; currency: 'CAD' | 'USD'; date: string; notes: string; followUpDate: string; followUpNote: string; fundraiserGroupId: string; fundraiserAllocations: FundraiserAllocationDraft[]; tags: string[] };
 
 const localToday = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
@@ -16,7 +16,7 @@ const postJson = async (url: string, body: any, method = 'POST') => { const resp
 
 /**
  * The New / Edit Pledge window. Used on the Pledges page and from Record a Call, so both have the same options:
- * donor, amount, currency, date (the campaign is picked by date), calendar dates he takes (days / week / month)
+ * donor, amount, currency, date, campaign (chosen here, never by date), calendar dates he takes (days / week / month)
  * with the name to show, follow-up reminder, fundraiser split or saved team, notes, and "paid right away".
  */
 export const PledgeFormModal: React.FC<{
@@ -32,8 +32,9 @@ export const PledgeFormModal: React.FC<{
   const fixedDonor: PickedDonor | null = pledge ? { id: pledge.donorId, name: pledge.donorName } : defaultDonor || null;
   const [donor, setDonor] = useState<PickedDonor | null>(fixedDonor);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [byDate, setByDate] = useState(false); // turns off a campaign that was chosen by hand
-  const [subCampaignId, setSubCampaignId] = useState(String(pledge?.campaignId || '')); // kept only when it is a sub-campaign of the date's campaign
+  // The pledge's campaign is only what is chosen here. An empty value means "No campaign".
+  const [campaignId, setCampaignId] = useState(String(pledge?.campaignId || ''));
+  const campaignTouched = useRef(Boolean(pledge));
   const [fundraisers, setFundraisers] = useState<{ id: string; name: string; percentage?: number }[]>([]);
   const [groups, setGroups] = useState<{ id: string; name: string; allocations: FundraiserAllocationDraft[] }[]>([]);
   // Calendar dates: the ones already booked with this pledge, and new ones chosen now.
@@ -48,7 +49,13 @@ export const PledgeFormModal: React.FC<{
 
   useEffect(() => {
     Promise.all(['/api/v3/records/campaigns?limit=100', '/api/v3/records/fundraisers?limit=100', '/api/v3/records/fundraisingGroups?limit=100'].map(url => fetch(url).then(response => response.json())))
-      .then(([campaignData, fundraiserData, groupData]) => { if (campaignData.success) setCampaigns(campaignData.items || []); if (fundraiserData.success) setFundraisers(fundraiserData.items || []); if (groupData.success) setGroups(groupData.items || []); })
+      .then(([campaignData, fundraiserData, groupData]) => {
+        if (campaignData.success) {
+          const list: Campaign[] = campaignData.items || []; setCampaigns(list);
+          // A new pledge starts in the newest active main campaign (not a special one); it can be changed.
+          const newest = list.filter(item => !item.parentId && !item.special && item.status === 'active').sort((left, right) => String(right.startDate || '').localeCompare(String(left.startDate || '')))[0];
+          if (!campaignTouched.current && newest) setCampaignId(newest.id);
+        } if (fundraiserData.success) setFundraisers(fundraiserData.items || []); if (groupData.success) setGroups(groupData.items || []); })
       .catch(() => undefined);
     if (pledge) fetch(`/api/v3/dedications?pledgeId=${encodeURIComponent(pledge.id)}`).then(response => response.json()).then(data => { if (data.success) { setBooked(data.items || []); setHonoree(data.items?.[0]?.honoree || ''); } }).catch(() => undefined);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -69,7 +76,7 @@ export const PledgeFormModal: React.FC<{
       // First make sure the dates are still free, so nothing is saved when one is taken.
       if (newSlots.length) await postJson('/api/v3/dedications', { checkOnly: true, items: newSlots });
       const key = requestId.current || crypto.randomUUID(); requestId.current = key;
-      const data = { ...(form.id ? { id: form.id } : {}), donorId: donor.id, amount, currency: form.currency, date: form.date, notes: form.notes.trim(), followUpDate: form.followUpDate, followUpNote: form.followUpNote.trim(), fundraiserGroupId: form.fundraiserGroupId, fundraiserAllocations: form.fundraiserAllocations, tags: form.tags, campaignId: choiceIds.includes(subCampaignId) ? subCampaignId : (campaign?.id || null), ...(pledge?.campaignLocked && byDate ? { campaignLocked: false } : {}) };
+      const data = { ...(form.id ? { id: form.id } : {}), donorId: donor.id, amount, currency: form.currency, date: form.date, notes: form.notes.trim(), followUpDate: form.followUpDate, followUpNote: form.followUpNote.trim(), fundraiserGroupId: form.fundraiserGroupId, fundraiserAllocations: form.fundraiserAllocations, tags: form.tags, campaignId: campaignId || null };
       const response = await fetch(form.id ? `/api/v3/records/pledges/${encodeURIComponent(form.id)}` : '/api/v3/records/pledges', { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ revision: form.revision, data }) });
       const result = await response.json();
       if (!response.ok || !result.success) { requestId.current = ''; throw new Error(result.error || 'Unable to save pledge.'); }
@@ -94,10 +101,9 @@ export const PledgeFormModal: React.FC<{
       setGroups(current => [...current, data.item]); setForm(current => ({ ...current, fundraiserGroupId: data.item.id })); setNotice('Team saved and selected.');
     } catch (reason: any) { setError(reason.message || 'Unable to save team.'); }
   };
-  // What can be chosen besides the automatic campaign: its sub-campaigns, and special campaigns with theirs.
-  const campaign = campaigns.filter(item => !item.parentId && !item.special && item.startDate <= form.date && item.endDate >= form.date).sort((left, right) => right.startDate.localeCompare(left.startDate) || left.endDate.localeCompare(right.endDate))[0];
-  const currentOther = campaigns.find(item => item.id === String(pledge?.campaignId || '') && item.parentId && item.parentId !== campaign?.id && !campaigns.find(main => main.id === item.parentId)?.special);
-  const choiceIds = [...(campaign ? campaigns.filter(item => item.parentId === campaign.id).map(item => item.id) : []), ...(currentOther ? [currentOther.id] : []), ...campaigns.filter(item => item.special).flatMap(main => [main.id, ...campaigns.filter(item => item.parentId === main.id).map(item => item.id)])];
+  // Campaign choices: each main campaign followed by its sub-campaigns ("Main › Sub").
+  const mains = campaigns.filter(item => !item.parentId || !campaigns.some(main => main.id === item.parentId)).sort((left, right) => Number(Boolean(left.special)) - Number(Boolean(right.special)) || String(right.startDate || '').localeCompare(String(left.startDate || '')) || left.name.localeCompare(right.name));
+  const campaignOptions = mains.flatMap(main => [{ id: main.id, label: main.special ? `${main.name} (special)` : main.name }, ...campaigns.filter(item => item.parentId === main.id).map(item => ({ id: item.id, label: `${main.name} › ${item.name}` }))]);
 
   // "Paid right away": the payment window opens with this pledge already chosen.
   if (paying && donor) return <div className="modal-overlay"><div className="pay-modal" onClick={event => event.stopPropagation()}>
@@ -114,7 +120,7 @@ export const PledgeFormModal: React.FC<{
         <label className="form-group" style={{ margin: 0 }}><span>Amount *</span><input type="number" min="0.01" step="0.01" autoFocus={Boolean(fixedDonor)} value={form.amount} onChange={event => setForm(current => ({ ...current, amount: event.target.value }))} /></label>
         <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={form.currency} onChange={event => setForm(current => ({ ...current, currency: event.target.value as 'CAD' | 'USD' }))}><option>CAD</option><option>USD</option></select></label>
         <label className="form-group" style={{ margin: 0 }}><span>Date *</span><input type="date" value={form.date} onChange={event => setForm(current => ({ ...current, date: event.target.value }))} /></label>
-        {pledge?.campaignLocked && !byDate ? <div className="form-group" style={{ margin: 0 }}><span>Campaign — chosen by hand</span><div style={{ padding: '11px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-input)', fontWeight: 600 }}>{(() => { const chosen = campaigns.find(item => item.id === pledge.campaignId); const parent = chosen?.parentId ? campaigns.find(item => item.id === chosen.parentId) : null; return chosen ? `${parent ? `${parent.name} › ` : ''}${chosen.name}` : 'Kept as chosen'; })()}</div><button type="button" className="link-button" style={{ marginTop: 4, fontSize: 12 }} onClick={() => setByDate(true)}>Choose the campaign by date instead</button></div> : <div className="form-group" style={{ margin: 0 }}><span>Campaign — automatic by date</span><div style={{ padding: '11px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-input)', fontWeight: 600 }}>{campaign ? `${campaign.name} (${campaign.year})` : 'No campaign covers this date'}</div>{choiceIds.length ? <label style={{ display: 'grid', gap: 3, marginTop: 6 }}><span>Sub-campaign or special campaign</span><select value={choiceIds.includes(subCampaignId) ? subCampaignId : ''} onChange={event => setSubCampaignId(event.target.value)}><option value="">{campaign ? `None – ${campaign.name}` : 'None'}</option>{campaign && campaigns.filter(item => item.parentId === campaign.id).map(item => <option key={item.id} value={item.id}>{campaign.name} › {item.name}</option>)}{currentOther && <option value={currentOther.id}>{campaigns.find(main => main.id === currentOther.parentId)?.name || ''} › {currentOther.name}</option>}{campaigns.filter(item => item.special).flatMap(main => [main, ...campaigns.filter(item => item.parentId === main.id)]).map(item => <option key={item.id} value={item.id}>{item.parentId ? `${campaigns.find(main => main.id === item.parentId)?.name || ''} › ${item.name}` : `${item.name} (special)`}</option>)}</select></label> : null}</div>}
+        <label className="form-group" style={{ margin: 0 }}><span>Campaign</span><select value={campaignId} onChange={event => { campaignTouched.current = true; setCampaignId(event.target.value); }}><option value="">No campaign</option>{campaignOptions.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}{campaignId && campaigns.length > 0 && !campaignOptions.some(item => item.id === campaignId) && <option value={campaignId}>(current campaign)</option>}</select></label>
 
         <div className="pledge-extra">
           <strong style={{ color: 'var(--navy)' }}><CalendarDays size={15} style={{ verticalAlign: -2 }} /> Calendar dates (optional)</strong>

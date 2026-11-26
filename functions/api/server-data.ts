@@ -53,7 +53,7 @@ const isoDate = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '
 export const isLoanAccountData = (data: any) => String(data?.type || '') === 'liability' && String(data?.subType || '') === 'loan';
 /** A loan paid back every month (set on the loan account) needs no pay-back date on each payment. */
 export const isMonthlyLoanData = (data: any) => isLoanAccountData(data) && Number(data?.loanMonthlyPayment || 0) > 0;
-export const LOAN_DUE_DATE_ERROR = 'This money comes from a loan account. Enter the date it has to be paid back.';
+export const LOAN_DUE_DATE_ERROR = 'This money comes from a loan account. Enter the date it has to be paid back, or choose "Every month".';
 const validLoanDueDate = (value: unknown) => { const date = isoDate(value); return date && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ? date : ''; };
 /** The account money leaves from, for records that can borrow from a loan. */
 const loanSourceAccountId = (type: string, record: any) => type === 'bills' && record?.status === 'paid' ? String(record.sourceAccountId || '') : type === 'accountTransfers' ? String(record?.fromAccountId || '') : '';
@@ -65,13 +65,26 @@ const checkLoanDueDate = async (db: any, type: string, record: any) => {
   if (type !== 'bills' && type !== 'accountTransfers') return '';
   const fromId = loanSourceAccountId(type, record);
   const row: any = fromId ? await db.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(fromId).first() : null;
-  if (!row || !isLoanAccountData(parseSetting(row.data, {}))) { if (record && 'loanDueDate' in record) delete record.loanDueDate; return ''; }
+  if (!row || !isLoanAccountData(parseSetting(row.data, {}))) { if (record) { delete record.loanDueDate; delete record.loanMonthlyPayment; delete record.loanPaymentDay; } return ''; }
+  // Each loan has its own plan: paid back every month (amount + day of the month), or on one pay-back date.
+  const monthly = Math.round(Number(record.loanMonthlyPayment || 0) * 100) / 100;
+  if (monthly > 0) {
+    const day = Number(record.loanPaymentDay);
+    if (!Number.isInteger(day) || day < 1 || day > 31) return LOAN_MONTHLY_ERROR;
+    record.loanMonthlyPayment = monthly; record.loanPaymentDay = day; delete record.loanDueDate;
+    return '';
+  }
+  delete record.loanMonthlyPayment; delete record.loanPaymentDay;
   const date = validLoanDueDate(record.loanDueDate);
-  if (isMonthlyLoanData(parseSetting(row.data, {}))) { if (date) record.loanDueDate = date; else delete record.loanDueDate; return ''; }
-  if (!date) return LOAN_DUE_DATE_ERROR;
-  record.loanDueDate = date;
-  return '';
+  if (date) { record.loanDueDate = date; return ''; }
+  delete record.loanDueDate;
+  // Older loan accounts set "every month" on the whole account: money from them with no plan of its own follows that.
+  if (isMonthlyLoanData(parseSetting(row.data, {}))) return '';
+  return LOAN_DUE_DATE_ERROR;
 };
+export const LOAN_MONTHLY_ERROR = 'Enter the monthly amount and the day of the month it is due (1–31).';
+/** The pay-back plan fields sent with a payment from a loan (only the ones that were sent). */
+const loanPlanFields = (body: any) => Object.fromEntries(['loanDueDate', 'loanMonthlyPayment', 'loanPaymentDay'].filter(key => body?.[key] !== undefined).map(key => [key, body[key]]));
 
 /** Basic checks for new or edited accounts and account transfers. Returns an error message, or ''. */
 const checkAccountOrTransfer = async (db: any, type: string, record: any) => {
@@ -121,7 +134,8 @@ const checkAccountOrTransfer = async (db: any, type: string, record: any) => {
   return '';
 };
 
-type LoanEvent = { recordType: string; recordId: string; revision: number; date: string; description: string; amount: number; dueDate: string };
+/** One time money came from a loan. monthly/payDay: this loan is paid back `monthly` every month on day `payDay` (instead of on dueDate). */
+type LoanEvent = { recordType: string; recordId: string; revision: number; date: string; description: string; amount: number; dueDate: string; monthly?: number; payDay?: number };
 /**
  * Works out what is still owed on each loan. Money paid back into a loan account
  * goes to the earliest loan payment first (first in, first out).
@@ -169,6 +183,53 @@ export const monthlyLoanPayments = (result: { items: any[]; accounts: any[] }, l
   return { items, accounts };
 };
 
+/**
+ * For a loan account where at least one loan has its own "every month" plan. Each loan keeps its own plan:
+ * a loan on a pay-back date owes its amount on that date; a monthly loan owes its monthly amount every month,
+ * starting on its pay day after the money came. Money paid back goes to whatever is due first.
+ * Each monthly loan shows one line: the next payment still due (late months first).
+ */
+export const calculateLoanPlans = (loanAccounts: { id: string; name: string; currency: string; data: any; revision: number }[], borrowed: Map<string, LoanEvent[]>, repaid: Map<string, number>, today: string) => {
+  const round = (value: number) => Math.round(value * 100) / 100;
+  const dayIn = (year: number, monthIndex: number, day: number) => { const date = new Date(Date.UTC(year, monthIndex, 1)); const last = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate(); return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), Math.min(day, last))).toISOString().slice(0, 10); };
+  /** The k-th monthly due date: the first pay day after the money came, then one month apart. */
+  const monthlyDue = (from: string, day: number, k: number) => { const start = new Date(`${from}T00:00:00Z`); const first = dayIn(start.getUTCFullYear(), start.getUTCMonth(), day) > from ? 0 : 1; return dayIn(start.getUTCFullYear(), start.getUTCMonth() + first + k, day); };
+  const items: any[] = []; const accounts: any[] = [];
+  for (const account of loanAccounts) {
+    const accountMonthly = round(Number(account.data?.loanMonthlyPayment || 0)); const accountDay = Math.min(31, Math.max(1, Math.floor(Number(account.data?.loanPaymentDay) || 1)));
+    const events = [...(borrowed.get(account.id) || [])].sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.recordId.localeCompare(b.recordId));
+    type Part = { event: number; due: string; order: string; amount: number; applied: number };
+    const parts: Part[] = [];
+    const plans = events.map((event, index) => {
+      const amount = round(event.amount);
+      // A loan with no plan of its own, on an older account set to "every month", follows the account's plan.
+      const plan = event.monthly && event.monthly > 0 ? { monthly: event.monthly, day: event.payDay || 1 } : !event.dueDate && accountMonthly > 0 ? { monthly: accountMonthly, day: accountDay } : null;
+      if (plan) {
+        const from = event.date || today; const count = Math.min(1200, Math.ceil(amount / plan.monthly - 0.0001));
+        for (let k = 0; k < count; k += 1) { const due = monthlyDue(from, plan.day, k); parts.push({ event: index, due, order: due, amount: round(Math.min(plan.monthly, amount - k * plan.monthly)), applied: 0 }); }
+      } else parts.push({ event: index, due: event.dueDate || '', order: event.dueDate || event.date || '', amount, applied: 0 });
+      return plan;
+    });
+    parts.sort((a, b) => a.order.localeCompare(b.order) || a.event - b.event);
+    let pool = round(repaid.get(account.id) || 0);
+    for (const part of parts) { const applied = round(Math.max(0, Math.min(pool, part.amount))); part.applied = applied; pool = round(pool - applied); }
+    let owed = 0;
+    events.forEach((event, index) => {
+      const mine = parts.filter(part => part.event === index).sort((a, b) => a.due.localeCompare(b.due));
+      const amount = round(event.amount); const paid = round(mine.reduce((sum, part) => sum + part.applied, 0)); const remaining = round(amount - paid);
+      if (remaining <= 0.004) return;
+      owed += remaining;
+      const base = { ...event, amount, accountId: account.id, accountName: account.name, currency: account.currency };
+      const plan = plans[index];
+      if (!plan) { items.push({ ...base, remaining, paid }); return; }
+      const next = mine.find(part => part.applied < part.amount - 0.004) as Part;
+      items.push({ ...base, remaining: round(next.amount - next.applied), paid: next.applied, dueDate: next.due, monthly: true, monthlyAmount: plan.monthly, payDay: plan.day, totalOwed: remaining });
+    });
+    accounts.push({ id: account.id, name: account.name, currency: account.currency, owed: round(owed), revision: account.revision });
+  }
+  return { items, accounts };
+};
+
 type LiabilityAccount = { id: string; name: string; currency: string; data: any; revision: number };
 type LiabilityPayment = { date: string; amount: number; refund?: boolean; description?: string; recordType?: string; recordId?: string };
 /**
@@ -204,19 +265,20 @@ const loadLiabilityMovements = async (db: any, accounts: LiabilityAccount[]) => 
       if (type === 'transactions') return accountCurrency === 'CAD' && data.currency === 'USD' ? Number(data.amountCAD ?? data.amount ?? 0) : amount;
       return amount;
     };
-    const dueDate = isoDate(data.loanDueDate);
+    const monthlyPlan = Number(data.loanMonthlyPayment || 0) > 0 ? { monthly: Math.round(Number(data.loanMonthlyPayment) * 100) / 100, payDay: Math.min(31, Math.max(1, Math.floor(Number(data.loanPaymentDay) || 1))) } : {};
+    const dueDate = monthlyPlan.monthly ? '' : isoDate(data.loanDueDate);
     if (type === 'bills') {
       const date = String(data.dueDate || data.paidDate || '');
-      if (data.sourceAccountId) charge(String(data.sourceAccountId), { recordType: 'bills', recordId, revision, date, description: String(data.vendor || 'Expense'), amount: amountFor(String(data.sourceAccountId)), dueDate });
+      if (data.sourceAccountId) charge(String(data.sourceAccountId), { recordType: 'bills', recordId, revision, date, description: String(data.vendor || 'Expense'), amount: amountFor(String(data.sourceAccountId)), dueDate, ...monthlyPlan });
       if (data.creditAccountId) pay(String(data.creditAccountId), date, amountFor(String(data.creditAccountId)), false, { description: String(data.vendor || 'Expense'), recordType: 'bills', recordId });
       if (data.category) pay(String(data.category), date, amountFor(String(data.category)), false, { description: String(data.vendor || 'Expense'), recordType: 'bills', recordId });
     } else if (type === 'accountTransfers') {
       const date = String(data.date || '');
-      if (data.fromAccountId) charge(String(data.fromAccountId), { recordType: 'accountTransfers', recordId, revision, date, description: String(data.notes || 'Transfer'), amount: amountFor(String(data.fromAccountId)), dueDate });
+      if (data.fromAccountId) charge(String(data.fromAccountId), { recordType: 'accountTransfers', recordId, revision, date, description: String(data.notes || 'Transfer'), amount: amountFor(String(data.fromAccountId)), dueDate, ...monthlyPlan });
       if (data.toAccountId) pay(String(data.toAccountId), date, amountFor(String(data.toAccountId)), false, { description: String(data.notes || 'Transfer'), recordType: 'accountTransfers', recordId });
     } else {
       const date = String(data.date || '');
-      if (data.offsetAccountId) charge(String(data.offsetAccountId), { recordType: 'transactions', recordId, revision, date, description: String(data.notes || 'Payment'), amount: amountFor(String(data.offsetAccountId)), dueDate });
+      if (data.offsetAccountId) charge(String(data.offsetAccountId), { recordType: 'transactions', recordId, revision, date, description: String(data.notes || 'Payment'), amount: amountFor(String(data.offsetAccountId)), dueDate, ...monthlyPlan });
       if (data.sourceAccountId) pay(String(data.sourceAccountId), date, amountFor(String(data.sourceAccountId)), false, { description: String(data.notes || 'Payment'), recordType: 'transactions', recordId });
     }
   }
@@ -540,16 +602,12 @@ export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: an
     const nextStart = isoDate(pledges[index + 1]?.date);
     const yearlyEnd = addYear(start);
     const end = nextStart && nextStart < yearlyEnd ? nextStart : yearlyEnd;
-    // A payment linked to this pledge counts even when it is under another donor (one check split between brothers).
-    // A payment with no pledge link counts by its date, only for the same donor.
+    // A payment counts only when it is linked to this pledge (pledgeId or pledgeAllocations), even under another donor
+    // (one check split between brothers). A payment with no pledge link is never matched to a pledge by its date.
     const approvedParts = uniquePayments.flatMap(payment => {
       const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations : [];
       if (allocations.length) return allocations.filter((allocation: any) => String(allocation.pledgeId || '') === String(pledge.id)).map((allocation: any) => ({ ...payment, allocationId: allocation.id, allocatedAmount: Number(allocation.amount || 0), allocatedAmountCAD: Number(allocation.amountCAD ?? allocation.amount ?? 0) }));
-      if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
-      // Marked 'not for a pledge' (a plain gift): never matched to a pledge by its date.
-      if (payment.noPledge || String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
-      const date = isoDate(payment.date);
-      return date && date >= start && date < end ? [payment] : [];
+      return payment.pledgeId && String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
     });
     const appliedPayments = approvedParts.filter(Boolean);
     const paid = appliedPayments.reduce((total, payment: any) => total + Number(payment.allocatedAmountCAD ?? payment.amountCAD ?? payment.amount ?? 0), 0);
@@ -557,11 +615,7 @@ export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: an
       if (payment.type !== 'pending' || payment.method === 'check' || payment.isBatch) return [];
       const allocations = Array.isArray(payment.pledgeAllocations) ? payment.pledgeAllocations : [];
       if (allocations.length) return allocations.filter((allocation: any) => String(allocation.pledgeId || '') === String(pledge.id)).map((allocation: any) => ({ ...payment, allocationId: allocation.id, allocatedAmount: Number(allocation.amount || 0), allocatedAmountCAD: Number(allocation.amountCAD ?? allocation.amount ?? 0) }));
-      if (payment.pledgeId) return String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
-      // Marked 'not for a pledge' (a plain gift): never matched to a pledge by its date.
-      if (payment.noPledge || String(payment.donorId || '') !== String(pledge.donorId || '')) return [];
-      const date = isoDate(payment.date);
-      return date && date >= start && date < end ? [payment] : [];
+      return payment.pledgeId && String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
     });
     const pending = pendingPayments.reduce((total, payment: any) => total + Number(payment.allocatedAmountCAD ?? payment.amountCAD ?? payment.amount ?? 0), 0);
     const linkedSchedules = schedulesInput.filter(schedule => schedule.active && String(schedule.donorId || '') === String(pledge.donorId || '') && String(schedule.pledgeId || '') === String(pledge.id));
@@ -635,50 +689,6 @@ const requirePermission = (c: any, permission: string) => {
   return c.json({ success: false, error: `Forbidden: Missing permission ${permission}` }, 403);
 };
 
-/** The pledge's campaign: the main campaign of its date, or a sub-campaign of it when one was chosen. */
-export const pledgeCampaignId = async (db: any, mainId: string, wanted: unknown) => {
-  // The main campaign comes from the date. A chosen sub-campaign or special campaign (like a one-time drive) is kept.
-  const chosen = String(wanted || '');
-  if (chosen && chosen !== mainId) { const kept: any = await db.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0 AND (COALESCE(json_extract(data,'$.parentId'),'')<>'' OR COALESCE(json_extract(data,'$.special'),0) IN (1,'true'))").bind(chosen).first(); if (kept) return chosen; }
-  return mainId || null;
-};
-const campaignForPledgeDate = async (db: any, date: unknown) => {
-  const pledgeDate = isoDate(date);
-  if (!pledgeDate) return null;
-  return db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND COALESCE(json_extract(data,'$.parentId'),'')='' AND COALESCE(json_extract(data,'$.special'),0) IN (0,'false') AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id LIMIT 1").bind(pledgeDate, pledgeDate).first();
-};
-
-const selectPledgeForPaymentDate = (pledges: any[], campaigns: any[], donorId: unknown, date: unknown) => {
-  const paymentDate = isoDate(date); const donor = String(donorId || '').trim();
-  if (!paymentDate || !donor) return null;
-  const donorPledges = pledges.filter(item => String(item.donorId || '') === donor && isoDate(item.date)).sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.id).localeCompare(String(b.id)));
-  const campaign = campaigns.filter(item => isoDate(item.startDate) && isoDate(item.endDate) && paymentDate >= item.startDate && paymentDate <= item.endDate).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))||String(a.endDate).localeCompare(String(b.endDate)))[0];
-  if (campaign) {
-    const campaignPledges = donorPledges.filter(item => String(item.campaignId || '') === String(campaign.id));
-    if (campaignPledges.length) return campaignPledges[campaignPledges.length - 1];
-  }
-  const paymentYear = paymentDate.slice(0,4);
-  const sameYear = donorPledges.filter(item => String(item.date).slice(0,4) === paymentYear);
-  if (sameYear.length) return sameYear[sameYear.length - 1];
-  for (let index = donorPledges.length - 1; index >= 0; index -= 1) {
-    const start = isoDate(donorPledges[index].date); const next = isoDate(donorPledges[index + 1]?.date); const yearlyEnd = addYear(start); const end = next && next < yearlyEnd ? next : yearlyEnd;
-    if (paymentDate >= start && paymentDate < end) return donorPledges[index];
-  }
-  return null;
-};
-
-const pledgeForPaymentDate = async (db: any, donorId: unknown, date: unknown) => {
-  const paymentDate = isoDate(date); const donor = String(donorId || '').trim();
-  if (!paymentDate || !donor) return null;
-  const [pledgeRows,campaignRows]:any = await db.batch([
-    db.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 AND json_extract(data,'$.donorId')=? ORDER BY json_extract(data,'$.date'),id").bind(donor),
-    db.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND COALESCE(json_extract(data,'$.parentId'),'')='' AND COALESCE(json_extract(data,'$.special'),0) IN (0,'false') AND json_extract(data,'$.startDate')<=? AND json_extract(data,'$.endDate')>=? ORDER BY json_extract(data,'$.startDate') DESC,id").bind(paymentDate,paymentDate)
-  ]);
-  const pledges=(pledgeRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));
-  const campaigns=(campaignRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));
-  return selectPledgeForPaymentDate(pledges,campaigns,donor,paymentDate);
-};
-
 /** Today's date in Montreal (the server runs in UTC). */
 export const torontoToday = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 const cad = (value: number) => '$' + Number(value || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -727,7 +737,15 @@ export const loadLoansPayable = async (db: any, today: string) => {
       if (opening > 0) borrowed.set(account.id, [...(borrowed.get(account.id) || []), { recordType: 'accounts', recordId: account.id, revision: account.revision, date: '', description: 'Opening balance', amount: opening, dueDate: isoDate(account.data.loanDueDate) }]);
       else if (opening < 0) repaid.set(account.id, (repaid.get(account.id) || 0) - opening);
     }
-    return monthlyLoanPayments(calculateLoansPayable(loanAccounts, borrowed, repaid), loanAccounts, payments, today);
+    // Accounts where some loan has its own monthly plan: each loan follows its own plan. Others: as before.
+    const perLoan = loanAccounts.filter(account => (borrowed.get(account.id) || []).some(event => Number(event.monthly || 0) > 0));
+    const others = loanAccounts.filter(account => !perLoan.includes(account));
+    const old = monthlyLoanPayments(calculateLoansPayable(others, borrowed, repaid), others, payments, today);
+    const planned = calculateLoanPlans(perLoan, borrowed, repaid, today);
+    const order = new Map(loanAccounts.map((account, index) => [account.id, index]));
+    const items = [...old.items, ...planned.items].sort((a, b) => (a.dueDate ? 1 : 0) - (b.dueDate ? 1 : 0) || (a.dueDate || '').localeCompare(b.dueDate || '') || (a.date || '').localeCompare(b.date || ''));
+    const accounts = [...old.accounts, ...planned.accounts].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    return { items, accounts };
 };
 /** Loans due in exactly 30, 14, 7, 3 or 1 days, or today: these go in the daily reminder email / text. */
 export const LOAN_REMINDER_DAYS = [30, 14, 7, 3, 1, 0];
@@ -1088,11 +1106,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (!String(record.name || '').trim() || !Number.isInteger(year) || year < 1900 || year > 2200 || !isoDate(record.startDate) || !isoDate(record.endDate) || record.startDate > record.endDate || !['CAD','USD'].includes(record.currency) || !['draft','active','closed'].includes(record.status)) return c.json({ success: false, error: 'Campaign name, year, dates, currency, and status are required.' }, 400);
     }
     if (type === 'pledges') {
-      const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
-      // The main campaign comes from the date; a sub-campaign of that main campaign is kept when chosen.
-      // A campaign chosen by hand (campaignLocked) is kept; otherwise the date decides.
-      const lockedCampaign: any = record.campaignLocked === true && record.campaignId ? await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first() : null;
-      if (!lockedCampaign) { record.campaignLocked = false; record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId); }
+      // The pledge's campaign is exactly the one chosen on the pledge (or none). The date never decides it.
+      record.campaignId = String(record.campaignId || '').trim() || null;
+      delete record.campaignLocked;
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -1190,12 +1206,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (String(record.donorId || '') !== String(existing.donorId || '') || String(record.currency || 'CAD') !== String(existing.currency || 'CAD')) return c.json({ success: false, error: 'Remove or reassign the pledge allocations before changing this payment donor or currency.' }, 409);
     }
     if (type === 'pledges') {
-      const matchedCampaign: any = await campaignForPledgeDate(c.env.DB, record.date);
-      // The main campaign comes from the date; a sub-campaign of that main campaign is kept when chosen.
-      // A campaign chosen by hand (campaignLocked) is kept, unless this save turns it off or picks another one by hand.
-      if (existing.campaignLocked === true && body.data?.campaignLocked !== false && !(body.data?.campaignLocked === true && body.data?.campaignId)) record.campaignId = existing.campaignId;
-      const lockedCampaign: any = record.campaignLocked === true && record.campaignId ? await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first() : null;
-      if (!lockedCampaign) { record.campaignLocked = false; record.campaignId = await pledgeCampaignId(c.env.DB, matchedCampaign ? String(matchedCampaign.id) : '', record.campaignId); }
+      // The pledge's campaign is exactly the one sent (or the one it already had when none is sent). The date never decides it.
+      record.campaignId = String(record.campaignId || '').trim() || null;
+      delete record.campaignLocked;
     }
     if (type === 'pledges' && record.campaignId) {
       const campaign = await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='campaigns' AND id=? AND is_deleted=0").bind(String(record.campaignId)).first();
@@ -1321,47 +1334,6 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (repeated?.result_json) return c.json(JSON.parse(String(repeated.result_json)));
       return c.json({ success: false, error: 'This record was changed by another user. The latest version has been reloaded.', conflict: true }, 409);
     }
-  });
-
-  app.post('/v3/campaigns/assign-pledges', async (c: any) => {
-    const denied = requirePermission(c, 'system.manage');
-    if (denied) return denied;
-    const requestId = String(c.req.header('Idempotency-Key') || '').trim();
-    if (!requestId) return c.json({ success: false, error: 'Idempotency-Key is required.' }, 400);
-    const mutationId = `v3-campaign-assign-pledges-${requestId}`;
-    const prior: any = await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();
-    if (prior?.result_json) return c.json(JSON.parse(String(prior.result_json)));
-    const [campaignRows, pledgeRows] = await c.env.DB.batch([
-      c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 ORDER BY json_extract(data,'$.startDate') DESC,json_extract(data,'$.endDate') ASC,id"),
-      c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='pledges' AND is_deleted=0 ORDER BY id")
-    ]);
-    // Only main campaigns are matched by date. A pledge in a sub-campaign of that main campaign (or in any campaign without dates) stays where it is.
-    const everyCampaign = campaignRows.results.map((row: any) => ({ id: String(row.id), ...parseSetting(row.data, {}) }));
-    const campaigns = everyCampaign.filter((item: any) => !item.parentId && item.special !== true);
-    const parentOf = new Map(everyCampaign.map((item: any) => [String(item.id), String(item.parentId || '')]));
-    // A pledge in a sub-campaign or a special campaign was put there on purpose: it is not moved by date.
-    const specialIds = new Set(everyCampaign.filter((item: any) => item.special === true).map((item: any) => String(item.id)));
-    const keptCampaign = (id: string) => Boolean(id) && (Boolean(parentOf.get(id)) || specialIds.has(id));
-    const now = Date.now(); const userId = String(c.get('userId') || 'unknown'); const userEmail = String(c.get('userEmail') || 'unknown');
-    let assigned = 0; let unchanged = 0; let unmatched = 0;
-    const changes: any[] = [];
-    for (const row of pledgeRows.results as any[]) {
-      const pledge = parseSetting(row.data, {}); const date = isoDate(pledge.date);
-      const campaign = date ? campaigns.find((item: any) => isoDate(item.startDate) <= date && isoDate(item.endDate) >= date) : null;
-      if (!campaign) { unmatched += 1; continue; }
-      if (String(pledge.campaignId || '') === campaign.id || keptCampaign(String(pledge.campaignId || '')) || pledge.campaignLocked === true) { unchanged += 1; continue; }
-      const next = { ...pledge, id: String(row.id), campaignId: campaign.id }; const data = JSON.stringify(next); const revision = Number(row.revision) + 1; const operationId = `${mutationId}-${row.id}`;
-      changes.push([
-        c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='pledges' AND id=? AND revision=? AND is_deleted=0").bind(data, revision, now, operationId, row.id, row.revision),
-        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'pledges',?,'update',?,?,?,?)").bind(row.id, revision, data, now, mutationId, operationId),
-        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'pledges','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id, row.revision, revision, row.data, data, userId, userEmail, now, mutationId, operationId, 'Assigned pledge to campaign by pledge date')
-      ]);
-      assigned += 1;
-    }
-    for (let index = 0; index < changes.length; index += 6) await c.env.DB.batch(changes.slice(index, index + 6).flat());
-    const result = { success: true, assigned, unchanged, unmatched, total: pledgeRows.results.length };
-    await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId, JSON.stringify(result), now).run();
-    return c.json(result);
   });
 
   app.get('/v3/pledges', async (c: any) => {
@@ -2151,7 +2123,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if (action === 'payment') { const source: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(sourceAccountId).first(); if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid paid-from account.' }, 409); }
     const entityData = JSON.parse(String((entity as any).data)); const id = crypto.randomUUID(); const now = Date.now(); const categoryId = String((category as any).id); const operationId = `${mutationId}-bill`;
     const bill: any = { id, vendor: `Payroll: ${entityData.name}`, employeeId: entityId, payrollEntityType: entityType, amount, currency: 'CAD', dueDate: date, status: action === 'payment' ? 'paid' : 'pending', category: categoryId, internalCategory: 'Payroll', isPayroll: true, earningType: String(body.earningType || 'Salary').slice(0,100), t4aEligible: Boolean(body.t4aEligible), memo: String(body.memo || '').trim().slice(0,2000) };
-    if (action === 'payment') { bill.sourceAccountId = sourceAccountId; bill.offsetAccountId = categoryId; bill.paidDate = date; if (body.loanDueDate) bill.loanDueDate = body.loanDueDate; }
+    if (action === 'payment') { bill.sourceAccountId = sourceAccountId; bill.offsetAccountId = categoryId; bill.paidDate = date; Object.assign(bill, loanPlanFields(body)); }
     const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', bill);
     if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const billData = JSON.stringify(bill); const statements: any[] = [
@@ -2191,7 +2163,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     if(!expenseRow)return c.json({success:false,error:'Add a Fundraising Commission expense account before paying a fundraiser.'},409);
     const fundraiser=parseSetting((fundraiserRow as any).data,{});const id=crypto.randomUUID();const billId=crypto.randomUUID();const now=Date.now();
     const payout={id,fundraiserId,sourceAccountId,amount,date,memo,linkedBillId:billId};
-    const bill:any={id:billId,vendor:`Fundraiser: ${fundraiser.name||'Unknown'}`,fundraiserId,amount,currency:'CAD',dueDate:date,paidDate:date,status:'paid',sourceAccountId,offsetAccountId:String((expenseRow as any).id),category:String((expenseRow as any).id),isPayroll:true,isFundraiserPayout:true,earningType:'Commission payout',memo:memo||'Fundraiser commission payout',...(body.loanDueDate?{loanDueDate:body.loanDueDate}:{})};
+    const bill:any={id:billId,vendor:`Fundraiser: ${fundraiser.name||'Unknown'}`,fundraiserId,amount,currency:'CAD',dueDate:date,paidDate:date,status:'paid',sourceAccountId,offsetAccountId:String((expenseRow as any).id),category:String((expenseRow as any).id),isPayroll:true,isFundraiserPayout:true,earningType:'Commission payout',memo:memo||'Fundraiser commission payout',...loanPlanFields(body)};
     const loanProblem=await checkLoanDueDate(c.env.DB,'bills',bill);if(loanProblem)return c.json({success:false,error:loanProblem},400);
     const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const response={success:true,item:{...payout,revision:1,updatedAt:now},bill:{...bill,revision:1,updatedAt:now}};
     const records:[string,string,any][]=[[id,'fundraiserPayouts',payout],[billId,'bills',bill]];const statements:any[]=[];
@@ -2432,8 +2404,8 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       if(candidates.length){
         action=candidates.length>1?'combined':'matched';for(const candidate of candidates)used.add(String(candidate.row.id));
         const expectationIds=candidates.map(candidate=>String(candidate.item.expectationId||'')).filter(Boolean);const primary:any=existingApproved?null:candidates[0];const target:any=existingApproved||primary.row;const oldTarget=existingApproved?parseSetting(existingApproved.data,{}):primary.item;transactionId=String(target.id);
-        const matchedPledge:any=oldTarget.pledgeId?null:await pledgeForPaymentDate(c.env.DB,donorId,paymentDate);const {declinedAt:_declinedAt,declineReason:_declineReason,gatewayResult:_gatewayResult,...base}=oldTarget;
-        const next={...base,id:base.id||transactionId,donorId,amount,amountCAD:amount,date:paymentDate,scheduledDate:primary?.item.scheduledDate||primary?.item.date||base.scheduledDate,type:'approved',method:'credit_card',currency:base.currency||'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaRef:ref,solaBatchId:sola.batch||'',coveredExpectationIds:expectationIds,coveredScheduledPaymentIds:candidates.map(candidate=>String(candidate.row.id)),notes:candidates.length>1?`Sola charge covers ${candidates.length} scheduled installments. Ref: ${ref}`:`Automatically matched by Sola reconciliation. Ref: ${ref}`,...(base.pledgeId?{}:matchedPledge?{pledgeId:matchedPledge.id,pledgeAutoLinked:true}:{})};
+        const {declinedAt:_declinedAt,declineReason:_declineReason,gatewayResult:_gatewayResult,...base}=oldTarget;
+        const next={...base,id:base.id||transactionId,donorId,amount,amountCAD:amount,date:paymentDate,scheduledDate:primary?.item.scheduledDate||primary?.item.date||base.scheduledDate,type:'approved',method:'credit_card',currency:base.currency||'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaRef:ref,solaBatchId:sola.batch||'',coveredExpectationIds:expectationIds,coveredScheduledPaymentIds:candidates.map(candidate=>String(candidate.row.id)),notes:candidates.length>1?`Sola charge covers ${candidates.length} scheduled installments. Ref: ${ref}`:`Automatically matched by Sola reconciliation. Ref: ${ref}`};
         const revision=Number(target.revision)+1;const data=JSON.stringify(next);const operation=`${mutationId}-transaction`;
         statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operation,transactionId,target.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(transactionId,revision,data,now,mutationId,operation));
         for(const candidate of candidates){
@@ -2446,7 +2418,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       }else if(existingApproved){
         transactionId=String(existingApproved.id);action='already_imported';
       }else{
-        transactionId=`sola-payment-${encodeURIComponent(ref).slice(0,170)}`;const matchedPledge:any=await pledgeForPaymentDate(c.env.DB,donorId,paymentDate);const transaction={id:transactionId,donorId,amount,amountCAD:amount,date:paymentDate,type:'approved',method:'credit_card',currency:'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaRef:ref,solaBatchId:sola.batch||'',notes:`Automatically imported by daily Sola reconciliation. Ref: ${ref}`,...(matchedPledge?{pledgeId:matchedPledge.id,pledgeAutoLinked:true}:{})};const data=JSON.stringify(transaction);const operation=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?) ON CONFLICT(type,id) DO NOTHING").bind(transactionId,data,now,operation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(transactionId,data,now,mutationId,operation));
+        transactionId=`sola-payment-${encodeURIComponent(ref).slice(0,170)}`;const transaction={id:transactionId,donorId,amount,amountCAD:amount,date:paymentDate,type:'approved',method:'credit_card',currency:'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaRef:ref,solaBatchId:sola.batch||'',notes:`Automatically imported by daily Sola reconciliation. Ref: ${ref}`};const data=JSON.stringify(transaction);const operation=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?) ON CONFLICT(type,id) DO NOTHING").bind(transactionId,data,now,operation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(transactionId,data,now,mutationId,operation));
       }
       const result={success:true,ref,transactionId,action};statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'processedSolaRefs',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(ref,JSON.stringify({ref,transactionId,automated:true}),now,`${mutationId}-processed`),c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now));
       try{await c.env.DB.batch(statements);if(candidates.length)summary.matched++;else if(!existingApproved)summary.imported++;}catch(reason:any){summary.errors.push(`${ref}: ${String(reason.message||'database conflict')}`);}
@@ -2748,14 +2720,6 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const statements:any[]=[];
     for(const {row,item} of values){const revision=Number(row.revision)+1;const operationId=`${mutationId}-${row.id}`;if(action==='keep_both'||String(row.id)===keepId){const next={...item,duplicateDecision:action==='keep_both'?'keep_both':'combined_primary',duplicateReviewedAt:new Date(now).toISOString(),duplicateGroupIds:ids};const data=JSON.stringify(next);statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(row.id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id,row.revision,revision,row.data,data,userId,userEmail,now,mutationId,operationId,action==='keep_both'?'Confirmed both duplicate-looking payments are valid':'Kept as primary while combining duplicate payments'));}else{statements.push(c.env.DB.prepare("UPDATE sync_records SET is_deleted=1,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(revision,now,operationId,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'delete',?,?,?,?)").bind(row.id,revision,row.data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','delete',?,?,?,NULL,?,?,?,?,?,?)").bind(row.id,row.revision,revision,row.data,userId,userEmail,now,mutationId,operationId,`Combined into payment ${keepId}`));}}
     const result={success:true,action,kept:action==='keep_both'?ids: [keepId],combined:action==='combine'?ids.filter(id=>id!==keepId):[]};statements.push(c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now));await c.env.DB.batch(statements);return c.json(result);
-  });
-
-  app.post('/v3/system/data-safety/auto-link-payments', async (c: any) => {
-    const denied=requirePermission(c,'system.manage');if(denied)return denied;const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const mutationId=`v3-auto-link-pledges-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));
-    const [rows,pledgeRows,campaignRows]:any=await c.env.DB.batch([c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='transactions' AND is_deleted=0 AND json_extract(data,'$.type')='approved' AND COALESCE(json_extract(data,'$.isBatch'),0)=0 AND COALESCE(json_extract(data,'$.pledgeId'),'')='' AND COALESCE(json_extract(data,'$.pledgeAllocations'),'[]')='[]' AND COALESCE(json_extract(data,'$.noPledge'),0)=0 ORDER BY id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='pledges' AND is_deleted=0 ORDER BY json_extract(data,'$.date'),id"),c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='campaigns' AND is_deleted=0 AND COALESCE(json_extract(data,'$.parentId'),'')='' AND COALESCE(json_extract(data,'$.special'),0) IN (0,'false') ORDER BY json_extract(data,'$.startDate'),id")]);const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');let linked=0;let unmatched=0;const pledges=(pledgeRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const campaigns=(campaignRows.results as any[]).map(row=>({id:String(row.id),...parseSetting(row.data,{})}));const updates:any[]=[];
-    for(const row of rows.results as any[]){const item=parseSetting(row.data,{});const pledge:any=selectPledgeForPaymentDate(pledges,campaigns,item.donorId,item.date);if(!pledge){unmatched++;continue;}const next={...item,pledgeId:pledge.id,pledgeAutoLinked:true,pledgeAutoLinkedAt:new Date(now).toISOString()};const data=JSON.stringify(next);const revision=Number(row.revision)+1;const operationId=`${mutationId}-${row.id}`;updates.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,row.id,row.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(row.id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id,row.revision,revision,row.data,data,userId,userEmail,now,mutationId,operationId,'Automatically linked payment to pledge by campaign year'));linked++;}
-    for(let index=0;index<updates.length;index+=75)await c.env.DB.batch(updates.slice(index,index+75));
-    const result={success:true,reviewed:rows.results.length,linked,unmatched};await c.env.DB.prepare('INSERT INTO processed_mutations(mutation_id,result_json,server_time) VALUES(?,?,?)').bind(mutationId,JSON.stringify(result),now).run();return c.json(result);
   });
 
   app.post('/v3/schedules/remove-non-sola', async (c: any) => {
@@ -3345,9 +3309,9 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
   app.post('/v3/sola/resolve', async (c:any) => {
     const denied=requirePermission(c,'transactions.approve');if(denied)return denied;const body=await c.req.json();const requestId=String(c.req.header('Idempotency-Key')||'').trim();if(!requestId)return c.json({success:false,error:'Idempotency-Key is required.'},400);const action=String(body.action||'');if(!['match','import','dismiss'].includes(action))return c.json({success:false,error:'Choose a valid Sola action.'},400);
     const mutationId=`v3-sola-${requestId}`;const prior:any=await c.env.DB.prepare('SELECT result_json FROM processed_mutations WHERE mutation_id=?').bind(mutationId).first();if(prior?.result_json)return c.json(JSON.parse(String(prior.result_json)));const ref=String(body.ref||'');const solaRow:any=await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='solaTransactions' AND id=? AND is_deleted=0").bind(ref).first();if(!solaRow)return c.json({success:false,error:'Sola transaction not found in the saved online report.'},404);const sola=parseSetting(solaRow.data,null);const now=Date.now();const userId=String(c.get('userId')||'unknown');const userEmail=String(c.get('userEmail')||'unknown');const statements:any[]=[];let item:any=null;
-    if(action==='match'){const id=String(body.transactionId||'');const current:any=await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id=? AND is_deleted=0").bind(id).first();if(!current)return c.json({success:false,error:'App transaction not found.'},404);if(Number(body.revision)!==Number(current.revision))return c.json({success:false,error:'This transaction changed on another computer. Reload the latest version.',conflict:true},409);const old=JSON.parse(String(current.data));const donorId=String(body.donorId||old.donorId||'').trim();const donor:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();if(!donor)return c.json({success:false,error:'Choose a valid donor for this match.'},409);let pledgeId=String(body.pledgeId||(donorId===String(old.donorId||'')?old.pledgeId:'')||'').trim();if(pledgeId){const pledge:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(pledgeId,donorId).first();if(!pledge)return c.json({success:false,error:'That pledge does not belong to this transaction donor.'},409);}const datePledge=!pledgeId?await pledgeForPaymentDate(c.env.DB,donorId,String(sola.date||old.date||'').slice(0,10)):null;pledgeId=pledgeId||String(datePledge?.id||'');const next={...old,donorId,type:'approved',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaBatchId:sola.batch||'',notes:`Matched via Sola Sync. Ref: ${ref}`,...(pledgeId?{pledgeId,...(datePledge?{pledgeAutoLinked:true}:{})}:{pledgeId:null})};const revision=Number(current.revision)+1;const data=JSON.stringify(next);const operationId=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,id,current.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(id,current.revision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Matched to saved Sola transaction'));item={...next,id,revision,updatedAt:now};}
+    if(action==='match'){const id=String(body.transactionId||'');const current:any=await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='transactions' AND id=? AND is_deleted=0").bind(id).first();if(!current)return c.json({success:false,error:'App transaction not found.'},404);if(Number(body.revision)!==Number(current.revision))return c.json({success:false,error:'This transaction changed on another computer. Reload the latest version.',conflict:true},409);const old=JSON.parse(String(current.data));const donorId=String(body.donorId||old.donorId||'').trim();const donor:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();if(!donor)return c.json({success:false,error:'Choose a valid donor for this match.'},409);const pledgeId=String(body.pledgeId||(donorId===String(old.donorId||'')?old.pledgeId:'')||'').trim();if(pledgeId){const pledge:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(pledgeId,donorId).first();if(!pledge)return c.json({success:false,error:'That pledge does not belong to this transaction donor.'},409);}const next={...old,donorId,type:'approved',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaBatchId:sola.batch||'',notes:`Matched via Sola Sync. Ref: ${ref}`,...(pledgeId?{pledgeId}:{pledgeId:null})};const revision=Number(current.revision)+1;const data=JSON.stringify(next);const operationId=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='transactions' AND id=? AND revision=? AND is_deleted=0").bind(data,revision,now,operationId,id,current.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',?,'update',?,?,?,?)").bind(id,revision,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','update',?,?,?,?,?,?,?,?,?,?)").bind(id,current.revision,revision,current.data,data,userId,userEmail,now,mutationId,operationId,'Matched to saved Sola transaction'));item={...next,id,revision,updatedAt:now};}
     if(action==='import'||action==='match'){const already=await solaRefInApp(c.env.DB,ref,action==='match'?String(body.transactionId||''):'');if(already)return c.json({success:false,error:`This Sola charge is already in CharityPro (payment ${already}). It was not added again.`,existingTransactionId:already},409);}
-    if(action==='import'){const donorId=String(body.donorId||'');const donor:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();if(!donor)return c.json({success:false,error:'Choose a valid donor.'},409);let pledgeId=String(body.pledgeId||'').trim();if(pledgeId){const pledge:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(pledgeId,donorId).first();if(!pledge)return c.json({success:false,error:'That pledge does not belong to the selected donor.'},409);}const id=crypto.randomUUID();const date=String(sola.date||'').slice(0,10);const datePledge=!pledgeId?await pledgeForPaymentDate(c.env.DB,donorId,date):null;pledgeId=pledgeId||String(datePledge?.id||'');const transaction={id,donorId,amount:Number(sola.amount),amountCAD:Number(sola.amount),date,type:'approved',method:'credit_card',currency:'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaRef:ref,solaBatchId:sola.batch||'',notes:`Imported as new via Sola Sync. Ref: ${ref}`,...(pledgeId?{pledgeId,...(datePledge?{pledgeAutoLinked:true}:{})}:{})};const data=JSON.stringify(transaction);const operationId=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(id,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,userId,userEmail,now,mutationId,operationId,'Imported from saved Sola transaction'));item={...transaction,revision:1,updatedAt:now};}
+    if(action==='import'){const donorId=String(body.donorId||'');const donor:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(donorId).first();if(!donor)return c.json({success:false,error:'Choose a valid donor.'},409);const pledgeId=String(body.pledgeId||'').trim();if(pledgeId){const pledge:any=await c.env.DB.prepare("SELECT id FROM sync_records WHERE type='pledges' AND id=? AND is_deleted=0 AND json_extract(data,'$.donorId')=?").bind(pledgeId,donorId).first();if(!pledge)return c.json({success:false,error:'That pledge does not belong to the selected donor.'},409);}const id=crypto.randomUUID();const date=String(sola.date||'').slice(0,10);const transaction={id,donorId,amount:Number(sola.amount),amountCAD:Number(sola.amount),date,type:'approved',method:'credit_card',currency:'CAD',depositStatus:'undeposited',sourceAccountId:'sys-undeposited-funds',solaRef:ref,solaBatchId:sola.batch||'',notes:`Imported as new via Sola Sync. Ref: ${ref}`,...(pledgeId?{pledgeId}:{})};const data=JSON.stringify(transaction);const operationId=`${mutationId}-transaction`;statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'transactions',?,?,1,0,?)").bind(id,data,now,operationId),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'transactions',1,'insert',?,?,?,?)").bind(id,data,now,mutationId,operationId),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'transactions','insert',NULL,1,NULL,?,?,?,?,?,?,?)").bind(id,data,userId,userEmail,now,mutationId,operationId,'Imported from saved Sola transaction'));item={...transaction,revision:1,updatedAt:now};}
     if(action==='match'&&item?.expectationId){const expectation:any=await c.env.DB.prepare("SELECT data,revision FROM sync_records WHERE type='paymentExpectations' AND id=? AND is_deleted=0").bind(String(item.expectationId)).first();if(expectation){const oldExpectation=parseSetting(expectation.data,{});const nextExpectation={...oldExpectation,status:'fulfilled',fulfilledAt:new Date(now).toISOString(),paymentId:String(item.id),solaRef:ref};const expectationRevision=Number(expectation.revision)+1;const expectationData=JSON.stringify(nextExpectation);const expectationOperation=`${mutationId}-expectation`;statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='paymentExpectations' AND id=? AND revision=? AND is_deleted=0").bind(expectationData,expectationRevision,now,expectationOperation,item.expectationId,expectation.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'paymentExpectations',?,'update',?,?,?,?)").bind(item.expectationId,expectationRevision,expectationData,now,mutationId,expectationOperation),c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'paymentExpectations','update',?,?,?,?,?,?,?,?,?,?)").bind(item.expectationId,expectation.revision,expectationRevision,expectation.data,expectationData,userId,userEmail,now,mutationId,expectationOperation,'Fulfilled expected payment through Sola match'));}}
     if((action==='match'||action==='import')&&item?.donorId){const solaName=String(sola.name||'').trim();if(solaName){const mappingId=`sola-map-${encodeURIComponent(solaName.toLowerCase()).slice(0,170)}`;const mapping:any=await c.env.DB.prepare("SELECT revision FROM sync_records WHERE type='solaDonorMappings' AND id=?").bind(mappingId).first();const mappingData=JSON.stringify({id:mappingId,solaName,donorId:String(item.donorId),updatedAt:now});const mappingRevision=Number(mapping?.revision||0)+1;const mappingOperation=`${mutationId}-mapping`;if(mapping)statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,is_deleted=0,last_operation_id=? WHERE type='solaDonorMappings' AND id=? AND revision=?").bind(mappingData,mappingRevision,now,mappingOperation,mappingId,mapping.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',?,'update',?,?,?,?)").bind(mappingId,mappingRevision,mappingData,now,mutationId,mappingOperation));else statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaDonorMappings',?,?,1,0,?)").bind(mappingId,mappingData,now,mappingOperation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'solaDonorMappings',1,'insert',?,?,?,?)").bind(mappingId,mappingData,now,mutationId,mappingOperation));}}
     const dismissedRow:any=await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='dismissedSolaRefs' AND id='dismissedSolaRefs'").first();const oldDismissed=Array.isArray(parseSetting(dismissedRow?.data,[]))?parseSetting(dismissedRow.data,[]):[];const nextDismissed=oldDismissed.includes(ref)?oldDismissed:[...oldDismissed,ref];const dismissedId='dismissedSolaRefs';const dismissedData=JSON.stringify(nextDismissed);const dismissedRevision=Number(dismissedRow?.revision||0)+1;const dismissedOperation=`${mutationId}-dismiss`;if(dismissedRow)statements.push(c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,is_deleted=0,last_operation_id=? WHERE type='dismissedSolaRefs' AND id=? AND revision=?").bind(dismissedData,dismissedRevision,now,dismissedOperation,dismissedId,dismissedRow.revision),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'dismissedSolaRefs',?,'update',?,?,?,?)").bind(dismissedId,dismissedRevision,dismissedData,now,mutationId,dismissedOperation));else statements.push(c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'dismissedSolaRefs',?,?,1,0,?)").bind(dismissedId,dismissedData,now,dismissedOperation),c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'dismissedSolaRefs',1,'insert',?,?,?,?)").bind(dismissedId,dismissedData,now,mutationId,dismissedOperation));
@@ -3976,7 +3940,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     if (body.printStatus === 'queued' || body.printStatus === 'printed') record.printStatus = body.printStatus;
     if (body.method) record.method = String(body.method).trim().slice(0, 100);
     if (status === 'paid') { record.paidDate = isoDate(body.paidDate) || isoDate(body.dueDate) || new Date().toISOString().slice(0, 10); record.offsetAccountId = category; }
-    if (body.loanDueDate) record.loanDueDate = body.loanDueDate;
+    Object.assign(record, loanPlanFields(body));
     const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', record);
     if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const data = JSON.stringify(record);
@@ -4023,7 +3987,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     if (!source || !['asset','liability'].includes(JSON.parse(String(source.data)).type)) return c.json({ success: false, error: 'Choose a valid asset or liability account.' }, 409);
     if (creditAccountId && (!credit || !['asset','liability'].includes(JSON.parse(String(credit.data)).type))) return c.json({ success: false, error: 'Choose a valid reimbursed-to account.' }, 409);
     if (creditAccountId && creditAccountId === sourceAccountId) return c.json({ success: false, error: 'The reimbursed-to account must be different from the paid-from account.' }, 409);
-    const next: any = { ...existing, status: 'paid', paidDate: isoDate(body.paidDate) || new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category, creditAccountId: creditAccountId || null, loanDueDate: body.loanDueDate || existing.loanDueDate };
+    const next: any = { ...existing, status: 'paid', paidDate: isoDate(body.paidDate) || new Date().toISOString().slice(0, 10), sourceAccountId, offsetAccountId: existing.category, creditAccountId: creditAccountId || null, ...(body.loanDueDate || Number(body.loanMonthlyPayment) > 0 ? loanPlanFields(body) : {}) };
     const loanProblem = await checkLoanDueDate(c.env.DB, 'bills', next);
     if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
     const now = Date.now();
@@ -4674,7 +4638,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       const operationId = `${mutationId}-bill-insert`;
       const categoryData = JSON.parse(String(categoryRow.data));
       const internalCategory = String(body.internalCategory || body.taxCategory || categoryData.name || '').trim().slice(0, 200);
-      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(creditAccountId?{creditAccountId}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId, ...(validLoanDueDate(body.loanDueDate)&&isLoanAccountData(accountData)?{loanDueDate:validLoanDueDate(body.loanDueDate)}:{}) };
+      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(creditAccountId?{creditAccountId}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId, ...(isLoanAccountData(accountData)&&Number(body.loanMonthlyPayment)>0&&Number.isInteger(Number(body.loanPaymentDay))&&Number(body.loanPaymentDay)>=1&&Number(body.loanPaymentDay)<=31?{loanMonthlyPayment:Math.round(Number(body.loanMonthlyPayment)*100)/100,loanPaymentDay:Number(body.loanPaymentDay)}:validLoanDueDate(body.loanDueDate)&&isLoanAccountData(accountData)?{loanDueDate:validLoanDueDate(body.loanDueDate)}:{}) };
       const data = JSON.stringify(record);
       resultItem = { ...record, revision: 1, updatedAt: now };
       statements.push(
@@ -4742,12 +4706,15 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       const sourceData = JSON.parse(String(source.data));
       if (!['asset','liability','equity'].includes(String(sourceData.type || ''))) return c.json({ success: false, error: 'A transfer must come from a bank, cash, loan, or credit card account, not a category.' }, 409);
       if ((sourceData.currency || 'CAD') !== (accountData.currency || 'CAD')) return c.json({ success: false, error: 'Both accounts must use the same currency.' }, 409);
-      const loanDueDate = validLoanDueDate(body.loanDueDate);
-      if (isLoanAccountData(sourceData) && !isMonthlyLoanData(sourceData) && !loanDueDate) return c.json({ success: false, error: 'This money comes from a loan account. Choose the date it has to be paid back.' }, 400);
+      // Money from a loan: check its pay-back plan (a date, or every month) the same way as any transfer.
+      const loanPlan: any = { ...loanPlanFields(body), fromAccountId: sourceAccountId };
+      const loanProblem = isLoanAccountData(sourceData) ? await checkLoanDueDate(c.env.DB, 'accountTransfers', loanPlan) : '';
+      if (loanProblem) return c.json({ success: false, error: loanProblem }, 400);
+      delete loanPlan.fromAccountId;
       const id = crypto.randomUUID();
       const operationId = `${mutationId}-transfer-insert`;
       const notes = String(body.notes || '').trim().slice(0, 2000) || description;
-      const record = { id, fromAccountId: sourceAccountId, toAccountId: accountId, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', date: bankDate, notes, bankTransactionId, ...(isLoanAccountData(sourceData) && loanDueDate ? { loanDueDate } : {}) };
+      const record = { id, fromAccountId: sourceAccountId, toAccountId: accountId, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', date: bankDate, notes, bankTransactionId, ...(isLoanAccountData(sourceData) ? loanPlan : {}) };
       const data = JSON.stringify(record);
       resultItem = { ...record, revision: 1, updatedAt: now };
       statements.push(
@@ -4947,6 +4914,8 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       offsetAccountId: String(item.offsetAccountId || '').trim(),
       referenceNumber: String(item.referenceNumber || '').trim().slice(0, 200),
       notes: String(item.notes || '').trim().slice(0, 1500),
+      // A pledge link is kept only when the reviewed file gives one; it is never guessed from the date.
+      pledgeId: String(item.pledgeId || '').trim(),
     }));
     const allowedMethods = new Set(['credit_card', 'check', 'cash', 'e_transfer', 'wire', 'vouchers', 'eizer', 'bnei_leivy', 'other']);
     if (normalized.some((item: any) => !item.externalPaymentId || !item.donorId || !Number.isFinite(item.amount) || item.amount <= 0 || !isoDate(item.date) || !allowedMethods.has(item.method) || !item.sourceAccountId || !item.offsetAccountId)) {
@@ -4957,16 +4926,19 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const donorIds = [...new Set(normalized.map((item: any) => item.donorId))];
     const accountIds = [...new Set(normalized.flatMap((item: any) => [item.sourceAccountId, item.offsetAccountId]))];
     const recordIds = normalized.map((item: any) => `donorfuse-payment-${item.externalPaymentId}`);
-    const [donorRows, accountRows, existingRows] = await c.env.DB.batch([
+    const pledgeIds = [...new Set(normalized.map((item: any) => item.pledgeId).filter(Boolean))];
+    const [donorRows, accountRows, existingRows, pledgeRows] = await c.env.DB.batch([
       c.env.DB.prepare("SELECT id FROM sync_records WHERE type='donors' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(donorIds)),
       c.env.DB.prepare("SELECT id FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(accountIds)),
       c.env.DB.prepare("SELECT id FROM sync_records WHERE type='transactions' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(recordIds)),
+      c.env.DB.prepare("SELECT id,json_extract(data,'$.donorId') AS donor_id FROM sync_records WHERE type='pledges' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(pledgeIds)),
     ]);
     const foundDonors = new Set(donorRows.results.map((row: any) => String(row.id)));
     const foundAccounts = new Set(accountRows.results.map((row: any) => String(row.id)));
     const existing = new Set(existingRows.results.map((row: any) => String(row.id)));
-    const invalid = normalized.filter((item: any) => !foundDonors.has(item.donorId) || !foundAccounts.has(item.sourceAccountId) || !foundAccounts.has(item.offsetAccountId));
-    if (invalid.length) return c.json({ success: false, error: `The import contains ${invalid.length} payment(s) with a missing donor or account.`, invalidExternalPaymentIds: invalid.map((item: any) => item.externalPaymentId) }, 409);
+    const pledgeDonor = new Map(pledgeRows.results.map((row: any) => [String(row.id), String(row.donor_id || '')]));
+    const invalid = normalized.filter((item: any) => !foundDonors.has(item.donorId) || !foundAccounts.has(item.sourceAccountId) || !foundAccounts.has(item.offsetAccountId) || (item.pledgeId && pledgeDonor.get(item.pledgeId) !== item.donorId));
+    if (invalid.length) return c.json({ success: false, error: `The import contains ${invalid.length} payment(s) with a missing donor, account, or pledge.`, invalidExternalPaymentIds: invalid.map((item: any) => item.externalPaymentId) }, 409);
 
     const now = Date.now();
     const userId = String(c.get('userId') || 'unknown');
@@ -4977,7 +4949,6 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     for (const item of normalized) {
       const id = `donorfuse-payment-${item.externalPaymentId}`;
       if (existing.has(id)) { skipped.push(item.externalPaymentId); continue; }
-      const pledge: any = await pledgeForPaymentDate(c.env.DB, item.donorId, item.date);
       const amountCAD = item.amount;
       const record = {
         id, donorId: item.donorId, amount: item.amount, amountCAD, date: item.date,
@@ -4985,7 +4956,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
         sourceAccountId: item.sourceAccountId, offsetAccountId: item.offsetAccountId,
         depositStatus: 'direct', externalSource: 'donorfuse', externalPaymentId: item.externalPaymentId,
         referenceNumber: item.referenceNumber,
-        ...(pledge ? { pledgeId: String(pledge.id), pledgeAutoLinked: true } : {}),
+        ...(item.pledgeId ? { pledgeId: item.pledgeId } : {}),
         notes: [`Imported from DonorFuse. Payment ID: ${item.externalPaymentId}.`, item.referenceNumber ? `Reference: ${item.referenceNumber}.` : '', item.notes].filter(Boolean).join(' '),
       };
       const data = JSON.stringify(record);
@@ -5077,8 +5048,8 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     }
     const checkNumber=String(body.checkNumber||'').trim().slice(0,100);const availabilityDate=String(body.availabilityDate||'').trim();if(method==='check'&&!checkNumber)return c.json({success:false,error:'Check number is required.'},400);if(method==='check'&&(!isoDate(availabilityDate)||availabilityDate<date))return c.json({success:false,error:'Check availability date must be the received date or later.'},400);
     const undeposited = method==='check'||sourceAccountId === 'sys-undeposited-funds' || body.depositStatus === 'undeposited';
-    const datePledge = !pledgeId && requestedAllocations.length === 0 ? await pledgeForPaymentDate(c.env.DB, donorId, date) : null;
-    const effectivePledgeId = pledgeId || String(datePledge?.id || '');
+    // A payment pays a pledge only when one is chosen explicitly; it is never linked by its date.
+    const effectivePledgeId = pledgeId;
     const pledgeAllocations = requestedAllocations.map((allocation: any) => ({ id: crypto.randomUUID(), paymentId: id, donorId, pledgeId: allocation.pledgeId, amount: allocation.amount, amountCAD: currency === 'USD' ? allocation.amount * exchangeRate : allocation.amount, currency, createdAt: new Date(now).toISOString() }));
     const record = {
       id, donorId, amount, amountCAD,
@@ -5092,7 +5063,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       ...(fundraiserId ? { fundraiserId } : {}),
       ...(fundraiserAllocations.length && !effectivePledgeId && !pledgeAllocations.length ? { fundraiserAllocations } : {}),
       ...(projectId ? { projectId } : {}),
-      ...(pledgeAllocations.length ? { pledgeAllocations } : effectivePledgeId ? { pledgeId: effectivePledgeId, ...(datePledge ? { pledgeAutoLinked: true } : {}) } : {}),
+      ...(pledgeAllocations.length ? { pledgeAllocations } : effectivePledgeId ? { pledgeId: effectivePledgeId } : {}),
       ...(sponsor ? { sponsor } : {}),
       ...(method==='check'?{checkNumber,availabilityDate}:{}),
       ...(notes ? { notes } : {})

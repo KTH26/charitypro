@@ -44,14 +44,16 @@ describe('what a pledge counts as paid', () => {
     const check = pay('c', 'moishe', 9000, { pledgeAllocations: [{ pledgeId: 'm', amount: 3000 }, { pledgeId: 'z', amount: 3000 }, { pledgeId: 'v', amount: 3000 }] });
     const result = calculatePledgeFinancials([pledge('m', 'moishe', 6000), pledge('z', 'zalmen', 6000), pledge('v', 'david', 6000)], [check], []);
     expect(result.map(item => item.paid)).toEqual([3000, 3000, 3000]);
-    // A payment without a pledge link still counts by date only for its own donor.
+    // A payment without a pledge link is never counted (not by date, not for any donor).
     expect(calculatePledgeFinancials([pledge('z', 'zalmen', 6000)], [pay('loose', 'moishe', 500)], [])[0].paid).toBe(0);
   });
 
-  it('a payment marked "not for a pledge" (a plain gift) is not counted by its date, but a link by hand still counts', () => {
+  it('a payment with no pledge link is never counted by its date; only an explicit link counts', () => {
     const pledges = [pledge('x', 'd', 5000, '2023-03-01')];
     expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20', noPledge: true })], [])[0].paid).toBe(0);
-    expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20' })], [])[0].paid).toBe(13000);
+    expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20' })], [])[0].paid).toBe(0);
+    expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20', type: 'pending', method: 'credit_card' })], [])[0].pending).toBe(0);
+    expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20', pledgeId: 'x' })], [])[0].paid).toBe(13000);
     expect(calculatePledgeFinancials(pledges, [pay('gift', 'd', 13000, { date: '2023-07-20', noPledge: true, pledgeId: 'x' })], [])[0].paid).toBe(13000);
   });
 

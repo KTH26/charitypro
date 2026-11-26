@@ -498,28 +498,33 @@ describe('server-driven bank deposit matching', () => {
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const campaignResponse = await app.request('/v3/records/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-create' }, body: JSON.stringify({ data: { id: 'campaign-2026', name: 'Campaign 2026', year: 2026, startDate: '2026-01-01', endDate: '2026-12-31', currency: 'CAD', status: 'active' } }) }, { DB: db } as any);
     expect(campaignResponse.status).toBe(201);
-    const pledgeResponse = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-pledge' }, body: JSON.stringify({ data: { id: 'campaign-pledge', donorId: 'campaign-donor', amount: 500, currency: 'CAD', date: '2026-02-01' } }) }, { DB: db } as any);
+    const pledgeResponse = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-pledge' }, body: JSON.stringify({ data: { id: 'campaign-pledge', donorId: 'campaign-donor', amount: 500, currency: 'CAD', date: '2026-02-01', campaignId: 'campaign-2026' } }) }, { DB: db } as any);
     expect(pledgeResponse.status).toBe(201);
     expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='campaign-pledge'").get() as any).data).campaignId).toBe('campaign-2026');
+    // A pledge saved with no campaign stays with no campaign, even when a campaign covers its date.
+    const noCampaign = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-pledge-none' }, body: JSON.stringify({ data: { id: 'no-campaign-pledge', donorId: 'campaign-donor', amount: 200, currency: 'CAD', date: '2026-03-01' } }) }, { DB: db } as any);
+    expect(noCampaign.status).toBe(201);
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='no-campaign-pledge'").get() as any).data).campaignId).toBeNull();
+    const missing = await app.request('/v3/records/pledges', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-pledge-missing' }, body: JSON.stringify({ data: { id: 'missing-campaign-pledge', donorId: 'campaign-donor', amount: 200, currency: 'CAD', date: '2026-03-01', campaignId: 'no-such-campaign' } }) }, { DB: db } as any);
+    expect(missing.status).toBe(409);
     const deleteResponse = await app.request('/v3/records/campaigns/campaign-2026', { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'campaign-delete' }, body: JSON.stringify({ revision: 1 }) }, { DB: db } as any);
     expect(deleteResponse.status).toBe(409);
     expect((await deleteResponse.json() as any).error).toContain('Close it instead');
   });
 
-  it('organizes existing pledges into campaigns by pledge date without changing payments', async () => {
+  it('never moves existing pledges into campaigns by pledge date (the organize endpoint is gone)', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'campaigns', 'campaign-2025', { id: 'campaign-2025', name: 'Campaign 2025', year: 2025, startDate: '2025-01-01', endDate: '2025-12-31', currency: 'CAD', status: 'closed' });
     seedRecord(db, 'pledges', 'legacy-pledge', { id: 'legacy-pledge', donorId: 'donor-1', amount: 250, currency: 'CAD', date: '2025-06-15' });
     seedRecord(db, 'transactions', 'pledge-payment', { id: 'pledge-payment', donorId: 'donor-1', pledgeId: 'legacy-pledge', amount: 100, currency: 'CAD', date: '2025-07-01', type: 'approved' });
     const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); }); registerServerDataRoutes(app as any);
     const response = await app.request('/v3/campaigns/assign-pledges', { method: 'POST', headers: { 'Idempotency-Key': 'organize-campaigns' } }, { DB: db } as any);
-    const body: any = await response.json();
-    expect(response.status).toBe(200); expect(body).toMatchObject({ assigned: 1, unchanged: 0, unmatched: 0 });
-    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='legacy-pledge'").get() as any).data).campaignId).toBe('campaign-2025');
+    expect(response.status).toBe(404);
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='pledges' AND id='legacy-pledge'").get() as any).data).campaignId).toBeUndefined();
     expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='pledge-payment'").get() as any).data).pledgeId).toBe('legacy-pledge');
   });
 
-  it('auto-links an approved payment to the donor pledge in the payment calendar year', async () => {
+  it('never links an approved payment to a pledge by its date', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db,'campaigns','campaign-2026',{id:'campaign-2026',name:'Campaign 2026',year:2026,startDate:'2026-01-01',endDate:'2026-12-31',currency:'CAD',status:'active'});
     seedRecord(db,'donors','year-donor',{id:'year-donor',name:'Year Donor'});
@@ -528,8 +533,10 @@ describe('server-driven bank deposit matching', () => {
     seedRecord(db,'transactions','october-payment',{id:'october-payment',donorId:'year-donor',amount:60,date:'2026-10-15',type:'approved',method:'credit_card',solaRef:'sola-october'});
     const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
     const response=await app.request('/v3/system/data-safety/auto-link-payments',{method:'POST',headers:{'Idempotency-Key':'calendar-year-link'}},{DB:db} as any);
-    expect(response.status).toBe(200);expect(await response.json()).toMatchObject({linked:1,unmatched:0});
-    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='october-payment'").get() as any).data).pledgeId).toBe('pledge-2026');
+    expect(response.status).toBe(404);
+    expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='october-payment'").get() as any).data).pledgeId).toBeUndefined();
+    const details:any=await (await app.request('/v3/pledges/pledge-2026/details',{}, {DB:db} as any)).json();
+    expect(details.summary.paid).toBe(0);
   });
 
   it('keeps one pledge follow-up reminder synchronized through create, edit, clear, and retry', async () => {
@@ -558,7 +565,7 @@ describe('server-driven bank deposit matching', () => {
   it('searches donors with a bounded server-side page', async () => {
     const db = new MockD1(); databases.push(db);
     seedRecord(db, 'donors', 'donor-search-1', { id: 'donor-search-1', name: 'Sarah Smith', firstName: 'Sarah', lastName: 'Smith', hebFirstName: 'שרה', hebLastName: 'סמיט', phone: '555-0100', email: 'sarah@example.com', displayId: 'D-100' });
-    seedRecord(db, 'transactions', 'donor-payment-1', { id: 'donor-payment-1', donorId: 'donor-search-1', amount: 40, amountCAD: 40, currency: 'CAD', date: '2026-07-20', type: 'approved', method: 'cash' });
+    seedRecord(db, 'transactions', 'donor-payment-1', { id: 'donor-payment-1', donorId: 'donor-search-1', pledgeId: 'donor-pledge-1', amount: 40, amountCAD: 40, currency: 'CAD', date: '2026-07-20', type: 'approved', method: 'cash' });
     seedRecord(db, 'pledges', 'donor-pledge-1', { id: 'donor-pledge-1', donorId: 'donor-search-1', amount: 100, currency: 'CAD', date: '2026-07-19' });
     const app = new Hono();
     app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); c.set('userId', 'test-user'); c.set('userEmail', 'test@example.com'); await next(); });
@@ -931,10 +938,10 @@ describe('server-driven bank deposit matching', () => {
     expect(Number((db.database.prepare('SELECT COUNT(*) AS count FROM sync_records').get() as any).count)).toBe(before);
   });
 
-  it('auto-links pledge-period payments, preserves Sola schedules, and supports audited duplicate decisions', async () => {
+  it('leaves unlinked payments unlinked, preserves Sola schedules, and supports audited duplicate decisions', async () => {
     const db=new MockD1();databases.push(db);seedRecord(db,'donors','cleanup-donor',{id:'cleanup-donor',name:'Cleanup Donor'});seedRecord(db,'pledges','cleanup-pledge',{id:'cleanup-pledge',donorId:'cleanup-donor',amount:500,currency:'CAD',date:'2026-01-01'});seedRecord(db,'transactions','cleanup-payment',{id:'cleanup-payment',donorId:'cleanup-donor',amount:100,currency:'CAD',date:'2026-06-01',type:'approved',method:'credit_card',sourceAccountId:'sys-undeposited-funds'});seedRecord(db,'recurringPayments','sola-real',{id:'sola-real',donorId:'cleanup-donor',solaScheduleId:'real-1',amount:25,currency:'CAD',frequency:'monthly',nextDate:'2026-07-01',active:true});seedRecord(db,'recurringPayments','mistaken-local',{id:'mistaken-local',donorId:'cleanup-donor',amount:41.67,currency:'CAD',frequency:'monthly',nextDate:'2026-07-01',endDate:'2027-06-01',active:true});seedRecord(db,'transactions','duplicate-a',{id:'duplicate-a',donorId:'cleanup-donor',amount:50,currency:'CAD',date:'2026-07-01',type:'approved',method:'cash',sourceAccountId:'sys-undeposited-funds'});seedRecord(db,'transactions','duplicate-b',{id:'duplicate-b',donorId:'cleanup-donor',amount:50,currency:'CAD',date:'2026-07-01',type:'approved',method:'cash',sourceAccountId:'sys-undeposited-funds'});
     const app=new Hono();app.use('*',async(c,next)=>{c.set('userRoles',['administrator']);c.set('userId','test-user');c.set('userEmail','test@example.com');await next();});registerServerDataRoutes(app as any);
-    const linked:any=await (await app.request('/v3/system/data-safety/auto-link-payments',{method:'POST',headers:{'Idempotency-Key':'auto-link-cleanup'}},{DB:db} as any)).json();expect(linked.linked).toBe(3);expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='cleanup-payment'").get() as any).data).pledgeId).toBe('cleanup-pledge');
+    expect((await app.request('/v3/system/data-safety/auto-link-payments',{method:'POST',headers:{'Idempotency-Key':'auto-link-cleanup'}},{DB:db} as any)).status).toBe(404);expect(JSON.parse((db.database.prepare("SELECT data FROM sync_records WHERE type='transactions' AND id='cleanup-payment'").get() as any).data).pledgeId).toBeUndefined();
     const safety:any=await (await app.request('/v3/system/data-safety',{}, {DB:db} as any)).json();expect(safety.issues.find((item:any)=>item.code==='approved_missing_account').count).toBe(0);expect(safety.issues.find((item:any)=>item.code==='schedule_missing_card').count).toBe(0);
     const duplicateDetails:any=await (await app.request('/v3/system/data-safety/possible_duplicate_payment',{}, {DB:db} as any)).json();expect(duplicateDetails.items[0].records[0]).toMatchObject({donorName:'Cleanup Donor',accountName:'Undeposited Funds'});
     const decision=await app.request('/v3/system/data-safety/duplicate-payment-decision',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'keep-duplicates'},body:JSON.stringify({recordIds:['duplicate-a','duplicate-b'],action:'keep_both'})},{DB:db} as any);expect(decision.status).toBe(200);

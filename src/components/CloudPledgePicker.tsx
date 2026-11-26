@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 export type PledgeChoice = {
   id: string;
@@ -19,12 +19,13 @@ const money = (value: number) => Number(value || 0).toLocaleString('en-CA', { mi
 
 export const CloudPledgePicker: React.FC<{
   donorId: string;
+  /** Not used to choose a pledge: a payment pays a pledge only when one is chosen here. */
   paymentDate?: string;
   value: string;
   onChange: (pledgeId: string) => void;
   label?: string;
   disabled?: boolean;
-}> = ({ donorId, paymentDate = '', value, onChange, label = 'Apply to pledge', disabled = false }) => {
+}> = ({ donorId, value, onChange, label = 'Apply to pledge', disabled = false }) => {
   const [items, setItems] = useState<PledgeChoice[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -44,20 +45,14 @@ export const CloudPledgePicker: React.FC<{
     return () => controller.abort();
   }, [donorId]);
 
-  const automatic = useMemo(() => items.find(item => paymentDate && paymentDate >= item.periodStart && paymentDate < item.periodEnd), [items, paymentDate]);
-  const automaticLabel = automatic
-    ? `Automatic — ${automatic.date} pledge (balance ${money(automatic.balance)})`
-    : paymentDate ? 'Automatic — no pledge covers this payment date' : 'Automatic — use the payment date';
-
   return <label className="form-group" style={{ margin: 0 }}>
     <span>{label}</span>
     <select value={value || ''} onChange={event => onChange(event.target.value)} disabled={disabled || loading || !donorId}>
-      <option value="">{loading ? 'Loading donor pledges…' : automaticLabel}</option>
+      <option value="">{loading ? 'Loading donor pledges…' : 'No pledge (a plain donation)'}</option>
       {items.map(item => <option key={item.id} value={item.id}>
         {item.date} · {item.currency || 'CAD'} ${money(item.amount)} · paid ${money(item.paid)} · pending ${money(item.pending)} · scheduled ${money(item.scheduled)} · balance ${money(item.balance)}
       </option>)}
     </select>
     {error && <small style={{ color: 'var(--red)' }}>{error}</small>}
-    {!error && value === '' && automatic && <small>Automatically applied by the 12-month pledge period. Choose another pledge only to override it.</small>}
   </label>;
 };

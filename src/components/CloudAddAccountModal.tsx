@@ -5,7 +5,7 @@ import { CreditCardDaysFields, creditCardDaysProblem } from './CreditCardDaysFie
 
 const kinds: Record<string, { value: string; label: string }[]> = {
   asset: [{ value: 'checking', label: 'Bank – chequing' }, { value: 'savings', label: 'Bank – savings' }, { value: 'general', label: 'Cash or other asset' }],
-  liability: [{ value: 'loan', label: 'Loan (each payment out needs a pay-back date)' }, { value: 'credit_card', label: 'Credit card' }, { value: 'general', label: 'Other liability' }]
+  liability: [{ value: 'loan', label: 'Loan (each loan gets its own pay-back plan)' }, { value: 'credit_card', label: 'Credit card' }, { value: 'general', label: 'Other liability' }]
 };
 
 /** Form to add a new account to the Chart of Accounts. */
@@ -24,14 +24,14 @@ export const CloudAddAccountModal: React.FC<{ onClose: () => void; onSaved: (acc
     if (!Number.isFinite(startingBalance)) { setError('Enter a valid starting balance.'); return; }
     const cardProblem = isCard ? creditCardDaysProblem(form.statementDay, form.paymentDueDay) : '';
     if (cardProblem) { setError(cardProblem); return; }
-    const loanPlan = loanMonthlyData(form.loanMonthlyPayment, form.loanPaymentDay); if (isLoan && loanPlan.error) { setError(loanPlan.error); return; }
+    const loanPlan = loanMonthlyData(form.loanMonthlyPayment, form.loanPaymentDay); if (isLoan && startingBalance > 0 && loanPlan.error) { setError(loanPlan.error); return; }
     setSaving(true); setError('');
     const key = requestId.current || crypto.randomUUID(); requestId.current = key;
     try {
       const data: any = { name: form.name.trim(), type: form.type, currency: form.currency, startingBalance };
       if (form.subType) data.subType = form.subType;
       if (isLoan && startingBalance > 0 && form.loanDueDate && !loanPlan.data.loanMonthlyPayment) data.loanDueDate = form.loanDueDate;
-      if (isLoan && loanPlan.data.loanMonthlyPayment) Object.assign(data, loanPlan.data);
+      if (isLoan && startingBalance > 0 && loanPlan.data.loanMonthlyPayment) Object.assign(data, loanPlan.data);
       if (isCard) { data.statementDay = Number(form.statementDay); data.paymentDueDay = Number(form.paymentDueDay); }
       const response = await fetch('/api/v3/records/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ data }) });
       const result = await response.json();
@@ -52,7 +52,7 @@ export const CloudAddAccountModal: React.FC<{ onClose: () => void; onSaved: (acc
         {kinds[form.type] ? <label className="form-group" style={{ margin: 0 }}><span>Kind *</span><select value={form.subType} onChange={event => set('subType', event.target.value)}>{kinds[form.type].map(kind => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label> : <div />}
         <label className="form-group" style={{ margin: 0 }}><span>Currency</span><select value={form.currency} onChange={event => set('currency', event.target.value)}><option>CAD</option><option>USD</option></select></label>
         {!isCategoryMode && <label className="form-group" style={{ margin: 0 }}><span>Starting balance</span><input type="number" step="0.01" value={form.startingBalance} onChange={event => set('startingBalance', event.target.value)} /><small style={{ color: 'var(--text-muted)' }}>{form.type === 'liability' ? 'How much is owed today.' : 'How much is in it today.'}</small></label>}
-        {isLoan && <LoanMonthlyFields monthly={form.loanMonthlyPayment} day={form.loanPaymentDay} onChange={set} />}
+        {isLoan && Number(form.startingBalance) > 0 && <LoanMonthlyFields monthly={form.loanMonthlyPayment} day={form.loanPaymentDay} onChange={set} />}
         {isLoan && Number(form.startingBalance) > 0 && !(Number(form.loanMonthlyPayment) > 0 || form.loanMonthlyPayment === ' ') && <label className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}><span>Starting balance — pay back by</span><input type="date" value={form.loanDueDate} onChange={event => set('loanDueDate', event.target.value)} /><small style={{ color: 'var(--text-muted)' }}>Optional. You can also set it later from the Dashboard.</small></label>}
         {isCard && <CreditCardDaysFields statementDay={form.statementDay} paymentDueDay={form.paymentDueDay} onChange={set} />}
       </div>

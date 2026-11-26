@@ -18,6 +18,8 @@ type LoanItem = {
   monthly?: boolean;
   totalOwed?: number;
   paidThisMonth?: number;
+  monthlyAmount?: number; // this loan is paid back this much every month
+  payDay?: number;
 };
 type LoanAccount = { id: string; name: string; currency: string; owed: number; revision?: number; loanMonthlyPayment?: number; loanPaymentDay?: number };
 
@@ -108,7 +110,7 @@ export const LoansPayableBox: React.FC = () => {
             const days = item.dueDate ? daysUntil(item.dueDate) : null;
             const tone = days === null || days < 0 ? 'is-late' : days <= 7 ? 'is-soon' : '';
             return <tr key={key}>
-              <td style={{ fontWeight: 600, cursor: 'pointer' }} title="Click to see this loan: money in and payments made" onClick={() => void openHistory(item.accountId)}><span style={{ textDecoration: 'underline', textDecorationColor: 'var(--border)' }}>{item.accountName}</span>{item.monthly ? <small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 600 }}>Monthly payment{item.paidThisMonth ? ` · ${money(item.paidThisMonth, item.currency)} paid this month` : ''} · {money(item.totalOwed || 0, item.currency)} left on the loan</small> : null}</td>
+              <td style={{ fontWeight: 600, cursor: 'pointer' }} title="Click to see this loan: money in and payments made" onClick={() => void openHistory(item.accountId)}><span style={{ textDecoration: 'underline', textDecorationColor: 'var(--border)' }}>{item.accountName}</span>{item.monthly ? <small style={{ display: 'block', color: 'var(--text-muted)', fontWeight: 600 }}>{item.monthlyAmount ? `${item.description ? `${item.description} · ` : ''}${money(item.monthlyAmount, item.currency)} every month${item.paid ? ` · ${money(item.paid, item.currency)} of it paid` : ''}` : `Monthly payment${item.paidThisMonth ? ` · ${money(item.paidThisMonth, item.currency)} paid this month` : ''}`} · {money(item.totalOwed || 0, item.currency)} left on {item.monthlyAmount ? 'this loan' : 'the loan'}</small> : null}</td>
               <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{money(item.remaining, item.currency)}</td>
               <td>{editing === key
                 ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -116,7 +118,7 @@ export const LoansPayableBox: React.FC = () => {
                   <button className="btn btn-primary btn-sm" disabled={saving || !newDate} onClick={() => void saveDate(item)}>{saving ? 'Saving…' : 'Save'}</button>
                   <button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => { setEditing(''); setNewDate(''); }}>Cancel</button>
                 </div>
-                : <button type="button" className={`loan-due loan-due-button ${tone}`} title={item.monthly ? 'Monthly payment (set on the loan account): click to see the loan' : 'Click to change the date'} onClick={() => { if (item.monthly) { void openHistory(item.accountId); return; } setEditing(key); setNewDate(item.dueDate || ''); }}>
+                : <button type="button" className={`loan-due loan-due-button ${tone}`} title={item.monthly ? 'Monthly payment: click to see the loan' : 'Click to change the date'} onClick={() => { if (item.monthly) { void openHistory(item.accountId); return; } setEditing(key); setNewDate(item.dueDate || ''); }}>
                   {item.dueDate ? niceDate(item.dueDate) : 'Set a date'}
                   <small>{days === null ? 'No date yet' : days < 0 ? `${-days} day${days === -1 ? '' : 's'} late` : days === 0 ? 'Due today' : `in ${days} day${days === 1 ? '' : 's'}`}</small>
                 </button>}</td>
@@ -130,10 +132,10 @@ export const LoansPayableBox: React.FC = () => {
             <h3 style={{ margin: '0 0 6px', fontSize: 14 }}>{part.title} ({part.rows.length})</h3>
             <div className="table-container" style={{ maxHeight: '32vh', overflow: 'auto' }}><table>
               <thead><tr><th>Date</th><th>What</th>{part.due && <th>Pay back by</th>}<th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
-              <tbody>{part.rows.length ? part.rows.map((row: any, index: number) => <tr key={index}><td style={{ whiteSpace: 'nowrap' }}>{row.date ? niceDate(row.date) : '—'}</td><td>{row.description || ''}{row.refund ? ' (refund)' : ''}</td>{part.due && <td style={{ whiteSpace: 'nowrap' }}>{row.dueDate ? niceDate(row.dueDate) : '—'}</td>}<td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{money(row.amount, history.account.currency)}</td></tr>) : <tr><td colSpan={part.due ? 4 : 3} style={{ color: 'var(--text-muted)' }}>None.</td></tr>}</tbody>
+              <tbody>{part.rows.length ? part.rows.map((row: any, index: number) => <tr key={index}><td style={{ whiteSpace: 'nowrap' }}>{row.date ? niceDate(row.date) : '—'}</td><td>{row.description || ''}{row.refund ? ' (refund)' : ''}</td>{part.due && <td style={{ whiteSpace: 'nowrap' }}>{row.monthly ? `${money(row.monthly, history.account.currency)} every month, day ${row.payDay || 1}` : row.dueDate ? niceDate(row.dueDate) : '—'}</td>}<td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{money(row.amount, history.account.currency)}</td></tr>) : <tr><td colSpan={part.due ? 4 : 3} style={{ color: 'var(--text-muted)' }}>None.</td></tr>}</tbody>
             </table></div>
           </div>)}
-          <small style={{ color: 'var(--text-muted)' }}>To change how this loan is paid back (on dates or every month), open the loan account in Chart of Accounts → Edit.</small>
+          <small style={{ color: 'var(--text-muted)' }}>Each loan has its own plan (a pay-back date, or every month). To change it, open that payment or transfer and change "How is this loan paid back?".</small>
         </div>}
       </div></div>}
     </section>
