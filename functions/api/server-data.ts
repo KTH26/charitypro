@@ -47,6 +47,49 @@ const requestedOrder = (c: any, columns: Record<string, string>, fallback: strin
 const isoDate = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
 
 // ---- Loans payable ---------------------------------------------------------
+// Split expense: one payment divided into a few categories (for example $3,000 to a
+// company: $1,000 inspection + $2,000 mechanic). The bank / paid-from account still
+// shows ONE payment for the full amount; each category gets only its own part.
+// A split bill keeps `category` = the first line's category, so older screens still work.
+export type BillSplit = { category: string; amount: number; memo?: string };
+export const cleanBillSplits = async (db: any, raw: any, amount: number): Promise<{ splits?: BillSplit[]; error?: string }> => {
+  if (raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0)) return {};
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 50) return { error: 'A split needs at least 2 lines.' };
+  const splits: BillSplit[] = raw.map((line: any) => {
+    const memo = String(line?.memo || '').trim().slice(0, 500);
+    return { category: String(line?.category || '').trim(), amount: Math.round(Number(line?.amount) * 100) / 100, ...(memo ? { memo } : {}) };
+  });
+  if (splits.some(line => !line.category || !Number.isFinite(line.amount) || line.amount <= 0)) return { error: 'Each split line needs a category and an amount above 0.' };
+  const total = Math.round(splits.reduce((sum, line) => sum + line.amount, 0) * 100) / 100;
+  if (Math.abs(total - Number(amount)) >= 0.005) return { error: `The split lines add up to $${total.toFixed(2)}, but the payment is $${Number(amount).toFixed(2)}.` };
+  const ids = [...new Set(splits.map(line => line.category))];
+  const rows = await db.prepare("SELECT id,data FROM sync_records WHERE type='accounts' AND is_deleted=0 AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all();
+  const expenseIds = new Set((rows.results as any[]).filter(row => parseSetting(row.data, {}).type === 'expense').map(row => String(row.id)));
+  if (ids.some(id => !expenseIds.has(id))) return { error: 'Each split line needs a valid expense category.' };
+  return { splits };
+};
+// Every bill as category lines: a split bill gives one line per split, any other bill one line.
+// Use it in place of "sync_records b" when adding up money per category.
+const BILL_LINES = `(SELECT b.id,b.type,b.is_deleted,b.data,
+    COALESCE(json_extract(s.value,'$.category'),json_extract(b.data,'$.category')) AS line_category,
+    CAST(COALESCE(json_extract(s.value,'$.amount'),json_extract(b.data,'$.amount'),0) AS REAL) AS line_amount
+  FROM sync_records b LEFT JOIN json_each(CASE WHEN json_type(b.data,'$.splits')='array' THEN json_extract(b.data,'$.splits') ELSE '[]' END) s
+  WHERE b.type='bills' AND b.is_deleted=0)`;
+// Adds each split line's category name, and shows a split bill's category as "Split: A, B".
+const withSplitNames = async (db: any, items: any[]) => {
+  const ids = [...new Set(items.flatMap(item => Array.isArray(item.splits) ? item.splits.map((line: any) => String(line.category || '')) : []).filter(Boolean))];
+  if (!ids.length) return items;
+  const rows = await db.prepare("SELECT id,json_extract(data,'$.name') AS name FROM sync_records WHERE type='accounts' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all();
+  const names = new Map((rows.results as any[]).map(row => [String(row.id), String(row.name || '')]));
+  return items.map(item => {
+    if (!Array.isArray(item.splits) || !item.splits.length) return item;
+    const splits = item.splits.map((line: any) => ({ ...line, categoryName: names.get(String(line.category)) || 'Unknown category' }));
+    return { ...item, splits, categoryName: `Split: ${[...new Set(splits.map((line: any) => line.categoryName))].join(', ')}` };
+  });
+};
+// SQL: true when bill `alias` has a split line in category `?`.
+const billSplitHas = (alias: string) => `EXISTS(SELECT 1 FROM json_each(CASE WHEN json_type(${alias}.data,'$.splits')='array' THEN json_extract(${alias}.data,'$.splits') ELSE '[]' END) WHERE json_extract(value,'$.category')=?)`;
+
 // A loan account is a liability account with subType "loan" (credit cards use
 // subType "credit_card" and are handled separately). Every time money goes OUT
 // of a loan account it must carry `loanDueDate`: the date it has to be paid back.
@@ -601,14 +644,33 @@ export const paymentsFromOtherDonors = async (db: any, donorIds: string[]) => {
   return new Map([...byDonor].map(([donorId, list]) => [donorId, [...list.values()]]));
 };
 
+/**
+ * The pledge a schedule pays: the one set on the schedule; if none is set, the pledge its own latest payment went to.
+ * Never the newest pledge or a pledge chosen by date. Empty when it cannot be known.
+ */
+export const schedulePledgeId = (schedule: any, payments: any[]) => {
+  if (schedule?.pledgeId) return String(schedule.pledgeId);
+  const id = String(schedule?.id || '');
+  if (!id) return '';
+  const own = payments.filter(payment => String(payment.scheduleId || payment.recurringPaymentId || '') === id && String(payment.type || '').toLowerCase() === 'approved').sort((left, right) => String(right.date || '').localeCompare(String(left.date || '')));
+  for (const payment of own) {
+    const allocations = Array.isArray(payment.pledgeAllocations) ? [...new Set(payment.pledgeAllocations.map((allocation: any) => String(allocation.pledgeId || '')).filter(Boolean))] : [];
+    if (allocations.length === 1) return allocations[0] as string;
+    if (!allocations.length && payment.pledgeId) return String(payment.pledgeId);
+  }
+  return '';
+};
+
 export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: any[], schedulesInput: any[]) => {
   const pledges = [...pledgesInput].filter(item => isoDate(item.date)).sort((left, right) => String(left.date).localeCompare(String(right.date)) || String(left.id).localeCompare(String(right.id)));
   const uniquePayments = uniquePaymentsForAccounting(paymentsInput);
-  return pledges.map((pledge, index) => {
+  // A brand-new schedule with no pledge and no payments yet: the donor's newest pledge, as before (nothing else is known).
+  const newest = pledges.length ? String(pledges[pledges.length - 1].id) : '';
+  const scheduleOwner = new Map(schedulesInput.map(schedule => [schedule, schedulePledgeId(schedule, paymentsInput) || newest]));
+  return pledges.map(pledge => {
     const start = isoDate(pledge.date);
-    const nextStart = isoDate(pledges[index + 1]?.date);
-    const yearlyEnd = addYear(start);
-    const end = nextStart && nextStart < yearlyEnd ? nextStart : yearlyEnd;
+    // Each pledge's own year (a separate pledge made later, like "Lights Unit 16", does not cut it short).
+    const end = addYear(start);
     // A payment counts only when it is linked to this pledge (pledgeId or pledgeAllocations), even under another donor
     // (one check split between brothers). A payment with no pledge link is never matched to a pledge by its date.
     const approvedParts = uniquePayments.flatMap(payment => {
@@ -625,12 +687,8 @@ export const calculatePledgeFinancials = (pledgesInput: any[], paymentsInput: an
       return payment.pledgeId && String(payment.pledgeId) === String(pledge.id) ? [payment] : [];
     });
     const pending = pendingPayments.reduce((total, payment: any) => total + Number(payment.allocatedAmountCAD ?? payment.amountCAD ?? payment.amount ?? 0), 0);
-    const linkedSchedules = schedulesInput.filter(schedule => schedule.active && String(schedule.donorId || '') === String(pledge.donorId || '') && String(schedule.pledgeId || '') === String(pledge.id));
-    const schedules = linkedSchedules.length > 0
-      ? linkedSchedules
-      : index === pledges.length - 1
-        ? schedulesInput.filter(schedule => schedule.active && String(schedule.donorId || '') === String(pledge.donorId || '') && !schedule.pledgeId)
-        : [];
+    // A schedule counts only on its own pledge (see schedulePledgeId) – never on the newest pledge by date.
+    const schedules = schedulesInput.filter(schedule => schedule.active && String(schedule.donorId || '') === String(pledge.donorId || '') && scheduleOwner.get(schedule) === String(pledge.id));
     let scheduled = 0;
     for (const schedule of schedules) {
       let occurrence = isoDate(schedule.nextDate);
@@ -1235,6 +1293,15 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     }
     if (type === 'pledges' && record.followUpDate && !isoDate(String(record.followUpDate))) return c.json({ success: false, error: 'Enter a valid pledge follow-up date.' }, 400);
     if (type === 'bills') {
+      // Split lines: sending none (null or []) removes the split; otherwise they must still add up to the amount.
+      if (record.splits === null || (Array.isArray(record.splits) && !record.splits.length)) delete record.splits;
+      if (record.splits !== undefined) {
+        const split = await cleanBillSplits(c.env.DB, record.splits, Number(record.amount));
+        if (split.error) return c.json({ success: false, error: split.error }, 409);
+        record.splits = split.splits;
+        record.category = split.splits![0].category;
+        if (record.status === 'paid') record.offsetAccountId = record.category;
+      }
       const categoryId = String(record.category || '').trim();
       const sourceAccountId = String(record.sourceAccountId || '').trim();
       const creditAccountId = String(record.creditAccountId || '').trim();
@@ -1308,13 +1375,13 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
       if (Math.abs(Number(account.startingBalance || 0)) > 0.005) return c.json({ success: false, error: 'This account has a starting balance. Set it to zero before deleting the account.' }, 409);
       const linked: any = await c.env.DB.prepare(`SELECT
         (SELECT COUNT(*) FROM sync_records WHERE type='transactions' AND is_deleted=0 AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.offsetAccountId')=?)) AS payments,
-        (SELECT COUNT(*) FROM sync_records WHERE type='bills' AND is_deleted=0 AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.creditAccountId')=? OR json_extract(data,'$.category')=?)) AS bills,
+        (SELECT COUNT(*) FROM sync_records WHERE type='bills' AND is_deleted=0 AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.creditAccountId')=? OR json_extract(data,'$.category')=? OR ${billSplitHas('sync_records')})) AS bills,
         (SELECT COUNT(*) FROM sync_records WHERE type='accountTransfers' AND is_deleted=0 AND (json_extract(data,'$.fromAccountId')=? OR json_extract(data,'$.toAccountId')=?)) AS transfers,
         (SELECT COUNT(*) FROM sync_records WHERE type IN ('recurringPayments','recurringExpenses') AND is_deleted=0 AND (json_extract(data,'$.sourceAccountId')=? OR json_extract(data,'$.offsetAccountId')=? OR json_extract(data,'$.category')=? OR json_extract(data,'$.creditAccountId')=?)) AS schedules,
         (SELECT COUNT(*) FROM sync_records WHERE type='bankFeedTransactions' AND is_deleted=0 AND json_extract(data,'$.accountId')=?) AS bank_feed,
         (SELECT COUNT(*) FROM sync_records WHERE type='accounts' AND is_deleted=0 AND json_extract(data,'$.parentId')=?) AS children,
         (SELECT COUNT(*) FROM sync_records WHERE type='bankVendorRules' AND is_deleted=0 AND (json_extract(data,'$.category')=? OR json_extract(data,'$.creditAccountId')=?)) AS vendor_rules
-      `).bind(id,id,id,id,id,id,id,id,id,id,id,id,id,id,id).first();
+      `).bind(id,id,id,id,id,id,id,id,id,id,id,id,id,id,id,id).first();
       const counts = { payments:Number(linked?.payments||0),bills:Number(linked?.bills||0),transfers:Number(linked?.transfers||0),schedules:Number(linked?.schedules||0),bankFeed:Number(linked?.bank_feed||0),children:Number(linked?.children||0),vendorRules:Number(linked?.vendor_rules||0) };
       const totalLinks = Object.values(counts).reduce((sum,value)=>sum+value,0);
       if (totalLinks) {
@@ -1453,7 +1520,8 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const calculation: any = calculations.find(item => String(item.id) === id);
     const item = { ...pledgeData, donorName: pledge.donor_name || 'Unknown Donor' };
     const appliedPayments = [...(calculation?.appliedPayments || [])].sort((left, right) => String(right.date).localeCompare(String(left.date)) || String(right.id).localeCompare(String(left.id)));
-    const schedules = allSchedules.results.map(parseRecord).filter((schedule: any) => schedule.active && (String(schedule.pledgeId || '') === id || (!schedule.pledgeId && calculations[calculations.length - 1]?.id === id)));
+    const donorPayments = allPayments.results.map(parseRecord);
+    const schedules = allSchedules.results.map(parseRecord).filter((schedule: any) => schedule.active && (schedulePledgeId(schedule, donorPayments) || calculations[calculations.length - 1]?.id) === id);
     return c.json({
       success: true,
       pledge: item,
@@ -1536,6 +1604,12 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     let created = 0;
     for (const row of dueRows.results as any[]) {
       const schedule = { ...JSON.parse(String(row.data)), id: String(row.id) };
+      // The waiting payment goes to the schedule's pledge: the one set on it, or the one its last payment went to.
+      if (!schedule.pledgeId) {
+        const own = await c.env.DB.prepare("SELECT id,data FROM sync_records WHERE type='transactions' AND is_deleted=0 AND (json_extract(data,'$.scheduleId')=? OR json_extract(data,'$.recurringPaymentId')=?) ORDER BY json_extract(data,'$.date') DESC LIMIT 12").bind(schedule.id, schedule.id).all();
+        const owner = schedulePledgeId({ id: schedule.id }, (own.results || []).map((item: any) => ({ ...JSON.parse(String(item.data)), id: String(item.id) })));
+        if (owner) schedule.pledgeId = owner;
+      }
       let occurrence = isoDate(schedule.nextDate);
       const endDate = isoDate(schedule.endDate);
       const pending: any[] = [];
@@ -1813,7 +1887,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const conditions = ["r.type IN ('transactions','bills','accountTransfers')", 'r.is_deleted=0', "(r.type<>'transactions' OR json_extract(r.data,'$.batchTransactionId') IS NULL)"]; const bindings: any[] = [];
     if (kind === 'payment') conditions.push("r.type='transactions'"); else if (kind === 'bill') conditions.push("r.type='bills'"); else if (kind === 'transfer') conditions.push("r.type='accountTransfers'");
     if (search) { conditions.push("lower(r.data) LIKE ?"); bindings.push(`%${search}%`); }
-    if (account) { conditions.push("(json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.offsetAccountId')=? OR json_extract(r.data,'$.fromAccountId')=? OR json_extract(r.data,'$.toAccountId')=? OR json_extract(r.data,'$.category')=?)"); bindings.push(account, account, account, account, account); }
+    if (account) { conditions.push("(json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.offsetAccountId')=? OR json_extract(r.data,'$.fromAccountId')=? OR json_extract(r.data,'$.toAccountId')=? OR json_extract(r.data,'$.category')=? OR (r.type='bills' AND " + billSplitHas('r') + "))"); bindings.push(account, account, account, account, account, account); }
     if (status) { conditions.push("(json_extract(r.data,'$.type')=? OR json_extract(r.data,'$.status')=?)"); bindings.push(status, status); }
     if (method) { conditions.push("json_extract(r.data,'$.method')=?"); bindings.push(method); }
     const dateExpression = "COALESCE(json_extract(r.data,'$.date'),json_extract(r.data,'$.dueDate'),json_extract(r.data,'$.paidDate'),'')";
@@ -2337,9 +2411,9 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
         AND json_extract(t.data,'$.date') BETWEEN ? AND ?
       UNION ALL
       SELECT a.id AS account_id,json_extract(a.data,'$.name') AS account_name,'expense' AS section,
-        COALESCE(json_extract(b.data,'$.amount'),0) * CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE 1 END AS amount
-      FROM sync_records b JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(b.data,'$.category') AND a.is_deleted=0
-      WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid'
+        b.line_amount * CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE 1 END AS amount
+      FROM ${BILL_LINES} b JOIN sync_records a ON a.type='accounts' AND a.id=b.line_category AND a.is_deleted=0
+      WHERE json_extract(b.data,'$.status')='paid'
         AND json_extract(a.data,'$.type')='expense'
         AND COALESCE(json_extract(b.data,'$.dueDate'),json_extract(b.data,'$.paidDate')) BETWEEN ? AND ?
       UNION ALL
@@ -3540,7 +3614,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const withCampaigns = {
       pledges: enrichedPledges.map((pledge: any) => ({ ...pledge, campaignName: campaignLabel(pledge.campaignId) || 'No campaign' })),
       payments: paymentItems.slice(0, 50).map((payment: any) => { const names = [...new Set(pledgeIdsOf(payment).map((pledgeId: string) => campaignLabel(pledgeById.get(pledgeId)?.campaignId)).filter(Boolean))]; return { ...payment, campaignName: names.join(', ') || (pledgeIdsOf(payment).length ? 'No campaign' : 'Not on a pledge') }; }),
-      recurring: recurringItems.map((schedule: any) => { const pledge = schedule.pledgeId ? pledgeById.get(String(schedule.pledgeId)) : null; return { ...schedule, pledgeLabel: pledge ? pledgeLabel(pledge) : schedule.pledgeId ? 'Pledge not found' : 'Any open pledge (automatic)', campaignName: pledge ? campaignLabel(pledge.campaignId) : '' }; })
+      recurring: recurringItems.map((schedule: any) => { const owner = schedulePledgeId(schedule, paymentItems); const pledge = owner ? pledgeById.get(owner) : null; return { ...schedule, pledgeLabel: pledge ? pledgeLabel(pledge) : owner ? 'Pledge not found' : 'No pledge yet', campaignName: pledge ? campaignLabel(pledge.campaignId) : '' }; })
     };
     return c.json({
       success: true,
@@ -3768,7 +3842,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const bindings: any[] = [];
     if (status === 'open') conditions.push("json_extract(b.data,'$.status') IN ('pending','urgent','scheduled')");
     else if (status !== 'all') { conditions.push("json_extract(b.data,'$.status')=?"); bindings.push(status); }
-    if (category) { conditions.push("json_extract(b.data,'$.category')=?"); bindings.push(category); }
+    if (category) { conditions.push(`(json_extract(b.data,'$.category')=? OR ${billSplitHas('b')})`); bindings.push(category, category); }
     if (account) { conditions.push("(json_extract(b.data,'$.sourceAccountId')=? OR json_extract(b.data,'$.creditAccountId')=?)"); bindings.push(account, account); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { conditions.push("json_extract(b.data,'$.dueDate')>=?"); bindings.push(from); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { conditions.push("json_extract(b.data,'$.dueDate')<=?"); bindings.push(to); }
@@ -3788,9 +3862,10 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       c.env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END),0) AS total_cad FROM sync_records b ${joins} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(totalsResult.results[0]?.count || 0);
+    const billItems = await withSplitNames(c.env.DB, listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '', creditName: row.credit_name || '' })));
     return c.json({
       success: true,
-      items: listResult.results.map((row: any) => ({ ...parseRecord(row), categoryName: row.category_name || 'Uncategorized', sourceName: row.source_name || '', creditName: row.credit_name || '' })),
+      items: billItems,
       page, limit, total, totalPages: Math.ceil(total / limit), totalCAD: Number(totalsResult.results[0]?.total_cad || 0)
     });
   });
@@ -3800,7 +3875,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const search = String(c.req.query('search') || '').trim().toLowerCase(); const year = /^\d{4}$/.test(String(c.req.query('year') || '')) ? String(c.req.query('year')) : String(new Date().getUTCFullYear());
     const base = "a.type='accounts' AND a.is_deleted=0 AND json_extract(a.data,'$.type')='expense'";
     const [listResult,totalResult] = await c.env.DB.batch([
-      c.env.DB.prepare(`SELECT a.id,a.data,a.revision,a.updated_at,COALESCE(SUM(CASE WHEN substr(json_extract(b.data,'$.dueDate'),1,4)=? THEN CASE WHEN json_extract(b.data,'$.currency')='USD' THEN COALESCE(json_extract(b.data,'$.amount'),0)*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(b.data,'$.amount'),0) END ELSE 0 END),0) AS own_ytd FROM sync_records a LEFT JOIN sync_records b ON b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.category')=a.id WHERE ${base} GROUP BY a.id ORDER BY lower(json_extract(a.data,'$.name'))`).bind(year),
+      c.env.DB.prepare(`SELECT a.id,a.data,a.revision,a.updated_at,COALESCE(SUM(CASE WHEN substr(json_extract(b.data,'$.dueDate'),1,4)=? THEN CASE WHEN json_extract(b.data,'$.currency')='USD' THEN b.line_amount*COALESCE(json_extract(b.data,'$.exchangeRate'),1.35) ELSE b.line_amount END ELSE 0 END),0) AS own_ytd FROM sync_records a LEFT JOIN ${BILL_LINES} b ON b.line_category=a.id WHERE ${base} GROUP BY a.id ORDER BY lower(json_extract(a.data,'$.name'))`).bind(year),
       c.env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data,'$.currency')='USD' THEN COALESCE(json_extract(data,'$.amount'),0)*COALESCE(json_extract(data,'$.exchangeRate'),1.35) ELSE COALESCE(json_extract(data,'$.amount'),0) END),0) AS total FROM sync_records WHERE type='bills' AND is_deleted=0 AND substr(json_extract(data,'$.dueDate'),1,4)=?").bind(year)
     ]);
     const categories = listResult.results.map((row: any) => ({ ...parseRecord(row), ownYtd: Number(row.own_ytd || 0) }));
@@ -3919,7 +3994,9 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     const vendor = String(body.vendor || '').trim();
     const amount = Number(body.amount);
     const dueDate = String(body.dueDate || '').trim();
-    const category = String(body.category || '').trim();
+    const split = Number.isFinite(amount) && amount > 0 ? await cleanBillSplits(c.env.DB, body.splits, amount) : {};
+    if (split.error) return c.json({ success: false, error: split.error }, 409);
+    const category = split.splits ? split.splits[0].category : String(body.category || '').trim();
     const status = ['pending','urgent','paid'].includes(body.status) ? body.status : 'pending';
     if (!vendor || !Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || Number.isNaN(Date.parse(`${dueDate}T00:00:00Z`)) || !category) {
       return c.json({ success: false, error: 'Vendor, positive amount, due date, and expense category are required.' }, 400);
@@ -3945,6 +4022,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       id, vendor, amount, currency, exchangeRate: currency === 'USD' ? exchangeRate : undefined,
       dueDate, status, category, internalCategory: String(body.internalCategory || body.taxCategory || JSON.parse(String(categoryRow.data)).name || '').trim().slice(0, 200), taxable: Boolean(body.taxable), memo: String(body.memo || '').trim().slice(0, 2000)
     };
+    if (split.splits) record.splits = split.splits;
     if (sourceAccountId) record.sourceAccountId = sourceAccountId;
     if (creditAccountId) record.creditAccountId = creditAccountId;
     if (body.projectId) record.projectId = String(body.projectId);
@@ -4640,7 +4718,9 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
 
     if (action === 'expense') {
       const vendor = String(body.vendor || '').trim();
-      const category = String(body.category || '').trim();
+      const split = await cleanBillSplits(c.env.DB, body.splits, amount);
+      if (split.error) return c.json({ success: false, error: split.error }, 409);
+      const category = split.splits ? split.splits[0].category : String(body.category || '').trim();
       const creditAccountId = String(body.creditAccountId || '').trim();
       const categoryRow: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='accounts' AND id=? AND is_deleted=0").bind(category).first();
       if (!vendor || !categoryRow || JSON.parse(String(categoryRow.data)).type !== 'expense') return c.json({ success: false, error: 'Vendor and a valid expense category are required.' }, 409);
@@ -4653,7 +4733,7 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       const operationId = `${mutationId}-bill-insert`;
       const categoryData = JSON.parse(String(categoryRow.data));
       const internalCategory = String(body.internalCategory || body.taxCategory || categoryData.name || '').trim().slice(0, 200);
-      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(creditAccountId?{creditAccountId}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId, ...(isLoanAccountData(accountData)&&Number(body.loanMonthlyPayment)>0&&Number.isInteger(Number(body.loanPaymentDay))&&Number(body.loanPaymentDay)>=1&&Number(body.loanPaymentDay)<=31?{loanMonthlyPayment:Math.round(Number(body.loanMonthlyPayment)*100)/100,loanPaymentDay:Number(body.loanPaymentDay)}:validLoanDueDate(body.loanDueDate)&&isLoanAccountData(accountData)?{loanDueDate:validLoanDueDate(body.loanDueDate)}:{}) };
+      const record = { id, vendor, amount, currency: accountData.currency === 'USD' ? 'USD' : 'CAD', ...(body.exchangeRate?{exchangeRate:Number(body.exchangeRate)}:{}), dueDate: bankDate, paidDate: bankDate, status: 'paid', category, ...(split.splits?{splits:split.splits}:{}), internalCategory, sourceAccountId: accountId, offsetAccountId: category, ...(creditAccountId?{creditAccountId}:{}), ...(body.projectId?{projectId:String(body.projectId)}:{}), taxable: Boolean(body.taxable), memo: String(body.memo||description).trim().slice(0,2000), isPayrollExpense:Boolean(body.isPayrollExpense), ...(body.employeeId?{employeeId:String(body.employeeId)}:{}), t4aEligible:Boolean(body.t4aEligible), bankTransactionId, ...(isLoanAccountData(accountData)&&Number(body.loanMonthlyPayment)>0&&Number.isInteger(Number(body.loanPaymentDay))&&Number(body.loanPaymentDay)>=1&&Number(body.loanPaymentDay)<=31?{loanMonthlyPayment:Math.round(Number(body.loanMonthlyPayment)*100)/100,loanPaymentDay:Number(body.loanPaymentDay)}:validLoanDueDate(body.loanDueDate)&&isLoanAccountData(accountData)?{loanDueDate:validLoanDueDate(body.loanDueDate)}:{}) };
       const data = JSON.stringify(record);
       resultItem = { ...record, revision: 1, updatedAt: now };
       statements.push(
@@ -4828,9 +4908,9 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       ), bill_category AS (
         SELECT a.id AS account_id, SUM(
           CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN -1 ELSE 1 END *
-          COALESCE(json_extract(b.data,'$.amount'),0) * CASE WHEN json_extract(a.data,'$.currency')='CAD' AND json_extract(b.data,'$.currency')='USD' THEN er.value ELSE 1 END) AS amount
-        FROM sync_records b JOIN sync_records a ON a.type='accounts' AND a.id=json_extract(b.data,'$.category') AND a.is_deleted=0 CROSS JOIN exchange_rate er
-        WHERE b.type='bills' AND b.is_deleted=0 AND json_extract(b.data,'$.status')='paid'
+          b.line_amount * CASE WHEN json_extract(a.data,'$.currency')='CAD' AND json_extract(b.data,'$.currency')='USD' THEN er.value ELSE 1 END) AS amount
+        FROM ${BILL_LINES} b JOIN sync_records a ON a.type='accounts' AND a.id=b.line_category AND a.is_deleted=0 CROSS JOIN exchange_rate er
+        WHERE json_extract(b.data,'$.status')='paid'
         GROUP BY a.id
       ), transfer_from AS (
         SELECT a.id AS account_id, SUM(CASE WHEN json_extract(a.data,'$.type') IN ('liability','revenue','equity') THEN 1 ELSE -1 END * COALESCE(json_extract(x.data,'$.amount'),0)) AS amount
@@ -4899,16 +4979,23 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
       LEFT JOIN sync_records o ON o.type='accounts' AND o.id=(${otherAccountId}) AND o.is_deleted=0`;
     const where = `r.is_deleted=0 AND (
       (r.type='transactions' AND json_extract(r.data,'$.type')='approved' AND (json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.offsetAccountId')=?) AND NOT (?='sys-undeposited-funds' AND json_extract(r.data,'$.depositStatus')='deposited')) OR
-      (r.type='bills' AND json_extract(r.data,'$.status')='paid' AND (json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.creditAccountId')=? OR json_extract(r.data,'$.category')=?)) OR
+      (r.type='bills' AND json_extract(r.data,'$.status')='paid' AND (json_extract(r.data,'$.sourceAccountId')=? OR json_extract(r.data,'$.creditAccountId')=? OR json_extract(r.data,'$.category')=? OR ${billSplitHas('r')})) OR
       (r.type='accountTransfers' AND (json_extract(r.data,'$.fromAccountId')=? OR json_extract(r.data,'$.toAccountId')=?))
     )${from ? ` AND ${dateExpr}>=?` : ''}${to ? ` AND ${dateExpr}<=?` : ''}${words.map(() => " AND (lower(r.data) LIKE ? OR lower(COALESCE(json_extract(d.data,'$.name'),'')) LIKE ? OR lower(COALESCE(json_extract(o.data,'$.name'),'')) LIKE ?)").join('')}`;
-    const bindings: any[] = [id, id, id, id,id,id,id,id,id,id,id, ...(from ? [from] : []), ...(to ? [to] : []), ...words.flatMap(word => { const like = `%${word.replace(/[%_]/g, '')}%`; return [like, like, like]; })];
+    const bindings: any[] = [id, id, id, id,id,id,id,id,id,id,id,id, ...(from ? [from] : []), ...(to ? [to] : []), ...words.flatMap(word => { const like = `%${word.replace(/[%_]/g, '')}%`; return [like, like, like]; })];
     const [rows, countResult] = await c.env.DB.batch([
       c.env.DB.prepare(`SELECT r.id,r.type,r.data,r.revision,r.updated_at,json_extract(d.data,'$.name') AS donor_name,json_extract(o.data,'$.name') AS other_account_name ${from_} WHERE ${where} ORDER BY ${dateExpr} DESC,r.updated_at DESC LIMIT ? OFFSET ?`).bind(...bindings, limit, offset),
       c.env.DB.prepare(`SELECT COUNT(*) AS count ${from_} WHERE ${where}`).bind(...bindings)
     ]);
     const total = Number(countResult.results[0]?.count || 0);
-    return c.json({ success: true, account: parseRecord(account), items: rows.results.map((row: any) => ({ ...parseRecord(row), recordType: row.type, ...(row.donor_name ? { donorName: row.donor_name } : {}), ...(row.other_account_name ? { otherAccountName: row.other_account_name } : {}) })), page, limit, total, totalPages: Math.ceil(total / limit) });
+    const ledgerItems = (await withSplitNames(c.env.DB, rows.results.map((row: any) => ({ ...parseRecord(row), recordType: row.type, ...(row.donor_name ? { donorName: row.donor_name } : {}), ...(row.other_account_name ? { otherAccountName: row.other_account_name } : {}) })))).map((item: any) => {
+      // A split bill: the bank side shows the full payment; a category shows only its own part (lineAmount).
+      if (item.recordType !== 'bills' || !Array.isArray(item.splits) || !item.splits.length) return item;
+      if (item.sourceAccountId === id || item.creditAccountId === id) return { ...item, otherAccountName: item.categoryName };
+      const mine = item.splits.filter((line: any) => line.category === id);
+      return { ...item, lineAmount: Math.round(mine.reduce((sum: number, line: any) => sum + Number(line.amount || 0), 0) * 100) / 100, lineMemo: mine.map((line: any) => line.memo).filter(Boolean).join('; ') };
+    });
+    return c.json({ success: true, account: parseRecord(account), items: ledgerItems, page, limit, total, totalPages: Math.ceil(total / limit) });
   });
 
   app.post('/v3/payments/import-reviewed', async (c: any) => {
