@@ -18,7 +18,7 @@ export const CampaignPledgesModal: React.FC<{ campaign: CampaignTotals; show?: C
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try { const response = await fetch('/api/v3/report-data?source=pledges'); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Could not load the pledges.'); if (!cancelled) setRows((data.rows || []).filter((row: PledgeRow) => (campaign.campaignIds?.length ? campaign.campaignIds : [campaign.id]).includes(String(row.campaignId || '')))); }
+      try { const response = await fetch('/api/v3/report-data?source=pledges'); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Could not load the pledges.'); if (!cancelled) setRows((data.rows || []).map((row: PledgeRow) => ({ ...row, balance: Math.round(Math.max(0, Number(row.amountCAD || 0) - Number(row.paid || 0)) * 100) / 100 }))/* still owes = pledged − paid; scheduled money is not paid yet */.filter((row: PledgeRow) => (campaign.campaignIds?.length ? campaign.campaignIds : [campaign.id]).includes(String(row.campaignId || '')))); }
       catch (reason: any) { if (!cancelled) setError(reason.message); }
     })();
     return () => { cancelled = true; };

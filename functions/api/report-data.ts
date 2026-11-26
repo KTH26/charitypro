@@ -128,8 +128,10 @@ export const buildReportRows = async (db: any, source: string, today = torontoTo
     const financials = pledgeFinancials();
     const known = new Set(list('campaigns').map(item => String(item.id)));
     const totals = (mine: any[]) => {
-      const open = mine.filter(p => num(p.balance) > 0.005);
-      const balance = round(open.reduce((t, p) => t + num(p.balance), 0)); const scheduled = round(open.reduce((t, p) => t + Math.min(num(p.scheduled), num(p.balance)), 0));
+      // Still open = what each donor still owes: pledged − paid (never below 0, so paying over never lowers it). Scheduled money is not paid yet, so it is not taken off.
+      const owes = (p: any) => Math.max(0, num(p.amountCAD ?? p.amount) - num(p.paid));
+      const open = mine.filter(p => owes(p) > 0.005);
+      const balance = round(open.reduce((t, p) => t + owes(p), 0)); const scheduled = round(open.reduce((t, p) => t + Math.min(num(p.scheduled), owes(p)), 0));
       return { pledges: mine.length, donors: new Set(mine.map(p => String(p.donorId || ''))).size, openPledges: open.length, pledged: round(mine.reduce((t, p) => t + num(p.amountCAD ?? p.amount), 0)), paid: round(mine.reduce((t, p) => t + num(p.paid), 0)), pending: round(mine.reduce((t, p) => t + num(p.pending), 0)), balance, scheduled, notScheduled: round(Math.max(0, balance - scheduled)), overpaid: round(mine.reduce((t, p) => t + Math.max(0, num(p.paid) + num(p.pending) - num(p.amountCAD ?? p.amount)), 0)) };
     };
     // A sub-campaign has parentId (its main campaign). A main campaign's totals include its sub-campaigns; campaignIds says which pledges are counted.
