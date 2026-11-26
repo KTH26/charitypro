@@ -838,3 +838,13 @@ describe('a schedule pays its own pledge', () => {
     expect(yearly.schedules.map((item: any) => item.id)).toEqual(['sch']);
   });
 });
+
+describe('payments list', () => {
+  it('does not show bank deposit records (a batch of card payments from Elavon), only donor payments', async () => {
+    const { db, call } = setup();
+    seed(db, 'transactions', 'real', { donorId: 'd1', amount: 100, currency: 'CAD', type: 'approved', date: '2026-11-16', method: 'credit_card' });
+    seed(db, 'transactions', 'deposit', { donorId: 'batch', amount: 700, currency: 'CAD', type: 'approved', date: '2026-11-16', method: 'other', isBatch: true, notes: 'ELAVON MRCH SVC MSP/DIV' });
+    const list = await call('GET', '/v3/payments?status=approved&limit=50');
+    expect(list.body.items.map((item: any) => item.id)).toEqual(['real']);
+  });
+});

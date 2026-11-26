@@ -1807,7 +1807,7 @@ export const registerServerDataRoutes = (app: Hono<any>) => {
     const status = (c.req.query('status') || 'approved').trim();
 
     // status: approved / pending / declined, "all" (every payment), or "postdated" (checks dated after today, not declined).
-    const conditions = ["t.type = 'transactions'", 't.is_deleted = 0'];
+    const conditions = ["t.type = 'transactions'", 't.is_deleted = 0', "COALESCE(json_extract(t.data, '$.isBatch'), 0) = 0"]; // bank deposit records (a batch of card payments) are not donor payments
     const bindings: any[] = [];
     if (status === 'postdated') { conditions.push("json_extract(t.data, '$.method') = 'check'", "json_extract(t.data, '$.date') > ?", "json_extract(t.data, '$.type') <> 'declined'"); bindings.push(torontoToday()); }
     else if (status !== 'all') { conditions.push("json_extract(t.data, '$.type') = ?"); bindings.push(status); }
