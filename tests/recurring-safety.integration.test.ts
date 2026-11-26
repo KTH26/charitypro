@@ -199,3 +199,44 @@ describe('recurring card runner safety', () => {
     expect(rows('transactions')[0]).toMatchObject({ currency: 'USD', amount: 100, amountCAD: 140 });
   });
 });
+
+describe('monthly schedule check with Sola', () => {
+  it('turns off schedules Sola deleted or stopped, copies a changed amount and next date, keeps the pledge', async () => {
+    const db = new MockD1(); databases.push(db);
+    db.database.exec('CREATE TABLE server_secrets (key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at INTEGER NOT NULL)');
+    db.database.prepare("INSERT INTO server_secrets VALUES('SOLA_API_KEY','server-key',1)").run();
+    seedRecord(db, 'donors', 'donor', { name: 'Chaim Zwiebel' });
+    const base = { donorId: 'donor', currency: 'CAD', frequency: 'monthly', method: 'credit_card', nextDate: '2026-12-20', active: true, importedFromSola: true, pledgeId: 'p1' };
+    seedRecord(db, 'recurringPayments', 'gone', { ...base, id: 'gone', amount: 100, solaScheduleId: 's-gone' });
+    seedRecord(db, 'recurringPayments', 'stopped', { ...base, id: 'stopped', amount: 100, solaScheduleId: 's-stopped' });
+    seedRecord(db, 'recurringPayments', 'changed', { ...base, id: 'changed', amount: 75, solaScheduleId: 's-changed' });
+    seedRecord(db, 'recurringPayments', 'same', { ...base, id: 'same', amount: 50, solaScheduleId: 's-same' });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ Result: 'S', Schedules: [
+      { ScheduleId: 's-stopped', Amount: 100, IsActive: false },
+      { ScheduleId: 's-changed', Amount: 100, IsActive: true, NextScheduledRunTime: '2027-01-05' },
+      { ScheduleId: 's-same', Amount: 50, IsActive: true, NextScheduledRunTime: '2026-12-20' },
+    ] }), { status: 200 }));
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const result: any = await (await app.request('/v3/sola/schedules/check', { method: 'POST' }, { DB: db } as any)).json();
+    expect(result).toMatchObject({ success: true, changed: 3, turnedOff: 2 });
+    const now = (id: string) => JSON.parse(String((db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments' AND id=?").get(id) as any).data));
+    expect(now('gone')).toMatchObject({ active: false, solaStatus: 'deleted', pledgeId: 'p1' });
+    expect(now('stopped')).toMatchObject({ active: false, solaStatus: 'stopped' });
+    expect(now('changed')).toMatchObject({ active: true, amount: 100, nextDate: '2027-01-05', pledgeId: 'p1' });
+    expect(now('same')).toMatchObject({ active: true, amount: 50 });
+    expect(result.changes.map((item: any) => item.change).join(' ')).toContain('Chaim Zwiebel');
+  });
+
+  it('changes nothing when Sola lists far fewer schedules than CharityPro has', async () => {
+    const db = new MockD1(); databases.push(db);
+    db.database.exec('CREATE TABLE server_secrets (key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at INTEGER NOT NULL)');
+    db.database.prepare("INSERT INTO server_secrets VALUES('SOLA_API_KEY','server-key',1)").run();
+    for (let index = 0; index < 12; index += 1) seedRecord(db, 'recurringPayments', `s${index}`, { id: `s${index}`, donorId: 'donor', amount: 10, nextDate: '2026-12-20', active: true, solaScheduleId: `sola-${index}` });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ Result: 'S', Schedules: [] }), { status: 200 }));
+    const app = new Hono(); app.use('*', async (c, next) => { c.set('userRoles', ['administrator']); await next(); }); registerServerDataRoutes(app as any);
+    const response = await app.request('/v3/sola/schedules/check', { method: 'POST' }, { DB: db } as any);
+    expect(response.status).toBe(409);
+    const active = (db.database.prepare("SELECT data FROM sync_records WHERE type='recurringPayments'").all() as any[]).filter(row => JSON.parse(String(row.data)).active).length;
+    expect(active).toBe(12);
+  });
+});

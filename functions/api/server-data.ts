@@ -3020,35 +3020,34 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
     return c.json(result);
   });
 
-  app.post('/v3/sola/schedules/preview', async (c: any) => {
-    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
-    const key = await getSolaKey(c); if (!key) return c.json({ success: false, error: 'Sola is not configured on the server.' }, 409);
-    try {
-      const raw: any[] = [];
-      let nextToken = '';
-      let pages = 0;
-      do {
-        const response = await fetch('https://api.cardknox.com/v2/ListSchedules', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: key, 'X-Recurring-Api-Version': '2.1' },
-          body: JSON.stringify({ SoftwareName: 'CharityPro', SoftwareVersion: '1.0', PageSize: 100, SortOrder: 'Descending', Filters: { IsDeleted: false }, ...(nextToken ? { NextToken: nextToken } : {}) })
-        });
-        const text = await response.text(); let payload: any;
-        try { payload = JSON.parse(text); } catch { return c.json({ success: false, error: `Sola recurring schedules returned an unreadable response (${response.status}).` }, 502); }
-        if (!response.ok || String(payload?.Result || '').toUpperCase() === 'E') return c.json({ success: false, error: String(payload?.Error || payload?.error || payload?.Message || `Sola recurring schedules request failed (${response.status}).`) }, 502);
-        const pageItems = Array.isArray(payload) ? payload : Array.isArray(payload?.Schedules) ? payload.Schedules : Array.isArray(payload?.Data) ? payload.Data : Array.isArray(payload?.Results) ? payload.Results : [];
-        raw.push(...pageItems);
-        nextToken = String(payload?.NextToken || '').trim();
-        pages++;
-      } while (nextToken && pages < 100);
-      let items = raw.map((value: any) => {
-        const activeValue = value.IsActive ?? value.Active ?? value.isActive ?? value.active ?? value.Status ?? value.status;
-        const normalizedActive = typeof activeValue === 'string' ? activeValue.trim().toLowerCase() : activeValue;
-        const active = normalizedActive === true || normalizedActive === 1 || normalizedActive === 'true' || normalizedActive === '1' || normalizedActive === 'active' || normalizedActive === 'enabled';
-        const totalPayments = Number(value.TotalPayments ?? value.NumberOfPayments ?? value.TotalNumberOfPayments ?? value.PaymentCount ?? 0);
-        const paymentsProcessed = Number(value.PaymentsProcessed ?? value.NumberOfPaymentsProcessed ?? value.ProcessedPayments ?? 0);
-        const reportedRemaining = Number(value.PaymentsRemaining ?? value.RemainingPayments ?? value.NumberOfPaymentsRemaining ?? value.RemainingNumberOfPayments ?? value.PaymentsLeft ?? 0);
-        return {
+  /** Every schedule Sola has now (deleted ones are not listed). Throws when Sola cannot be read fully. */
+  const listSolaSchedules = async (key: string) => {
+    const raw: any[] = [];
+    let nextToken = '';
+    let pages = 0;
+    do {
+      const response = await fetch('https://api.cardknox.com/v2/ListSchedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: key, 'X-Recurring-Api-Version': '2.1' },
+        body: JSON.stringify({ SoftwareName: 'CharityPro', SoftwareVersion: '1.0', PageSize: 100, SortOrder: 'Descending', Filters: { IsDeleted: false }, ...(nextToken ? { NextToken: nextToken } : {}) })
+      });
+      const text = await response.text(); let payload: any;
+      try { payload = JSON.parse(text); } catch { throw Object.assign(new Error(`Sola recurring schedules returned an unreadable response (${response.status}).`), { status: 502 }); }
+      if (!response.ok || String(payload?.Result || '').toUpperCase() === 'E') throw Object.assign(new Error(String(payload?.Error || payload?.error || payload?.Message || `Sola recurring schedules request failed (${response.status}).`)), { status: 502 });
+      const pageItems = Array.isArray(payload) ? payload : Array.isArray(payload?.Schedules) ? payload.Schedules : Array.isArray(payload?.Data) ? payload.Data : Array.isArray(payload?.Results) ? payload.Results : [];
+      raw.push(...pageItems);
+      nextToken = String(payload?.NextToken || '').trim();
+      pages++;
+    } while (nextToken && pages < 100);
+    if (nextToken) throw Object.assign(new Error('Sola has more schedules than could be read at once.'), { status: 502 });
+    return { pages, items: raw.map((value: any) => {
+      const activeValue = value.IsActive ?? value.Active ?? value.isActive ?? value.active ?? value.Status ?? value.status;
+      const normalizedActive = typeof activeValue === 'string' ? activeValue.trim().toLowerCase() : activeValue;
+      const active = normalizedActive === true || normalizedActive === 1 || normalizedActive === 'true' || normalizedActive === '1' || normalizedActive === 'active' || normalizedActive === 'enabled';
+      const totalPayments = Number(value.TotalPayments ?? value.NumberOfPayments ?? value.TotalNumberOfPayments ?? value.PaymentCount ?? 0);
+      const paymentsProcessed = Number(value.PaymentsProcessed ?? value.NumberOfPaymentsProcessed ?? value.ProcessedPayments ?? 0);
+      const reportedRemaining = Number(value.PaymentsRemaining ?? value.RemainingPayments ?? value.NumberOfPaymentsRemaining ?? value.RemainingNumberOfPayments ?? value.PaymentsLeft ?? 0);
+      return {
         scheduleId: String(value.ScheduleId || value.Id || value.scheduleId || '').trim(),
         customerId: String(value.CustomerId || value.customerId || '').trim(),
         name: String(value.BillName || value.Name || value.CustomerName || [value.BillFirstName || value.FirstName, value.BillLastName || value.LastName].filter(Boolean).join(' ') || 'Unknown').trim(),
@@ -3062,8 +3061,81 @@ const candidates=exactPending.length?exactPending:sameMonthPending.filter(({item
         paymentsRemaining: reportedRemaining || Math.max(0, totalPayments - paymentsProcessed),
         totalPayments,
         paymentsProcessed
-        };
-      }).filter((value: any) => value.scheduleId);
+      };
+    }).filter((value: any) => value.scheduleId) };
+  };
+
+  /**
+   * Makes CharityPro's Sola schedules the same as Sola now (run once a month by the GitHub job, or by a button):
+   * a schedule Sola deleted or stopped is turned off here; a changed amount or next date is copied from Sola.
+   * Its pledge and everything else stay as they are. New Sola schedules are left for the Sola page (they need a donor).
+   * If Sola cannot be read fully, or lists far fewer schedules than CharityPro has, nothing is changed.
+   */
+  const checkSolaSchedules = async (c: any, trigger: string) => {
+    const key = await getSolaKey(c); if (!key) throw Object.assign(new Error('Sola is not configured on the server.'), { status: 409 });
+    const { items } = await listSolaSchedules(key);
+    const sola = new Map(items.map((item: any) => [item.scheduleId, item]));
+    const rows: any = await c.env.DB.prepare("SELECT id,data,revision FROM sync_records WHERE type='recurringPayments' AND is_deleted=0 AND COALESCE(json_extract(data,'$.solaScheduleId'),'')<>''").all();
+    const mine = (rows.results as any[]).map(row => ({ row, data: parseSetting(row.data, {}) }));
+    const activeHere = mine.filter(item => item.data.active);
+    const missing = activeHere.filter(item => !sola.has(String(item.data.solaScheduleId))).length;
+    if (activeHere.length >= 10 && missing > activeHere.length / 2) throw Object.assign(new Error(`Sola listed only ${items.length} schedules while ${activeHere.length} are on in CharityPro, so nothing was changed. Check Sola and try again.`), { status: 409 });
+    const today = new Date().toISOString().slice(0, 10); const now = Date.now();
+    const userId = String(c.get('userId') || 'system'); const userEmail = String(c.get('userEmail') || 'system');
+    const changes: any[] = [];
+    for (const { row, data } of mine) {
+      const found: any = sola.get(String(data.solaScheduleId));
+      const next: any = { ...data };
+      let what = '';
+      if (!found) { if (data.active) { next.active = false; next.solaStatus = 'deleted'; next.solaCheckedOff = today; what = 'Deleted in Sola: turned off'; } }
+      else if (!found.active) { if (data.active) { next.active = false; next.solaStatus = 'stopped'; next.solaCheckedOff = today; what = 'Stopped in Sola: turned off'; } }
+      else {
+        const parts: string[] = [];
+        if (!data.active) { next.active = true; delete next.solaStatus; delete next.solaCheckedOff; parts.push('on again in Sola: turned on'); }
+        if (found.amount > 0 && Math.abs(Number(data.amount || 0) - found.amount) > 0.004) { parts.push(`amount ${Number(data.amount || 0)} → ${found.amount}`); next.amount = found.amount; if (String(data.currency || 'CAD') === 'CAD') delete next.amountCAD; }
+        if (isoDate(found.nextDate) && found.nextDate !== data.nextDate) { parts.push(`next date ${data.nextDate || '—'} → ${found.nextDate}`); next.nextDate = found.nextDate; }
+        what = parts.join(', ');
+      }
+      if (!what) continue;
+      const revision = Number(row.revision) + 1; const operationId = `sola-schedule-check-${today}-${row.id}-${revision}`; const nextData = JSON.stringify(next);
+      const result: any = await c.env.DB.prepare("UPDATE sync_records SET data=?,revision=?,updated_at=?,last_operation_id=? WHERE type='recurringPayments' AND id=? AND revision=? AND is_deleted=0").bind(nextData, revision, now, operationId, row.id, row.revision).run();
+      if (Number(result?.meta?.changes ?? result?.changes ?? 0) < 1) continue; // changed by someone meanwhile: the next check will look again
+      await c.env.DB.batch([
+        c.env.DB.prepare("INSERT INTO sync_changes(record_id,type,revision,operation,data,changed_at,mutation_id,operation_id) VALUES(?,'recurringPayments',?,'update',?,?,?,?)").bind(row.id, revision, nextData, now, operationId, operationId),
+        c.env.DB.prepare("INSERT INTO audit_log(record_id,record_type,action,old_revision,new_revision,old_data,new_data,changed_by_user_id,changed_by_email,changed_at,mutation_id,operation_id,reason) VALUES(?,'recurringPayments','update',?,?,?,?,?,?,?,?,?,?)").bind(row.id, Number(row.revision), revision, String(row.data), nextData, userId, userEmail, now, operationId, operationId, `Schedule check with Sola (${trigger}): ${what}`)
+      ]);
+      changes.push({ id: row.id, donorId: data.donorId, amount: next.amount, change: what });
+    }
+    for (const item of changes) { const donor: any = await c.env.DB.prepare("SELECT data FROM sync_records WHERE type='donors' AND id=? AND is_deleted=0").bind(String(item.donorId || '')).first(); const value = donor ? parseSetting(donor.data, {}) : {}; item.donorName = value.name || [value.firstName, value.lastName].filter(Boolean).join(' ') || String(item.donorId || ''); item.change = `${item.donorName} $${item.amount}: ${item.change}`; }
+    const importedIds = new Set(mine.map(item => String(item.data.solaScheduleId)));
+    const notInCharityPro = items.filter((item: any) => item.active && !importedIds.has(item.scheduleId)).length;
+    const status = { checkedAt: now, trigger, solaSchedules: items.length, changed: changes.length, turnedOff: changes.filter(item => /turned off/.test(item.change)).length, notInCharityPro, changes };
+    await c.env.DB.prepare("INSERT INTO sync_metadata(key,value,updated_at) VALUES('sola_schedule_check_status',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(JSON.stringify(status), now).run();
+    return status;
+  };
+
+  app.post('/v3/automation/sola-schedules', async (c: any) => {
+    // The GitHub job calls this every day; it only runs on the 1st of the month (or when ?force=1).
+    const day = new Date().toISOString().slice(8, 10);
+    if (day !== '01' && c.req.query('force') !== '1') return c.json({ success: true, skipped: 'Runs on the 1st of the month.' });
+    try { return c.json({ success: true, ...(await checkSolaSchedules(c, 'monthly')) }); }
+    catch (reason: any) { return c.json({ success: false, error: `Schedule check with Sola failed: ${reason.message || 'network error'}` }, Number(reason.status || 502)); }
+  });
+
+  app.post('/v3/sola/schedules/check', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.approve'); if (denied) return denied;
+    try { return c.json({ success: true, ...(await checkSolaSchedules(c, 'button')) }); }
+    catch (reason: any) { return c.json({ success: false, error: `Schedule check with Sola failed: ${reason.message || 'network error'}` }, Number(reason.status || 502)); }
+  });
+
+  app.post('/v3/sola/schedules/preview', async (c: any) => {
+    const denied = requirePermission(c, 'transactions.read'); if (denied) return denied;
+    const key = await getSolaKey(c); if (!key) return c.json({ success: false, error: 'Sola is not configured on the server.' }, 409);
+    try {
+      let listed: any;
+      try { listed = await listSolaSchedules(key); } catch (reason: any) { return c.json({ success: false, error: reason.message }, 502); }
+      const pages = listed.pages;
+      let items = listed.items;
       const removedRow:any=await c.env.DB.prepare("SELECT value FROM sync_metadata WHERE key='sola_schedule_removed_ids'").first();const removedIds=new Set<string>(parseSetting(removedRow?.value,[]));items=items.filter((item:any)=>!removedIds.has(String(item.scheduleId)));
       const savedAt=Date.now();
       for(let index=0;index<items.length;index+=50){const statements=items.slice(index,index+50).map((item:any)=>c.env.DB.prepare("INSERT INTO sync_records(id,type,data,updated_at,revision,is_deleted,last_operation_id) VALUES(?,'solaScheduleInbox',?,?,1,0,?) ON CONFLICT(type,id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,revision=sync_records.revision+1,is_deleted=0,last_operation_id=excluded.last_operation_id").bind(String(item.scheduleId),JSON.stringify(item),savedAt,`sola-schedule-inbox-${savedAt}-${item.scheduleId}`));if(statements.length)await c.env.DB.batch(statements);}

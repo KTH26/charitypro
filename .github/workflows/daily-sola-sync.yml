@@ -37,6 +37,7 @@ jobs:
               return 1
             }
           }
+          run_automation "/api/v3/automation/sola-schedules"
           run_automation "/api/v3/schedules/process-due"
           run_automation "/api/v3/automation/daily-sola"
           run_automation "/api/v3/automation/process-recurring"
